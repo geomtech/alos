@@ -8,8 +8,8 @@ ASFLAGS = -felf32 -g
 LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 
 # Sources
-SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c src/kheap.c src/console.c
-OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o src/kheap.o src/console.o
+SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c src/kheap.c src/console.c src/pci.c
+OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o src/kheap.o src/console.o src/pci.o
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -33,11 +33,11 @@ src/interrupts.o: src/interrupts.s
 clean:
 	rm -f src/*.o alos.bin
 
-# Test rapide avec QEMU
+# Test rapide avec QEMU (avec carte réseau AMD PCnet)
 run: alos.bin
-	qemu-system-i386 -kernel alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M -nic model=pcnet
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
-	qemu-system-i386 -kernel alos.bin -s -S &
+	qemu-system-i386 -kernel alos.bin -m 128M -nic model=pcnet -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"

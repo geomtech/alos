@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "kheap.h"
 #include "console.h"
+#include "pci.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -208,10 +209,32 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             console_put_dec(kheap_get_block_count());
             console_puts("  Free: ");
             console_put_dec(kheap_get_free_size());
-            console_puts(" B\n\n");
+            console_puts(" B\n");
+            
+            /* ============================================ */
+            /* PCI Bus Enumeration                          */
+            /* ============================================ */
+            pci_probe();
+            
+            /* Chercher la carte réseau AMD PCnet */
+            PCIDevice* pcnet = pci_get_device(PCI_VENDOR_AMD, PCI_DEVICE_AMD_PCNET);
+            if (pcnet != NULL) {
+                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                console_puts("\n*** SUCCESS: AMD PCnet II found! ***\n");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                console_puts("    BAR0 (I/O Base): ");
+                console_put_hex(pcnet->bar0 & 0xFFFFFFFC);  /* Masquer les bits de type */
+                console_puts("\n    IRQ: ");
+                console_put_dec(pcnet->interrupt_line);
+                console_puts("\n");
+            } else {
+                console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                console_puts("\nAMD PCnet not found (run QEMU with -nic model=pcnet)\n");
+            }
         }
         
         /* Instructions */
+        console_puts("\n");
         console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
         console_puts("========================================\n");
         console_puts("Use UP/DOWN arrows to scroll\n");
