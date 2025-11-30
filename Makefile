@@ -33,11 +33,11 @@ src/interrupts.o: src/interrupts.s
 clean:
 	rm -f src/*.o alos.bin
 
-# Test rapide avec QEMU (avec carte réseau AMD PCnet)
+# Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)
 run: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -nic model=pcnet
+	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -nic model=pcnet -s -S &
+	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0 -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"
