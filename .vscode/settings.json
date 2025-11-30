@@ -1,0 +1,16 @@
+{
+    "C_Cpp.default.compilerPath": "~/opt/cross/bin/i686-elf-gcc",
+    "C_Cpp.default.intelliSenseMode": "gcc-x86",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/src"
+    ],
+    "C_Cpp.default.defines": [
+        "__i386__"
+    ],
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.associations": {
+        "*.h": "c",
+        "*.c": "c",
+        "*.s": "asm-intel-x86-generic"
+    }
+}

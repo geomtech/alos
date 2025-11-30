@@ -3,8 +3,9 @@
 CC = ~/opt/cross/bin/i686-elf-gcc
 AS = nasm
 
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra
-LDFLAGS = -ffreestanding -O2 -nostdlib -lgcc
+CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra
+ASFLAGS = -felf32 -g
+LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 
 # Sources
 SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c
@@ -17,7 +18,7 @@ alos.bin: $(OBJ)
 
 # Règles de compilation
 src/boot.o: src/boot.s
-	$(AS) -felf32 $< -o $@
+	$(AS) $(ASFLAGS) $< -o $@
 
 src/gdt.o: src/gdt.c
 	$(CC) -c $< -o $@ $(CFLAGS)
@@ -26,7 +27,7 @@ src/kernel.o: src/kernel.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 src/interrupts.o: src/interrupts.s
-	$(AS) -felf32 $< -o $@
+	$(AS) $(ASFLAGS) $< -o $@
 
 # Nettoyage
 clean:
@@ -35,3 +36,8 @@ clean:
 # Test rapide avec QEMU
 run: alos.bin
 	qemu-system-i386 -kernel alos.bin
+
+# Debug avec QEMU (attend GDB sur port 1234)
+debug: alos.bin
+	qemu-system-i386 -kernel alos.bin -s -S &
+	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"

@@ -17,15 +17,33 @@ stack_bottom:
 resb 16384 ; 16 KiB de stack (c'est énorme pour un début, mais safe)
 stack_top:
 
+align 4
+global multiboot_magic
+multiboot_magic:
+resb 4              ; Stocke le magic number de EAX
+
+global multiboot_info_ptr
+multiboot_info_ptr:
+resb 4              ; Stocke le pointeur vers la structure Multiboot Info de EBX
+
 section .text
 global _start:function (_start.end - _start)
 _start:
-    ; 1. Initialiser la stack pointer (ESP)
+    ; 1. Sauvegarder les infos Multiboot AVANT de toucher aux registres
+    ; GRUB met le magic number dans EAX et l'adresse de la struct dans EBX
+    mov [multiboot_magic], eax
+    mov [multiboot_info_ptr], ebx
+
+    ; 2. Initialiser la stack pointer (ESP)
     mov esp, stack_top
 
-    ; 2. Appeler le kernel C
+    ; 3. Appeler le kernel C avec les paramètres Multiboot
+    ; Convention d'appel cdecl : arguments poussés de droite à gauche
     extern kernel_main
+    push ebx            ; 2ème argument : pointeur vers multiboot_info
+    push eax            ; 1er argument  : magic number
     call kernel_main
+    add esp, 8          ; Nettoyer la stack (2 arguments * 4 octets)
 
     ; 3. Si le kernel retourne (ne devrait pas), on gèle le CPU
     cli
