@@ -6,6 +6,7 @@
 #include "idt.h"
 #include "io.h"
 #include "multiboot.h"
+#include "pmm.h"
 
 /* Adresse physique du buffer VGA en mode texte couleur */
 static uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
@@ -157,6 +158,56 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
         line++;
         print_string("Flags: ", line * VGA_WIDTH + 2, terminal_color);
         print_hex(mboot_info->flags, line * VGA_WIDTH + 9, terminal_color);
+        line += 2;
+
+        // Initialiser le Physical Memory Manager
+        init_pmm(mboot_info);
+        
+        // Afficher les statistiques du PMM
+        uint8_t pmm_color = vga_color(10, 1);  // Green on Blue
+        print_string("=== Physical Memory Manager ===", line * VGA_WIDTH + 2, pmm_color);
+        line++;
+        
+        print_string("Total blocks: ", line * VGA_WIDTH + 2, terminal_color);
+        print_dec(pmm_get_total_blocks(), line * VGA_WIDTH + 16, terminal_color);
+        line++;
+        
+        print_string("Used blocks:  ", line * VGA_WIDTH + 2, terminal_color);
+        print_dec(pmm_get_used_blocks(), line * VGA_WIDTH + 16, terminal_color);
+        line++;
+        
+        print_string("Free blocks:  ", line * VGA_WIDTH + 2, terminal_color);
+        print_dec(pmm_get_free_blocks(), line * VGA_WIDTH + 16, terminal_color);
+        line++;
+        
+        print_string("Free memory:  ", line * VGA_WIDTH + 2, terminal_color);
+        print_dec(pmm_get_free_memory() / 1024, line * VGA_WIDTH + 16, terminal_color);
+        print_string(" KiB", line * VGA_WIDTH + 24, terminal_color);
+        line += 2;
+        
+        // Test d'allocation PMM
+        print_string("PMM Test:", line * VGA_WIDTH + 2, info_color);
+        line++;
+        
+        void* block1 = pmm_alloc_block();
+        print_string("Alloc #1: ", line * VGA_WIDTH + 2, terminal_color);
+        print_hex((uint32_t)(uintptr_t)block1, line * VGA_WIDTH + 12, terminal_color);
+        line++;
+        
+        void* block2 = pmm_alloc_block();
+        print_string("Alloc #2: ", line * VGA_WIDTH + 2, terminal_color);
+        print_hex((uint32_t)(uintptr_t)block2, line * VGA_WIDTH + 12, terminal_color);
+        line++;
+        
+        pmm_free_block(block1);
+        print_string("Freed #1, free blocks: ", line * VGA_WIDTH + 2, terminal_color);
+        print_dec(pmm_get_free_blocks(), line * VGA_WIDTH + 25, terminal_color);
+        line++;
+        
+        void* block3 = pmm_alloc_block();
+        print_string("Alloc #3: ", line * VGA_WIDTH + 2, terminal_color);
+        print_hex((uint32_t)(uintptr_t)block3, line * VGA_WIDTH + 12, terminal_color);
+        print_string(" (reused #1)", line * VGA_WIDTH + 23, pmm_color);
     }
 
     asm volatile("sti");
