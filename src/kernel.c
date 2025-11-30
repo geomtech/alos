@@ -10,6 +10,7 @@
 #include "kheap.h"
 #include "console.h"
 #include "pci.h"
+#include "drivers/pcnet.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -217,16 +218,28 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             pci_probe();
             
             /* Chercher la carte réseau AMD PCnet */
-            PCIDevice* pcnet = pci_get_device(PCI_VENDOR_AMD, PCI_DEVICE_AMD_PCNET);
-            if (pcnet != NULL) {
+            PCIDevice* pcnet_pci = pci_get_device(PCI_VENDOR_AMD, PCI_DEVICE_AMD_PCNET);
+            if (pcnet_pci != NULL) {
                 console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
                 console_puts("\n*** SUCCESS: AMD PCnet II found! ***\n");
                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
                 console_puts("    BAR0 (I/O Base): ");
-                console_put_hex(pcnet->bar0 & 0xFFFFFFFC);  /* Masquer les bits de type */
+                console_put_hex(pcnet_pci->bar0 & 0xFFFFFFFC);
                 console_puts("\n    IRQ: ");
-                console_put_dec(pcnet->interrupt_line);
+                console_put_dec(pcnet_pci->interrupt_line);
                 console_puts("\n");
+                
+                /* ============================================ */
+                /* Initialiser le driver PCnet                  */
+                /* ============================================ */
+                PCNetDevice* pcnet_dev = pcnet_init(pcnet_pci);
+                if (pcnet_dev != NULL) {
+                    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                    console_puts("\n*** PCnet driver ready! ***\n");
+                } else {
+                    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                    console_puts("\n*** PCnet driver init FAILED! ***\n");
+                }
             } else {
                 console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
                 console_puts("\nAMD PCnet not found (run QEMU with -nic model=pcnet)\n");
