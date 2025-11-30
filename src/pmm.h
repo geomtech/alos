@@ -36,11 +36,27 @@ void init_pmm(multiboot_info_t* mbd);
 void* pmm_alloc_block(void);
 
 /**
+ * Alloue plusieurs blocs contigus de mémoire physique.
+ * 
+ * @param count Nombre de blocs de 4 KiB à allouer
+ * @return Adresse physique du premier bloc, ou NULL si pas assez de mémoire contiguë
+ */
+void* pmm_alloc_blocks(uint32_t count);
+
+/**
  * Libère un bloc de mémoire physique précédemment alloué.
  * 
  * @param p Adresse physique du bloc à libérer (doit être alignée sur 4 KiB)
  */
 void pmm_free_block(void* p);
+
+/**
+ * Libère plusieurs blocs contigus de mémoire physique.
+ * 
+ * @param p Adresse physique du premier bloc
+ * @param count Nombre de blocs à libérer
+ */
+void pmm_free_blocks(void* p, uint32_t count);
 
 /**
  * Retourne le nombre total de blocs gérés par le PMM.

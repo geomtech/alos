@@ -102,6 +102,35 @@ static int32_t pmm_find_first_free(void)
     return -1; /* Aucun bloc libre trouvé */
 }
 
+/* Trouve une séquence de blocs libres contigus */
+static int32_t pmm_find_first_free_sequence(uint32_t count)
+{
+    if (count == 0) return -1;
+    if (count == 1) return pmm_find_first_free();
+    
+    uint32_t consecutive = 0;
+    uint32_t start_block = 0;
+    
+    for (uint32_t block = 0; block < pmm_total_blocks; block++) {
+        if (!bitmap_test(block)) {
+            /* Bloc libre trouvé */
+            if (consecutive == 0) {
+                start_block = block;
+            }
+            consecutive++;
+            
+            if (consecutive >= count) {
+                return start_block;
+            }
+        } else {
+            /* Bloc occupé, reset du compteur */
+            consecutive = 0;
+        }
+    }
+    
+    return -1; /* Pas assez de blocs contigus */
+}
+
 /* ============================================ */
 /*            Fonctions Publiques               */
 /* ============================================ */
@@ -203,6 +232,30 @@ void* pmm_alloc_block(void)
     return (void*)(uintptr_t)PMM_BLOCK_TO_ADDR(block);
 }
 
+void* pmm_alloc_blocks(uint32_t count)
+{
+    if (count == 0) {
+        return NULL;
+    }
+    
+    if (count == 1) {
+        return pmm_alloc_block();
+    }
+    
+    int32_t start_block = pmm_find_first_free_sequence(count);
+    if (start_block < 0) {
+        return NULL; /* Pas assez de blocs contigus */
+    }
+    
+    /* Marquer tous les blocs comme utilisés */
+    for (uint32_t i = 0; i < count; i++) {
+        bitmap_set(start_block + i);
+        pmm_used_blocks++;
+    }
+    
+    return (void*)(uintptr_t)PMM_BLOCK_TO_ADDR(start_block);
+}
+
 void pmm_free_block(void* p)
 {
     uint32_t addr = (uint32_t)(uintptr_t)p;
@@ -215,6 +268,24 @@ void pmm_free_block(void* p)
     if (bitmap_test(block)) {
         bitmap_clear(block);
         pmm_used_blocks--;
+    }
+}
+
+void pmm_free_blocks(void* p, uint32_t count)
+{
+    if (count == 0 || p == NULL) {
+        return;
+    }
+    
+    uint32_t addr = (uint32_t)(uintptr_t)p;
+    uint32_t start_block = PMM_ADDR_TO_BLOCK(addr);
+    
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t block = start_block + i;
+        if (block < pmm_total_blocks && bitmap_test(block)) {
+            bitmap_clear(block);
+            pmm_used_blocks--;
+        }
     }
 }
 

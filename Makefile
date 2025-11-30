@@ -8,8 +8,8 @@ ASFLAGS = -felf32 -g
 LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 
 # Sources
-SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c
-OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o
+SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c src/kheap.c src/console.c
+OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o src/kheap.o src/console.o
 
 # Cible finale
 alos.bin: $(OBJ)

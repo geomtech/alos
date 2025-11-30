@@ -10,7 +10,7 @@
                 "isDefault": true
             },
             "problemMatcher": ["$gcc"],
-            "detail": "Compile le kernel AuraOS"
+            "detail": "Compile le kernel ALOS"
         },
         {
             "label": "Clean",

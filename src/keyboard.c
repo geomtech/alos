@@ -2,10 +2,17 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "io.h"
+#include "console.h"
+
+/* Scancodes spéciaux pour les flèches */
+#define SCANCODE_UP_ARROW    0x48
+#define SCANCODE_DOWN_ARROW  0x50
+#define SCANCODE_LEFT_ARROW  0x4B
+#define SCANCODE_RIGHT_ARROW 0x4D
+#define SCANCODE_PAGE_UP     0x49
+#define SCANCODE_PAGE_DOWN   0x51
 
 static uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
-static const int VGA_WIDTH = 80;
-static const int VGA_HEIGHT = 25;
 
 // Position actuelle du curseur à l'écran
 static int terminal_col = 0;
@@ -152,20 +159,32 @@ void keyboard_handler_c(void)
     if (scancode & 0x80)
     {
         // C'est un "Break Code" (touche relâchée).
-        // Exemple : 0x9E (158) = Relâchement de 'A'.
         // On ne fait RIEN ici.
     }
     else
     {
         // C'est un "Make Code" (touche appuyée).
-        // On regarde dans notre tableau.
-        if (scancode < 128)
-        {
-            char c = kbdus[scancode];
-            if (c != 0)
-            {
-                terminal_putc(c);
-            }
+        // Gérer les touches spéciales (flèches)
+        switch (scancode) {
+            case SCANCODE_UP_ARROW:
+            case SCANCODE_PAGE_UP:
+                console_scroll_up();
+                break;
+            case SCANCODE_DOWN_ARROW:
+            case SCANCODE_PAGE_DOWN:
+                console_scroll_down();
+                break;
+            default:
+                // Touche normale
+                if (scancode < 128)
+                {
+                    char c = kbdus[scancode];
+                    if (c != 0)
+                    {
+                        terminal_putc(c);
+                    }
+                }
+                break;
         }
     }
 
