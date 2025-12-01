@@ -369,10 +369,8 @@ void timestamp_print_now(void)
     
     char buffer[20];
     datetime_format(&now, buffer, 0);
-    
-    console_puts("[");
+
     console_puts(buffer);
-    console_puts("] ");
 }
 
 /* ===========================================
