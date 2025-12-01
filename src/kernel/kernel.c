@@ -374,6 +374,64 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                             }
                             */
                         }
+                        
+                        /* ============================================ */
+                        /* Test d'écriture dans un fichier              */
+                        /* ============================================ */
+                        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                        console_puts("\n--- Ext2 Write Test ---\n");
+                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                        
+                        /* Ouvrir hello.txt pour écriture */
+                        vfs_node_t* write_file = vfs_open("/hello.txt", VFS_O_RDWR);
+                        if (write_file != NULL) {
+                            /* Lire le contenu actuel */
+                            console_puts("Original content: ");
+                            uint8_t* orig_buf = (uint8_t*)kmalloc(write_file->size + 1);
+                            if (orig_buf) {
+                                int orig_len = vfs_read(write_file, 0, write_file->size, orig_buf);
+                                if (orig_len > 0) {
+                                    orig_buf[orig_len] = '\0';
+                                    console_puts((const char*)orig_buf);
+                                }
+                                kfree(orig_buf);
+                            }
+                            console_puts("\n");
+                            
+                            /* Écrire un nouveau contenu */
+                            const char* new_content = "Modified by ALOS kernel!\n";
+                            uint32_t new_len = 0;
+                            while (new_content[new_len]) new_len++;
+                            
+                            int written = vfs_write(write_file, 0, new_len, (const uint8_t*)new_content);
+                            if (written > 0) {
+                                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                                console_puts("Wrote ");
+                                console_put_dec((uint32_t)written);
+                                console_puts(" bytes\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                                
+                                /* Relire pour vérifier */
+                                console_puts("New content: ");
+                                uint8_t* verify_buf = (uint8_t*)kmalloc(write_file->size + 1);
+                                if (verify_buf) {
+                                    int verify_len = vfs_read(write_file, 0, write_file->size, verify_buf);
+                                    if (verify_len > 0) {
+                                        verify_buf[verify_len] = '\0';
+                                        console_puts((const char*)verify_buf);
+                                    }
+                                    kfree(verify_buf);
+                                }
+                            } else {
+                                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                                console_puts("Write FAILED!\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            }
+                            
+                            vfs_close(write_file);
+                        } else {
+                            console_puts("Could not open /hello.txt for writing\n");
+                        }
                     }
                 }
             }

@@ -675,6 +675,255 @@ static int ext2_read_inode_data(ext2_fs_t* fs, ext2_inode_t* inode,
 }
 
 /* ===========================================
+ * Écriture de données dans un inode
+ * =========================================== */
+
+/**
+ * Obtient le numéro de bloc pour un index donné dans un inode.
+ * Si le bloc n'existe pas et allocate=1, alloue un nouveau bloc.
+ * 
+ * @param fs        Contexte du filesystem
+ * @param inode     L'inode (sera modifié si allocation)
+ * @param block_idx Index du bloc logique (0, 1, 2, ...)
+ * @param allocate  1 pour allouer si inexistant, 0 pour retourner 0
+ * @return Numéro de bloc physique, ou 0 si inexistant/erreur
+ */
+static uint32_t ext2_get_block(ext2_fs_t* fs, ext2_inode_t* inode, 
+                                uint32_t block_idx, int allocate)
+{
+    uint32_t ptrs_per_block = fs->block_size / sizeof(uint32_t);
+    uint32_t block_num = 0;
+    
+    if (block_idx < 12) {
+        /* Bloc direct */
+        block_num = inode->i_block[block_idx];
+        if (block_num == 0 && allocate) {
+            int32_t new_block = ext2_alloc_block(fs);
+            if (new_block > 0) {
+                inode->i_block[block_idx] = (uint32_t)new_block;
+                block_num = (uint32_t)new_block;
+                /* Mettre le bloc à zéro */
+                uint8_t* zero_buf = (uint8_t*)kmalloc(fs->block_size);
+                if (zero_buf) {
+                    memset(zero_buf, 0, fs->block_size);
+                    ext2_write_block(fs, block_num, zero_buf);
+                    kfree(zero_buf);
+                }
+            }
+        }
+    } else if (block_idx < 12 + ptrs_per_block) {
+        /* Bloc indirect simple */
+        uint32_t indirect_index = block_idx - 12;
+        uint32_t* indirect_block = (uint32_t*)kmalloc(fs->block_size);
+        if (indirect_block == NULL) return 0;
+        
+        /* Vérifier/allouer le bloc indirect */
+        if (inode->i_block[12] == 0) {
+            if (allocate) {
+                int32_t new_indirect = ext2_alloc_block(fs);
+                if (new_indirect > 0) {
+                    inode->i_block[12] = (uint32_t)new_indirect;
+                    memset(indirect_block, 0, fs->block_size);
+                    ext2_write_block(fs, (uint32_t)new_indirect, indirect_block);
+                } else {
+                    kfree(indirect_block);
+                    return 0;
+                }
+            } else {
+                kfree(indirect_block);
+                return 0;
+            }
+        }
+        
+        /* Lire le bloc indirect */
+        if (ext2_read_block(fs, inode->i_block[12], indirect_block) != 0) {
+            kfree(indirect_block);
+            return 0;
+        }
+        
+        block_num = indirect_block[indirect_index];
+        if (block_num == 0 && allocate) {
+            int32_t new_block = ext2_alloc_block(fs);
+            if (new_block > 0) {
+                indirect_block[indirect_index] = (uint32_t)new_block;
+                block_num = (uint32_t)new_block;
+                /* Réécrire le bloc indirect */
+                ext2_write_block(fs, inode->i_block[12], indirect_block);
+                /* Mettre le nouveau bloc à zéro */
+                memset(indirect_block, 0, fs->block_size);
+                ext2_write_block(fs, block_num, indirect_block);
+            }
+        }
+        kfree(indirect_block);
+    } else if (block_idx < 12 + ptrs_per_block + ptrs_per_block * ptrs_per_block) {
+        /* Bloc indirect double */
+        uint32_t di_index = block_idx - 12 - ptrs_per_block;
+        uint32_t di_first = di_index / ptrs_per_block;
+        uint32_t di_second = di_index % ptrs_per_block;
+        
+        uint32_t* indirect_block = (uint32_t*)kmalloc(fs->block_size);
+        if (indirect_block == NULL) return 0;
+        
+        /* Vérifier/allouer le premier niveau d'indirection */
+        if (inode->i_block[13] == 0) {
+            if (allocate) {
+                int32_t new_di = ext2_alloc_block(fs);
+                if (new_di > 0) {
+                    inode->i_block[13] = (uint32_t)new_di;
+                    memset(indirect_block, 0, fs->block_size);
+                    ext2_write_block(fs, (uint32_t)new_di, indirect_block);
+                } else {
+                    kfree(indirect_block);
+                    return 0;
+                }
+            } else {
+                kfree(indirect_block);
+                return 0;
+            }
+        }
+        
+        /* Lire le premier niveau */
+        if (ext2_read_block(fs, inode->i_block[13], indirect_block) != 0) {
+            kfree(indirect_block);
+            return 0;
+        }
+        
+        uint32_t second_level_block = indirect_block[di_first];
+        
+        /* Vérifier/allouer le second niveau */
+        if (second_level_block == 0) {
+            if (allocate) {
+                int32_t new_second = ext2_alloc_block(fs);
+                if (new_second > 0) {
+                    indirect_block[di_first] = (uint32_t)new_second;
+                    ext2_write_block(fs, inode->i_block[13], indirect_block);
+                    second_level_block = (uint32_t)new_second;
+                    memset(indirect_block, 0, fs->block_size);
+                    ext2_write_block(fs, second_level_block, indirect_block);
+                } else {
+                    kfree(indirect_block);
+                    return 0;
+                }
+            } else {
+                kfree(indirect_block);
+                return 0;
+            }
+        }
+        
+        /* Lire le second niveau */
+        if (ext2_read_block(fs, second_level_block, indirect_block) != 0) {
+            kfree(indirect_block);
+            return 0;
+        }
+        
+        block_num = indirect_block[di_second];
+        if (block_num == 0 && allocate) {
+            int32_t new_block = ext2_alloc_block(fs);
+            if (new_block > 0) {
+                indirect_block[di_second] = (uint32_t)new_block;
+                block_num = (uint32_t)new_block;
+                ext2_write_block(fs, second_level_block, indirect_block);
+                /* Mettre le nouveau bloc à zéro */
+                memset(indirect_block, 0, fs->block_size);
+                ext2_write_block(fs, block_num, indirect_block);
+            }
+        }
+        kfree(indirect_block);
+    }
+    /* Les blocs indirects triples ne sont pas supportés */
+    
+    return block_num;
+}
+
+/**
+ * Écrit des données dans un inode.
+ * Gère l'allocation de nouveaux blocs si nécessaire.
+ * 
+ * @param fs      Contexte du filesystem
+ * @param inode   L'inode (sera modifié)
+ * @param inode_num Numéro de l'inode (pour mise à jour sur disque)
+ * @param offset  Offset où commencer l'écriture
+ * @param size    Nombre d'octets à écrire
+ * @param buffer  Données à écrire
+ * @return Nombre d'octets écrits, ou -1 si erreur
+ */
+static int ext2_write_inode_data(ext2_fs_t* fs, ext2_inode_t* inode,
+                                  uint32_t inode_num, uint32_t offset, 
+                                  uint32_t size, const uint8_t* buffer)
+{
+    if (size == 0) return 0;
+    
+    uint8_t* block_buffer = (uint8_t*)kmalloc(fs->block_size);
+    if (block_buffer == NULL) return -1;
+    
+    uint32_t bytes_written = 0;
+    uint32_t block_index = offset / fs->block_size;
+    uint32_t block_offset = offset % fs->block_size;
+    
+    while (bytes_written < size) {
+        /* Obtenir ou allouer le bloc */
+        uint32_t block_num = ext2_get_block(fs, inode, block_index, 1);
+        if (block_num == 0) {
+            /* Échec d'allocation */
+            kfree(block_buffer);
+            if (bytes_written > 0) {
+                /* Mettre à jour la taille si on a écrit quelque chose */
+                if (offset + bytes_written > inode->i_size) {
+                    inode->i_size = offset + bytes_written;
+                }
+                ext2_write_inode(fs, inode_num, inode);
+            }
+            return bytes_written > 0 ? (int)bytes_written : -1;
+        }
+        
+        /* Calculer combien écrire dans ce bloc */
+        uint32_t to_write = fs->block_size - block_offset;
+        if (to_write > size - bytes_written) {
+            to_write = size - bytes_written;
+        }
+        
+        /* Si on n'écrit pas le bloc entier, lire d'abord le contenu existant */
+        if (block_offset > 0 || to_write < fs->block_size) {
+            if (ext2_read_block(fs, block_num, block_buffer) != 0) {
+                /* Bloc vide ou erreur - initialiser à zéro */
+                memset(block_buffer, 0, fs->block_size);
+            }
+        }
+        
+        /* Copier les données dans le buffer */
+        memcpy(block_buffer + block_offset, buffer + bytes_written, to_write);
+        
+        /* Écrire le bloc sur le disque */
+        if (ext2_write_block(fs, block_num, block_buffer) != 0) {
+            kfree(block_buffer);
+            return bytes_written > 0 ? (int)bytes_written : -1;
+        }
+        
+        bytes_written += to_write;
+        block_index++;
+        block_offset = 0;
+    }
+    
+    /* Mettre à jour la taille de l'inode si nécessaire */
+    if (offset + bytes_written > inode->i_size) {
+        inode->i_size = offset + bytes_written;
+    }
+    
+    /* Mettre à jour i_blocks (nombre de secteurs de 512 octets utilisés) */
+    uint32_t blocks_used = (inode->i_size + fs->block_size - 1) / fs->block_size;
+    inode->i_blocks = blocks_used * (fs->block_size / 512);
+    
+    /* Écrire l'inode mis à jour sur le disque */
+    if (ext2_write_inode(fs, inode_num, inode) != 0) {
+        kfree(block_buffer);
+        return -1;
+    }
+    
+    kfree(block_buffer);
+    return (int)bytes_written;
+}
+
+/* ===========================================
  * Callbacks VFS pour Ext2
  * =========================================== */
 
@@ -691,6 +940,25 @@ static int ext2_vfs_read(vfs_node_t* node, uint32_t offset, uint32_t size, uint8
     if (data == NULL) return -1;
     
     return ext2_read_inode_data(data->fs, &data->inode, offset, size, buffer);
+}
+
+static int ext2_vfs_write(vfs_node_t* node, uint32_t offset, uint32_t size, const uint8_t* buffer)
+{
+    ext2_node_data_t* data = (ext2_node_data_t*)node->fs_data;
+    if (data == NULL) return -1;
+    
+    /* Ne pas permettre l'écriture sur un répertoire */
+    if (node->type == VFS_DIRECTORY) return -1;
+    
+    int result = ext2_write_inode_data(data->fs, &data->inode, 
+                                        data->inode_num, offset, size, buffer);
+    
+    /* Mettre à jour la taille dans le noeud VFS */
+    if (result > 0) {
+        node->size = data->inode.i_size;
+    }
+    
+    return result;
 }
 
 static int ext2_vfs_open(vfs_node_t* node, uint32_t flags)
@@ -779,6 +1047,7 @@ static vfs_node_t* ext2_create_node(ext2_fs_t* fs, uint32_t inode_num, const cha
     
     /* Callbacks */
     node->read = ext2_vfs_read;
+    node->write = ext2_vfs_write;
     node->open = ext2_vfs_open;
     node->close = ext2_vfs_close;
     
