@@ -41,6 +41,13 @@ static int strncmp(const char* s1, const char* s2, size_t n)
     return *(unsigned char*)s1 - *(unsigned char*)s2;
 }
 
+static size_t strlen(const char* s)
+{
+    size_t len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
 /* ===========================================
  * Lecture bas niveau
  * =========================================== */
@@ -1001,6 +1008,9 @@ static uint32_t ext2_ftype_to_vfs(uint8_t file_type)
     }
 }
 
+/* Forward declarations pour les callbacks VFS */
+static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name);
+
 /* Crée un noeud VFS à partir d'un inode Ext2 */
 static vfs_node_t* ext2_create_node(ext2_fs_t* fs, uint32_t inode_num, const char* name)
 {
@@ -1058,6 +1068,7 @@ static vfs_node_t* ext2_create_node(ext2_fs_t* fs, uint32_t inode_num, const cha
     if (node->type == VFS_DIRECTORY) {
         node->readdir = ext2_vfs_readdir;
         node->finddir = ext2_vfs_finddir;
+        node->mkdir = ext2_vfs_mkdir;
     }
     
     return node;
@@ -1161,6 +1172,259 @@ vfs_node_t* ext2_vfs_finddir(vfs_node_t* node, const char* name)
     
     kfree(dir_data);
     return NULL;
+}
+
+/* ===========================================
+ * Ajout d'entrée dans un répertoire
+ * =========================================== */
+
+/**
+ * Calcule la taille réelle nécessaire pour une entrée de répertoire.
+ * La taille est alignée sur 4 octets.
+ */
+static uint32_t ext2_dir_entry_size(uint8_t name_len)
+{
+    /* Taille = 8 octets (header) + name_len, aligné sur 4 */
+    return ((8 + name_len + 3) / 4) * 4;
+}
+
+/**
+ * Ajoute une entrée dans un répertoire.
+ * 
+ * @param fs         Contexte du filesystem
+ * @param dir_inode  Inode du répertoire parent (sera modifié)
+ * @param dir_inode_num Numéro de l'inode du répertoire
+ * @param new_inode  Numéro de l'inode de la nouvelle entrée
+ * @param name       Nom de la nouvelle entrée
+ * @param file_type  Type de fichier (EXT2_FT_*)
+ * @return 0 si succès, -1 si erreur
+ */
+static int ext2_add_dir_entry(ext2_fs_t* fs, ext2_inode_t* dir_inode,
+                               uint32_t dir_inode_num, uint32_t new_inode,
+                               const char* name, uint8_t file_type)
+{
+    uint32_t name_len = strlen(name);
+    if (name_len > 255) name_len = 255;
+    
+    uint32_t needed_size = ext2_dir_entry_size((uint8_t)name_len);
+    
+    /* Lire les données du répertoire */
+    uint8_t* dir_data = (uint8_t*)kmalloc(dir_inode->i_size > 0 ? dir_inode->i_size : fs->block_size);
+    if (dir_data == NULL) return -1;
+    
+    if (dir_inode->i_size > 0) {
+        if (ext2_read_inode_data(fs, dir_inode, 0, dir_inode->i_size, dir_data) < 0) {
+            kfree(dir_data);
+            return -1;
+        }
+    }
+    
+    /* Chercher de l'espace dans les entrées existantes */
+    uint32_t offset = 0;
+    int found_space = 0;
+    
+    while (offset < dir_inode->i_size) {
+        ext2_dir_entry_t* entry = (ext2_dir_entry_t*)(dir_data + offset);
+        
+        if (entry->rec_len == 0) break;
+        
+        /* Calculer la taille réelle utilisée par cette entrée */
+        uint32_t actual_size = ext2_dir_entry_size(entry->name_len);
+        uint32_t free_space = entry->rec_len - actual_size;
+        
+        /* Vérifier si on peut insérer notre entrée dans l'espace libre */
+        if (free_space >= needed_size) {
+            /* Réduire la taille de l'entrée existante */
+            entry->rec_len = (uint16_t)actual_size;
+            
+            /* Créer la nouvelle entrée juste après */
+            ext2_dir_entry_t* new_entry = (ext2_dir_entry_t*)(dir_data + offset + actual_size);
+            new_entry->inode = new_inode;
+            new_entry->rec_len = (uint16_t)free_space;
+            new_entry->name_len = (uint8_t)name_len;
+            new_entry->file_type = file_type;
+            memcpy(new_entry->name, name, name_len);
+            
+            found_space = 1;
+            break;
+        }
+        
+        offset += entry->rec_len;
+    }
+    
+    if (!found_space) {
+        /* Pas d'espace - allouer un nouveau bloc */
+        int32_t new_block = ext2_alloc_block(fs);
+        if (new_block < 0) {
+            kfree(dir_data);
+            return -1;
+        }
+        
+        /* Réallouer le buffer pour inclure le nouveau bloc */
+        uint8_t* new_dir_data = (uint8_t*)kmalloc(dir_inode->i_size + fs->block_size);
+        if (new_dir_data == NULL) {
+            ext2_free_block(fs, (uint32_t)new_block);
+            kfree(dir_data);
+            return -1;
+        }
+        
+        if (dir_inode->i_size > 0) {
+            memcpy(new_dir_data, dir_data, dir_inode->i_size);
+        }
+        memset(new_dir_data + dir_inode->i_size, 0, fs->block_size);
+        kfree(dir_data);
+        dir_data = new_dir_data;
+        
+        /* Créer l'entrée dans le nouveau bloc */
+        ext2_dir_entry_t* new_entry = (ext2_dir_entry_t*)(dir_data + dir_inode->i_size);
+        new_entry->inode = new_inode;
+        new_entry->rec_len = (uint16_t)fs->block_size;  /* Prend tout le bloc */
+        new_entry->name_len = (uint8_t)name_len;
+        new_entry->file_type = file_type;
+        memcpy(new_entry->name, name, name_len);
+        
+        /* Mettre à jour la taille du répertoire */
+        dir_inode->i_size += fs->block_size;
+    }
+    
+    /* Écrire les données mises à jour */
+    if (ext2_write_inode_data(fs, dir_inode, dir_inode_num, 0, dir_inode->i_size, dir_data) < 0) {
+        kfree(dir_data);
+        return -1;
+    }
+    
+    kfree(dir_data);
+    return 0;
+}
+
+/* ===========================================
+ * Création de répertoire (mkdir)
+ * =========================================== */
+
+/**
+ * Crée un nouveau répertoire.
+ * 
+ * @param parent     Noeud VFS du répertoire parent
+ * @param name       Nom du nouveau répertoire
+ * @return 0 si succès, -1 si erreur
+ */
+static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
+{
+    if (parent == NULL || parent->fs_data == NULL || name == NULL) return -1;
+    if ((parent->type & VFS_DIRECTORY) == 0) return -1;
+    
+    ext2_node_data_t* parent_data = (ext2_node_data_t*)parent->fs_data;
+    ext2_fs_t* fs = parent_data->fs;
+    
+    /* Vérifier que le nom n'existe pas déjà */
+    vfs_node_t* existing = ext2_vfs_finddir(parent, name);
+    if (existing != NULL) {
+        /* Le nom existe déjà */
+        return -1;
+    }
+    
+    /* 1. Allouer un nouvel inode */
+    int32_t new_inode_num = ext2_alloc_inode(fs);
+    if (new_inode_num < 0) {
+        console_puts("[EXT2] mkdir: failed to allocate inode\n");
+        return -1;
+    }
+    
+    /* 2. Allouer un bloc pour les entrées du répertoire */
+    int32_t new_block = ext2_alloc_block(fs);
+    if (new_block < 0) {
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        console_puts("[EXT2] mkdir: failed to allocate block\n");
+        return -1;
+    }
+    
+    /* 3. Initialiser l'inode du nouveau répertoire */
+    ext2_inode_t new_inode;
+    memset(&new_inode, 0, sizeof(ext2_inode_t));
+    
+    new_inode.i_mode = EXT2_S_IFDIR | 0755;  /* Répertoire avec permissions rwxr-xr-x */
+    new_inode.i_uid = 0;
+    new_inode.i_gid = 0;
+    new_inode.i_size = fs->block_size;  /* Un bloc pour . et .. */
+    new_inode.i_atime = 0;  /* TODO: utiliser le temps réel */
+    new_inode.i_ctime = 0;
+    new_inode.i_mtime = 0;
+    new_inode.i_dtime = 0;
+    new_inode.i_links_count = 2;  /* . et le lien depuis le parent */
+    new_inode.i_blocks = fs->block_size / 512;
+    new_inode.i_block[0] = (uint32_t)new_block;
+    
+    /* 4. Créer les entrées . et .. dans le nouveau répertoire */
+    uint8_t* dir_block = (uint8_t*)kmalloc(fs->block_size);
+    if (dir_block == NULL) {
+        ext2_free_block(fs, (uint32_t)new_block);
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    memset(dir_block, 0, fs->block_size);
+    
+    /* Entrée "." (pointe vers soi-même) */
+    ext2_dir_entry_t* dot = (ext2_dir_entry_t*)dir_block;
+    dot->inode = (uint32_t)new_inode_num;
+    dot->rec_len = 12;  /* Taille minimale pour "." */
+    dot->name_len = 1;
+    dot->file_type = EXT2_FT_DIR;
+    dot->name[0] = '.';
+    
+    /* Entrée ".." (pointe vers le parent) */
+    ext2_dir_entry_t* dotdot = (ext2_dir_entry_t*)(dir_block + 12);
+    dotdot->inode = parent_data->inode_num;
+    dotdot->rec_len = (uint16_t)(fs->block_size - 12);  /* Reste du bloc */
+    dotdot->name_len = 2;
+    dotdot->file_type = EXT2_FT_DIR;
+    dotdot->name[0] = '.';
+    dotdot->name[1] = '.';
+    
+    /* 5. Écrire le bloc du nouveau répertoire */
+    if (ext2_write_block(fs, (uint32_t)new_block, dir_block) != 0) {
+        kfree(dir_block);
+        ext2_free_block(fs, (uint32_t)new_block);
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    kfree(dir_block);
+    
+    /* 6. Écrire l'inode du nouveau répertoire */
+    if (ext2_write_inode(fs, (uint32_t)new_inode_num, &new_inode) != 0) {
+        ext2_free_block(fs, (uint32_t)new_block);
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    
+    /* 7. Ajouter l'entrée dans le répertoire parent */
+    if (ext2_add_dir_entry(fs, &parent_data->inode, parent_data->inode_num,
+                           (uint32_t)new_inode_num, name, EXT2_FT_DIR) != 0) {
+        ext2_free_block(fs, (uint32_t)new_block);
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    
+    /* 8. Mettre à jour le compteur de liens du parent (+1 pour ..) */
+    parent_data->inode.i_links_count++;
+    if (ext2_write_inode(fs, parent_data->inode_num, &parent_data->inode) != 0) {
+        /* L'entrée est déjà ajoutée, on continue quand même */
+        console_puts("[EXT2] mkdir: warning - failed to update parent links\n");
+    }
+    
+    /* 9. Mettre à jour le compteur de répertoires du groupe */
+    uint32_t group = ((uint32_t)new_inode_num - 1) / fs->inodes_per_group;
+    if (group < fs->num_groups) {
+        fs->group_descs[group].bg_used_dirs_count++;
+        ext2_write_group_desc(fs, group);
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_puts("[EXT2] Created directory: ");
+    console_puts(name);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    
+    return 0;
 }
 
 /* ===========================================

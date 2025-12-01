@@ -358,9 +358,57 @@ int vfs_create(const char* path)
 
 int vfs_mkdir(const char* path)
 {
-    /* TODO: Implémenter création de dossier */
-    (void)path;
-    return -1;
+    if (path == NULL || path[0] == '\0') return -1;
+    if (path[0] != '/') return -1;  /* Chemin absolu requis */
+    
+    /* Trouver le dernier '/' pour séparer le chemin parent du nom */
+    int last_slash = -1;
+    int i = 0;
+    while (path[i] != '\0') {
+        if (path[i] == '/') last_slash = i;
+        i++;
+    }
+    
+    if (last_slash < 0) return -1;
+    
+    /* Extraire le nom du nouveau répertoire */
+    const char* name = path + last_slash + 1;
+    if (name[0] == '\0') return -1;  /* Pas de nom après le dernier / */
+    
+    /* Construire le chemin du parent */
+    char parent_path[VFS_MAX_PATH];
+    if (last_slash == 0) {
+        /* Le parent est la racine */
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    } else {
+        for (i = 0; i < last_slash && i < VFS_MAX_PATH - 1; i++) {
+            parent_path[i] = path[i];
+        }
+        parent_path[i] = '\0';
+    }
+    
+    /* Résoudre le répertoire parent */
+    vfs_node_t* parent = vfs_resolve_path(parent_path);
+    if (parent == NULL) {
+        console_puts("[VFS] mkdir: parent directory not found\n");
+        return -1;
+    }
+    
+    /* Vérifier que c'est un répertoire */
+    if ((parent->type & VFS_DIRECTORY) == 0) {
+        console_puts("[VFS] mkdir: parent is not a directory\n");
+        return -1;
+    }
+    
+    /* Vérifier que le callback mkdir existe */
+    if (parent->mkdir == NULL) {
+        console_puts("[VFS] mkdir: operation not supported\n");
+        return -1;
+    }
+    
+    /* Appeler le callback mkdir du filesystem */
+    return parent->mkdir(parent, name);
 }
 
 int vfs_unlink(const char* path)
