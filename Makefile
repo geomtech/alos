@@ -45,11 +45,14 @@ NET_L2_OBJ = src/net/l2/ethernet.o src/net/l2/arp.o
 NET_L3_SRC = src/net/l3/ipv4.c src/net/l3/icmp.c src/net/l3/route.c
 NET_L3_OBJ = src/net/l3/ipv4.o src/net/l3/icmp.o src/net/l3/route.o
 
+NET_L4_SRC = src/net/l4/udp.c
+NET_L4_OBJ = src/net/l4/udp.o
+
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_CORE_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ)
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -92,6 +95,9 @@ src/net/l2/%.o: src/net/l2/%.c
 src/net/l3/%.o: src/net/l3/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+src/net/l4/%.o: src/net/l4/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 src/net/core/%.o: src/net/core/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
@@ -99,7 +105,7 @@ src/net/core/%.o: src/net/core/%.c
 clean:
 	rm -f src/arch/x86/*.o src/kernel/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o
-	rm -f src/net/l2/*.o src/net/l3/*.o src/net/core/*.o
+	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
 	rm -f alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)

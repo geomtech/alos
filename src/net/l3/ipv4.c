@@ -1,6 +1,7 @@
 /* src/net/l3/ipv4.c - IPv4 Protocol Handler */
 #include "ipv4.h"
 #include "icmp.h"
+#include "../l4/udp.h"
 #include "../core/net.h"
 #include "../core/netdev.h"
 #include "../l2/ethernet.h"
@@ -131,9 +132,7 @@ void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len)
             break;
             
         case IP_PROTO_UDP:
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
-            console_puts("[IPv4] UDP packet (not implemented)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            udp_handle_packet(ip, payload, payload_len);
             break;
             
         default:

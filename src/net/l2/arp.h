@@ -3,6 +3,7 @@
 #define NET_ARP_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "ethernet.h"
 
 /**
@@ -73,5 +74,29 @@ void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len);
  * @param target_ip  IP de la cible (4 bytes)
  */
 void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip);
+
+/**
+ * Envoie une requête ARP (ARP Request).
+ * 
+ * @param target_ip IP cible dont on veut connaître la MAC (4 bytes)
+ */
+void arp_send_request(uint8_t* target_ip);
+
+/**
+ * Ajoute une entrée dans le cache ARP.
+ * 
+ * @param ip  Adresse IP (4 bytes)
+ * @param mac Adresse MAC (6 bytes)
+ */
+void arp_cache_add(uint8_t* ip, uint8_t* mac);
+
+/**
+ * Cherche une adresse MAC dans le cache ARP.
+ * 
+ * @param ip       Adresse IP à chercher (4 bytes)
+ * @param mac_out  Buffer pour stocker la MAC trouvée (6 bytes)
+ * @return true si trouvée, false sinon
+ */
+bool arp_cache_lookup(uint8_t* ip, uint8_t* mac_out);
 
 #endif /* NET_ARP_H */
