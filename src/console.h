@@ -61,6 +61,11 @@ void console_puts(const char* str);
 void console_put_hex(uint32_t value);
 
 /**
+ * Affiche un octet en hexadécimal (2 caractères).
+ */
+void console_put_hex_byte(uint8_t value);
+
+/**
  * Affiche un nombre en décimal.
  */
 void console_put_dec(uint32_t value);

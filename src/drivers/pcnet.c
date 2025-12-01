@@ -3,6 +3,7 @@
 #include "../io.h"
 #include "../kheap.h"
 #include "../console.h"
+#include "../net/utils.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;
@@ -123,6 +124,99 @@ void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 }
 
 /* ============================================ */
+/*           Packet Reception                   */
+/* ============================================ */
+
+/**
+ * Retourne le nom de l'EtherType pour affichage.
+ */
+static const char* ethertype_name(uint16_t ethertype)
+{
+    switch (ethertype) {
+        case ETHERTYPE_IPV4: return "IPv4";
+        case ETHERTYPE_ARP:  return "ARP";
+        case ETHERTYPE_IPV6: return "IPv6";
+        case ETHERTYPE_VLAN: return "VLAN";
+        default:             return "Unknown";
+    }
+}
+
+/**
+ * Traite les paquets reçus.
+ * Appelé depuis le handler d'interruption quand RINT est set.
+ */
+static void pcnet_receive(PCNetDevice* dev)
+{
+    if (dev == NULL || dev->rx_ring == NULL) return;
+    
+    /* Traiter tous les paquets disponibles */
+    while (1) {
+        int idx = dev->rx_index;
+        PCNetRxDesc* desc = &dev->rx_ring[idx];
+        
+        /* Vérifier si le descripteur appartient au CPU (OWN = 0) */
+        if (desc->status & 0x8000) {
+            /* Encore possédé par la carte, plus rien à lire */
+            break;
+        }
+        
+        /* Vérifier les erreurs */
+        if (desc->status & 0x4000) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            console_puts("[RX] Error in packet! Status: ");
+            console_put_hex(desc->status);
+            console_puts("\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        } else {
+            /* Paquet valide - récupérer la taille */
+            /* mcnt contient la taille du message (12 bits bas) */
+            uint16_t len = desc->mcnt & 0x0FFF;
+            
+            /* Récupérer le pointeur vers les données */
+            uint8_t* buffer = (uint8_t*)(uintptr_t)desc->rbadr;
+            
+            /* Afficher les infos du paquet */
+            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+            console_puts("[RX] Packet received! Len: ");
+            console_put_dec(len);
+            console_puts(" bytes");
+            
+            /* Extraire et afficher l'EtherType (octets 12-13, big-endian) */
+            if (len >= 14) {
+                uint16_t ethertype = ntohs(*(uint16_t*)(buffer + 12));
+                console_puts(" | EtherType: 0x");
+                console_put_hex(ethertype);
+                console_puts(" (");
+                console_puts(ethertype_name(ethertype));
+                console_puts(")");
+                
+                /* Afficher les MACs source et destination */
+                console_puts("\n       Dst: ");
+                for (int i = 0; i < 6; i++) {
+                    if (i > 0) console_putc(':');
+                    console_put_hex_byte(buffer[i]);
+                }
+                console_puts(" Src: ");
+                for (int i = 6; i < 12; i++) {
+                    if (i > 6) console_putc(':');
+                    console_put_hex_byte(buffer[i]);
+                }
+            }
+            console_puts("\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        }
+        
+        /* CRITIQUE: Rendre le descripteur à la carte */
+        desc->bcnt = 0xF000 | ((uint16_t)(-(int16_t)PCNET_BUFFER_SIZE) & 0x0FFF);
+        desc->mcnt = 0;
+        desc->status = 0x8000;  /* OWN = 1, carte peut réutiliser */
+        
+        /* Passer au descripteur suivant */
+        dev->rx_index = (dev->rx_index + 1) % PCNET_RX_BUFFERS;
+    }
+}
+
+/* ============================================ */
 /*           Interrupt Handler                  */
 /* ============================================ */
 
@@ -162,11 +256,13 @@ void pcnet_irq_handler(void)
     uint32_t ack = (csr0 & 0xFF00) | CSR0_IENA;
     pcnet_write_csr(g_pcnet_dev, CSR0, ack);
     
-    /* Mettre à jour les statistiques */
+    /* Traiter les paquets reçus si RINT */
     if (csr0 & CSR0_RINT) {
+        pcnet_receive(g_pcnet_dev);
         g_pcnet_dev->packets_rx++;
     }
     
+    /* Mettre à jour les statistiques TX */
     if (csr0 & CSR0_TINT) {
         g_pcnet_dev->packets_tx++;
     }

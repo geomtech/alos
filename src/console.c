@@ -125,6 +125,13 @@ void console_put_hex(uint32_t value)
     }
 }
 
+void console_put_hex_byte(uint8_t value)
+{
+    const char hex_chars[] = "0123456789ABCDEF";
+    console_putc(hex_chars[(value >> 4) & 0xF]);
+    console_putc(hex_chars[value & 0xF]);
+}
+
 void console_put_dec(uint32_t value)
 {
     if (value == 0) {
