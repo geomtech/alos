@@ -701,3 +701,19 @@ PCNetDevice* pcnet_get_device(void)
 {
     return g_pcnet_dev;
 }
+
+void pcnet_get_mac(uint8_t* buf)
+{
+    if (buf == NULL) return;
+    
+    if (g_pcnet_dev != NULL) {
+        for (int i = 0; i < 6; i++) {
+            buf[i] = g_pcnet_dev->mac_addr[i];
+        }
+    } else {
+        /* Pas de device, remplir avec des zéros */
+        for (int i = 0; i < 6; i++) {
+            buf[i] = 0;
+        }
+    }
+}

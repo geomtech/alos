@@ -39,6 +39,10 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
     /* Buffer de 60 octets (taille min Ethernet) sur la stack */
     uint8_t buffer[60];
     
+    /* Récupérer notre vraie adresse MAC depuis le driver */
+    uint8_t my_mac[6];
+    pcnet_get_mac(my_mac);
+    
     /* Initialiser à zéro (padding) */
     for (int i = 0; i < 60; i++) {
         buffer[i] = 0;
@@ -54,7 +58,7 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
     
     /* Source MAC = notre MAC */
     for (int i = 0; i < 6; i++) {
-        eth->src_mac[i] = MY_MAC[i];
+        eth->src_mac[i] = my_mac[i];
     }
     
     /* EtherType = ARP (0x0806) en big-endian */
@@ -80,7 +84,7 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
     
     /* Sender MAC = notre MAC */
     for (int i = 0; i < 6; i++) {
-        arp->src_mac[i] = MY_MAC[i];
+        arp->src_mac[i] = my_mac[i];
     }
     
     /* Sender IP = notre IP */
@@ -108,7 +112,7 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
         console_puts("[ARP] Sent Reply: ");
         print_ip(MY_IP);
         console_puts(" is at ");
-        print_mac(MY_MAC);
+        print_mac(my_mac);
         console_puts(" -> ");
         print_mac(target_mac);
         console_puts("\n");

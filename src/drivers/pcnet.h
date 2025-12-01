@@ -243,4 +243,11 @@ void pcnet_irq_handler(void);
  */
 PCNetDevice* pcnet_get_device(void);
 
+/**
+ * Copie l'adresse MAC de la carte dans le buffer fourni.
+ * 
+ * @param buf Buffer de 6 octets pour recevoir l'adresse MAC
+ */
+void pcnet_get_mac(uint8_t* buf);
+
 #endif /* PCNET_H */
