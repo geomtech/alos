@@ -117,14 +117,16 @@ clean:
 run: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
-		-device pcnet,netdev=net0
+		-device pcnet,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec debug CPU (affiche les exceptions et interrupts dans le terminal)
 run-debug: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
 		-device pcnet,netdev=net0 \
-		-d int,cpu_reset -no-reboot
+		-d int,cpu_reset -no-reboot \
+		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: alos.bin
@@ -145,13 +147,15 @@ run-tap: alos.bin
 run-vmnet: alos.bin
 	sudo qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev vmnet-shared,id=net0 \
-		-device pcnet,netdev=net0
+		-device pcnet,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec socket multicast (pour debug local sans réseau externe)
 run-socket: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev socket,id=net0,mcast=230.0.0.1:1234 \
-		-device pcnet,netdev=net0
+		-device pcnet,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
