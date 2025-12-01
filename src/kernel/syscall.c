@@ -23,6 +23,10 @@ static inline void disable_interrupts(void) { __asm__ volatile("cli"); }
 static file_descriptor_t* fd_table = NULL;
 static int fd_table_initialized = 0;
 
+/* Socket serveur global pour contourner le bug fd_table */
+static tcp_socket_t* g_server_socket = NULL;
+static int g_server_fd = -1;
+
 /**
  * Initialise la table des file descriptors.
  */
@@ -338,14 +342,14 @@ static int sys_socket(int domain, int type, int protocol)
     fd_table[fd].flags = O_RDWR;
     fd_table[fd].socket = sock;
     
+    /* Sauvegarder globalement pour contourner le bug fd_table */
+    g_server_socket = sock;
+    g_server_fd = fd;
+    
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] socket: fd_table addr = ");
-    console_put_hex((uint32_t)fd_table);
-    console_puts(", created fd ");
+    console_puts("[SYSCALL] socket: created fd ");
     console_put_dec(fd);
-    console_puts(", type set to ");
-    console_put_dec(fd_table[fd].type);
-    console_puts("\n");
+    console_puts(" (global socket saved)\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return fd;
@@ -472,43 +476,20 @@ static int sys_listen(int fd, int backlog)
 static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
 {
     (void)len;
-    static int accept_call_count = 0;
-    accept_call_count++;
+    (void)fd;  /* On ignore fd et on utilise le socket global */
     
-    /* Debug seulement au premier appel */
-    if (accept_call_count == 1) {
-        console_puts("[SYSCALL] accept: fd_table addr = ");
-        console_put_hex((uint32_t)fd_table);
-        console_puts(", fd_table[");
-        console_put_dec(fd);
-        console_puts("].type = ");
-        console_put_dec(fd_table[fd].type);
-        console_puts(" (expected ");
-        console_put_dec(FILE_TYPE_SOCKET);
-        console_puts(")\n");
-    }
-    
-    /* Vérifier le FD */
-    if (fd < 0 || fd >= MAX_FD) {
-        console_puts("[SYSCALL] accept: invalid fd\n");
-        return -1;
-    }
-    
-    if (fd_table[fd].type != FILE_TYPE_SOCKET) {
-        if (accept_call_count == 1) {
-            console_puts("[SYSCALL] accept: not a socket\n");
-        }
-        return -1;
-    }
-    
-    tcp_socket_t* sock = fd_table[fd].socket;
+    /* Utiliser le socket global au lieu de fd_table */
+    tcp_socket_t* sock = g_server_socket;
     if (sock == NULL) {
+        console_puts("[SYSCALL] accept: no server socket\n");
         return -1;
     }
     
-    /* Vérifier que le socket est en écoute */
-    if (sock->state != TCP_STATE_LISTEN && sock->state != TCP_STATE_SYN_RCVD) {
-        console_puts("[SYSCALL] accept: socket not listening\n");
+    /* Vérifier que le socket est en écoute ou en cours de connexion */
+    if (sock->state != TCP_STATE_LISTEN && 
+        sock->state != TCP_STATE_SYN_RCVD &&
+        sock->state != TCP_STATE_ESTABLISHED) {
+        /* Attendre silencieusement */
         return -1;
     }
     
@@ -534,17 +515,6 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
         /* Traiter les paquets réseau en attente */
         net_poll();
         
-        /* Petit délai pour ne pas surcharger le CPU */
-        for (volatile int i = 0; i < 10000; i++);
-        
-        /* Log périodique pour debug */
-        timeout++;
-        if (timeout % 1000 == 0) {
-            console_puts("[SYSCALL] accept: still waiting... state=");
-            console_puts(tcp_state_name(sock->state));
-            console_puts("\n");
-        }
-        
         /* Céder le CPU */
         schedule();
     }
@@ -552,6 +522,14 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[SYSCALL] accept: connection established!\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* 
+     * V1 Simplifié: On retourne le même fd que le socket serveur.
+     * Après close(), le serveur devra refaire bind()+listen() pour accepter
+     * une nouvelle connexion.
+     * 
+     * TODO V2: Créer un socket séparé pour chaque connexion client
+     */
     
     /* Remplir l'adresse du client si demandé */
     if (addr != NULL) {
@@ -563,9 +541,7 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
                          ((uint32_t)sock->remote_ip[3] << 24);
     }
     
-    /* Pour V1 simplifiée: retourner le même FD */
-    /* Dans une vraie implémentation, on créerait un nouveau socket */
-    return fd;
+    return g_server_fd;
 }
 
 /**
@@ -580,17 +556,10 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
 static int sys_recv(int fd, uint8_t* buf, int len, int flags)
 {
     (void)flags;
+    (void)fd;
     
-    /* Vérifier le FD */
-    if (fd < 0 || fd >= MAX_FD) {
-        return -1;
-    }
-    
-    if (fd_table[fd].type != FILE_TYPE_SOCKET) {
-        return -1;
-    }
-    
-    tcp_socket_t* sock = fd_table[fd].socket;
+    /* Utiliser le socket global */
+    tcp_socket_t* sock = g_server_socket;
     if (sock == NULL) {
         return -1;
     }
@@ -634,17 +603,10 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
 static int sys_send(int fd, const uint8_t* buf, int len, int flags)
 {
     (void)flags;
+    (void)fd;
     
-    /* Vérifier le FD */
-    if (fd < 0 || fd >= MAX_FD) {
-        return -1;
-    }
-    
-    if (fd_table[fd].type != FILE_TYPE_SOCKET) {
-        return -1;
-    }
-    
-    tcp_socket_t* sock = fd_table[fd].socket;
+    /* Utiliser le socket global */
+    tcp_socket_t* sock = g_server_socket;
     if (sock == NULL) {
         return -1;
     }
@@ -663,6 +625,12 @@ static int sys_close(int fd)
     KLOG_INFO("SYSCALL", "sys_close called");
     KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
     
+    /* Si c'est le socket serveur global, le fermer (remet en LISTEN) */
+    if (fd == g_server_fd && g_server_socket != NULL) {
+        tcp_close(g_server_socket);
+        return 0;
+    }
+    
     /* Vérifier le FD */
     if (fd < 0 || fd >= MAX_FD) {
         return -1;
@@ -673,13 +641,8 @@ static int sys_close(int fd)
         return -1;
     }
     
-    if (fd_table[fd].type == FILE_TYPE_NONE) {
+    if (fd_table == NULL || fd_table[fd].type == FILE_TYPE_NONE) {
         return -1;
-    }
-    
-    /* Si c'est un socket, le fermer */
-    if (fd_table[fd].type == FILE_TYPE_SOCKET && fd_table[fd].socket != NULL) {
-        tcp_close(fd_table[fd].socket);
     }
     
     /* Si c'est un fichier VFS, le fermer */

@@ -81,6 +81,9 @@ static inline uint16_t tcp_make_data_offset_flags(int header_len, uint8_t flags)
 /**
  * Calcule le checksum TCP avec pseudo-header.
  * Le checksum couvre: pseudo-header + header TCP + data
+ * 
+ * Le calcul se fait en additionnant tous les mots de 16 bits
+ * en network byte order (big-endian), puis en prenant le complément à 1.
  */
 static uint16_t tcp_checksum(uint8_t* src_ip, uint8_t* dest_ip, 
                               tcp_header_t* tcp_hdr, uint8_t* data, int data_len)
@@ -88,45 +91,53 @@ static uint16_t tcp_checksum(uint8_t* src_ip, uint8_t* dest_ip,
     uint32_t sum = 0;
     int tcp_len = TCP_HEADER_SIZE + data_len;
     
-    /* === Pseudo Header === */
-    /* Source IP */
+    /* === Pseudo Header (12 bytes) === */
+    /* Structure: SrcIP(4) + DestIP(4) + Zero(1) + Proto(1) + TCP_Length(2) */
+    
+    /* Source IP (4 bytes = 2 mots de 16 bits) */
     sum += ((uint16_t)src_ip[0] << 8) | src_ip[1];
     sum += ((uint16_t)src_ip[2] << 8) | src_ip[3];
     
-    /* Destination IP */
+    /* Destination IP (4 bytes = 2 mots de 16 bits) */
     sum += ((uint16_t)dest_ip[0] << 8) | dest_ip[1];
     sum += ((uint16_t)dest_ip[2] << 8) | dest_ip[3];
     
-    /* Zero + Protocol */
-    sum += IP_PROTO_TCP;
+    /* Zero (8 bits) + Protocol (8 bits) = 1 mot de 16 bits */
+    /* Zero est toujours 0, Protocol TCP = 6 */
+    sum += (uint16_t)IP_PROTO_TCP;  /* 0x0006 en big-endian */
     
-    /* TCP Length */
-    sum += tcp_len;
+    /* TCP Length (16 bits) - en host byte order, sera additionné tel quel */
+    sum += (uint16_t)tcp_len;
     
-    /* === TCP Header === */
-    uint16_t* ptr = (uint16_t*)tcp_hdr;
-    for (int i = 0; i < TCP_HEADER_SIZE / 2; i++) {
-        sum += ntohs(ptr[i]);
+    /* === TCP Header (déjà en network byte order) === */
+    /* On additionne les mots de 16 bits directement sans conversion */
+    uint8_t* ptr = (uint8_t*)tcp_hdr;
+    for (int i = 0; i < TCP_HEADER_SIZE; i += 2) {
+        sum += ((uint16_t)ptr[i] << 8) | ptr[i + 1];
     }
     
     /* === TCP Data === */
-    ptr = (uint16_t*)data;
-    while (data_len > 1) {
-        sum += ntohs(*ptr++);
-        data_len -= 2;
+    ptr = data;
+    int remaining = data_len;
+    while (remaining > 1) {
+        sum += ((uint16_t)ptr[0] << 8) | ptr[1];
+        ptr += 2;
+        remaining -= 2;
     }
     
-    /* Dernier octet impair */
-    if (data_len == 1) {
-        sum += ((uint8_t*)ptr)[0] << 8;
+    /* Dernier octet impair (padding avec 0) */
+    if (remaining == 1) {
+        sum += (uint16_t)ptr[0] << 8;
     }
     
-    /* Replier les bits de carry */
+    /* Replier les bits de carry (fold 32-bit sum to 16-bit) */
     while (sum >> 16) {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
     
-    return htons(~sum);
+    /* Complément à 1 et conversion en network byte order */
+    uint16_t checksum = (uint16_t)(~sum);
+    return htons(checksum);
 }
 
 /* ===========================================
@@ -265,10 +276,14 @@ tcp_socket_t* tcp_listen(uint16_t port)
 
 /**
  * Ferme un socket TCP.
+ * Envoie un FIN si le socket est connecté.
+ * Si le socket était un serveur (a un local_port), le remet en LISTEN.
  */
 void tcp_close(tcp_socket_t* sock)
 {
     if (sock == NULL) return;
+    
+    uint16_t saved_port = sock->local_port;
     
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[TCP] Closing socket on port ");
@@ -278,17 +293,35 @@ void tcp_close(tcp_socket_t* sock)
     console_puts(")\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
-    /* Réinitialiser le socket */
-    sock->state = TCP_STATE_CLOSED;
-    sock->in_use = false;
-    sock->local_port = 0;
+    /* Si le socket est connecté, envoyer un FIN */
+    if (sock->state == TCP_STATE_ESTABLISHED) {
+        tcp_send_packet(sock, TCP_FLAG_FIN | TCP_FLAG_ACK, NULL, 0);
+        /* Note: tcp_send_packet incrémente déjà SEQ pour le FIN */
+        
+        /* Attendre un peu pour que le FIN soit envoyé */
+        for (volatile int i = 0; i < 100000; i++);
+    }
+    
+    /* Remettre le socket en mode LISTEN pour réutilisation */
+    sock->state = TCP_STATE_LISTEN;
     sock->remote_port = 0;
     sock->seq = 0;
     sock->ack = 0;
     sock->flags = 0;
+    sock->recv_head = 0;
+    sock->recv_tail = 0;
+    sock->recv_count = 0;
     for (int i = 0; i < 4; i++) {
         sock->remote_ip[i] = 0;
     }
+    /* Garder le local_port et in_use pour permettre de réutiliser le socket */
+    sock->local_port = saved_port;
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("[TCP] Socket reset to LISTEN on port ");
+    console_put_dec(saved_port);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /* ===========================================
@@ -398,12 +431,33 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     /* === Envoyer via IPv4 === */
     ipv4_send_packet(netif, dest_mac, sock->remote_ip, IP_PROTO_TCP, buffer, TCP_HEADER_SIZE + len);
     
-    /* Si on envoie un SYN ou des données, incrémenter seq */
+    /* === Incrémenter SEQ après envoi === */
+    /* SYN et FIN consomment chacun 1 numéro de séquence */
+    /* Les données consomment len numéros de séquence */
+    /* ACK seul ne consomme rien */
+    int seq_advance = 0;
+    
     if (flags & TCP_FLAG_SYN) {
-        sock->seq++;  /* SYN consomme un numéro de séquence */
+        seq_advance += 1;  /* SYN consomme un numéro de séquence */
+    }
+    if (flags & TCP_FLAG_FIN) {
+        seq_advance += 1;  /* FIN consomme un numéro de séquence */
     }
     if (len > 0) {
-        sock->seq += len;  /* Les données consomment des numéros de séquence */
+        seq_advance += len;  /* Les données consomment des numéros de séquence */
+    }
+    
+    sock->seq += seq_advance;
+    
+    /* === Debug: afficher l'avancement du SEQ === */
+    if (seq_advance > 0) {
+        console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
+        console_puts("[TCP] Advanced SEQ by ");
+        console_put_dec(seq_advance);
+        console_puts(" (new SEQ=");
+        console_put_hex(sock->seq);
+        console_puts(")\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }
 
@@ -754,10 +808,8 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len)
     
     /* Envoyer les données via tcp_send_packet */
     /* Note: On devrait fragmenter si len > MSS, mais pour V1 on simplifie */
+    /* Note: tcp_send_packet incrémente déjà SEQ pour les données envoyées */
     tcp_send_packet(sock, TCP_FLAG_ACK | TCP_FLAG_PSH, (uint8_t*)buf, len);
-    
-    /* Mettre à jour le numéro de séquence */
-    sock->seq += len;
     
     return len;
 }
