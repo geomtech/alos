@@ -1,6 +1,7 @@
 /* src/net/l4/udp.c - UDP Protocol Handler */
 #include "udp.h"
 #include "dhcp.h"
+#include "dns.h"
 #include "../l3/ipv4.h"
 #include "../l3/route.h"
 #include "../l2/arp.h"
@@ -69,19 +70,28 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     (void)payload;      /* Éviter warning unused */
     (void)payload_len;  /* Éviter warning unused */
 
-    /* Dispatcher selon le port de destination */
+    /* Dispatcher selon le port de destination OU le port source pour les réponses */
     switch (dest_port) {
         case UDP_PORT_DHCP_CLIENT:
             /* DHCP response - router vers le handler DHCP */
             dhcp_handle_packet(NULL, payload, payload_len);
-            break;
+            return;
 
         case UDP_PORT_DNS:
-            /* DNS response (à implémenter) */
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
-            console_puts("[UDP] DNS packet (not implemented)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            /* DNS query (rare, on est client) */
+            dns_handle_packet(payload, payload_len);
+            return;
+
+        default:
             break;
+    }
+    
+    /* Vérifier aussi le port SOURCE pour les réponses */
+    switch (src_port) {
+        case UDP_PORT_DNS:
+            /* DNS response (serveur répond depuis port 53) */
+            dns_handle_packet(payload, payload_len);
+            return;
 
         default:
             /* Port non géré */

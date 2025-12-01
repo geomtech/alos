@@ -18,6 +18,7 @@
 #include "../net/core/net.h"
 #include "../net/l3/route.h"
 #include "../net/l4/dhcp.h"
+#include "../net/l4/dns.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -484,6 +485,26 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                                 console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
                                 console_puts("[NET] DHCP configuration complete!\n");
                                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                                
+                                /* === Test DNS === */
+                                if (netif->dns_server != 0) {
+                                    dns_init(netif->dns_server);
+                                    
+                                    /* Envoyer la requête DNS (peut échouer si ARP pending) */
+                                    dns_send_query("google.com");
+                                    
+                                    /* Attendre la réponse DNS (ou ARP puis réessayer) */
+                                    for (int d = 0; d < 30 && dns_is_pending(); d++) {
+                                        for (volatile int w = 0; w < 500000; w++);
+                                        asm volatile("sti");
+                                        asm volatile("hlt");
+                                        
+                                        /* Réessayer après quelques itérations (ARP devrait être résolu) */
+                                        if (d == 5 && dns_is_pending()) {
+                                            dns_send_query("google.com");
+                                        }
+                                    }
+                                }
                             } else {
                                 console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
                                 console_puts("[NET] DHCP timeout - no response received\n");

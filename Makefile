@@ -49,8 +49,8 @@ NET_L2_OBJ = src/net/l2/ethernet.o src/net/l2/arp.o
 NET_L3_SRC = src/net/l3/ipv4.c src/net/l3/icmp.c src/net/l3/route.c
 NET_L3_OBJ = src/net/l3/ipv4.o src/net/l3/icmp.o src/net/l3/route.o
 
-NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c
-NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o
+NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c src/net/l4/dns.c
+NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o src/net/l4/dns.o
 
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
