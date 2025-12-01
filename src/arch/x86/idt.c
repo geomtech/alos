@@ -2,6 +2,9 @@
 #include "io.h"
 #include <stddef.h> // Pour size_t
 
+/* Page Fault handler du VMM */
+extern void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr);
+
 /* Exception handlers (ISR 0-31) */
 extern void isr0(void);
 extern void isr1(void);
@@ -87,6 +90,19 @@ void exception_handler_c(void)
     uint32_t exception_num = esp[8];  /* pusha = 8 dwords */
     uint32_t error_code = esp[9];
     uint32_t eip = esp[10];
+    
+    /* === Traitement spécial pour Page Fault (exception 14) === */
+    if (exception_num == 14) {
+        /* Lire l'adresse fautive depuis CR2 */
+        uint32_t fault_addr;
+        asm volatile("mov %%cr2, %0" : "=r"(fault_addr));
+        
+        /* Appeler le handler du VMM */
+        vmm_page_fault_handler(error_code, fault_addr);
+        
+        /* Ne devrait jamais revenir ici */
+        return;
+    }
     
     /* Écrire directement en VGA mémoire pour le debug */
     volatile uint16_t* vga = (volatile uint16_t*)0xB8000;

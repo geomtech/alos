@@ -24,6 +24,7 @@
 #include "../net/l4/dns.h"
 #include "../shell/shell.h"
 #include "../include/string.h"
+#include "../mm/vmm.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -116,6 +117,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             KLOG_INFO_HEX("HEAP", "Heap start: ", (uint32_t)(uintptr_t)heap_mem);
             KLOG_INFO_DEC("HEAP", "Size (KiB): ", kheap_get_total_size() / 1024);
             KLOG_INFO_DEC("HEAP", "Header size (bytes): ", sizeof(KHeapBlock));
+            
+            /* ============================================ */
+            /* Virtual Memory Manager (Paging)              */
+            /* ============================================ */
+            vmm_init();
             
             /* ============================================ */
             /* PCI Bus Enumeration                          */

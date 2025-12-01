@@ -35,8 +35,8 @@ KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/
 KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/timer.o src/kernel/klog.o
 
 # Memory management
-MM_SRC = src/mm/pmm.c src/mm/kheap.c
-MM_OBJ = src/mm/pmm.o src/mm/kheap.o
+MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
+MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
 
 # Drivers
 DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c

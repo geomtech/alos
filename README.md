@@ -25,6 +25,13 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - First-fit allocation algorithm
   - Block coalescing on free
 
+- **Virtual Memory Manager (VMM)**
+  - x86 Paging with 4 KiB pages
+  - Identity mapping of first 16 MB
+  - Page Directory and Page Tables management
+  - Page Fault handler with CR2 address display
+  - Foundation for User Space (Ring 3) support
+
 ### Storage & Filesystems
 
 - **ATA/IDE Driver (PIO Mode)**
@@ -48,6 +55,16 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - **File creation** (`vfs_create`)
   - **Directory creation** (`vfs_mkdir`)
 
+### Shell
+
+- **Interactive Command Interpreter**
+  - Line editing with backspace support
+  - Command history (Up/Down arrows, 16 entries)
+  - Current working directory (CWD) state
+  - Command parsing with argument support
+  - Built-in commands: `help`, `ping`
+  - Extensible command system
+
 ### Kernel Logging System
 
 - **File-based logging** (`/system/logs/kernel.log`)
@@ -67,6 +84,8 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 - **Keyboard**
   - PS/2 keyboard driver
   - Interrupt-driven input
+  - Circular buffer for key events
+  - Blocking `keyboard_getchar()` function
 
 - **PCI Bus**
   - PCI device enumeration
@@ -130,7 +149,7 @@ The networking stack follows the OSI model architecture:
 src/
 ├── arch/x86/          # x86-specific code (boot, GDT, IDT, I/O)
 ├── kernel/            # Kernel core (main, console, keyboard)
-├── mm/                # Memory Management (PMM, heap)
+├── mm/                # Memory Management (PMM, heap, VMM)
 ├── drivers/           # Hardware drivers
 │   ├── ata.c/h        # ATA/IDE disk driver
 │   ├── pci.c/h        # PCI bus driver
@@ -142,7 +161,11 @@ src/
 │   ├── core/          # Network infrastructure
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
 │   ├── l3/            # Layer 3 (IPv4, ICMP, Routing)
-│   └── l4/            # Layer 4 (UDP, DHCP)
+│   └── l4/            # Layer 4 (UDP, DHCP, DNS)
+├── lib/               # Common utilities (string functions)
+├── shell/             # Command interpreter
+│   ├── shell.c/h      # Shell core (readline, history, parsing)
+│   └── commands.c/h   # Built-in commands (help, ping)
 └── include/           # Shared headers (Multiboot, linker script)
 ```
 
@@ -247,13 +270,17 @@ make run-pcap
 - [x] Ext2 Write Support
 - [x] File/Directory Creation (vfs_create, vfs_mkdir)
 - [x] Kernel Logging System (file-based, /system/logs)
+- [x] Interactive Shell with history
+- [x] Virtual Memory (Paging) - Identity mapping
+- [ ] User Space (Ring 3)
+- [ ] ELF Loader
 - [ ] TCP Implementation
-- [ ] Interactive Shell
 - [ ] Scripting files
 - [ ] Network configuration files
 - [ ] Process Management
 - [ ] Virtual Memory (Paging)
 - [ ] Multithreading
+- [ ] System Calls
 - [ ] GUI
 - [ ] OpenGL
 - [ ] SSL
