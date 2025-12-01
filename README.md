@@ -45,6 +45,17 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - Directory entry traversal
   - File content reading
   - Support for regular files and directories
+  - **File creation** (`vfs_create`)
+  - **Directory creation** (`vfs_mkdir`)
+
+### Kernel Logging System
+
+- **File-based logging** (`/system/logs/kernel.log`)
+  - Early buffer (8KB) for logs before VFS is ready
+  - Automatic directory creation (`/system/logs`)
+  - Timestamps with millisecond precision
+  - Log levels: DEBUG, INFO, WARN, ERROR
+  - Configurable minimum log level
 
 ### Drivers
 
@@ -234,6 +245,8 @@ make run-pcap
 - [x] DNS Resolver (A, PTR, CNAME + cache)
 - [x] Ping with DNS support
 - [x] Ext2 Write Support
+- [x] File/Directory Creation (vfs_create, vfs_mkdir)
+- [x] Kernel Logging System (file-based, /system/logs)
 - [ ] TCP Implementation
 - [ ] Interactive Shell
 - [ ] Scripting files

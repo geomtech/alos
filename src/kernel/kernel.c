@@ -10,6 +10,7 @@
 #include "../mm/kheap.h"
 #include "console.h"
 #include "timer.h"
+#include "klog.h"
 #include "../drivers/pci.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
@@ -58,6 +59,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
     /* Initialiser la console avec scrolling */
     console_init();
     console_clear(VGA_COLOR_BLUE);
+    
+    /* Initialiser le système de logs précoce (buffer mémoire) */
+    klog_early_init();
 
     /* Titre */
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
@@ -266,6 +270,10 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                 
                 /* Monter le disque en tant que racine */
                 if (vfs_mount("/", "ext2", NULL) == 0) {
+                    /* Initialiser le système de logs fichier */
+                    /* Crée /system/logs/kernel.log et vide le buffer précoce */
+                    klog_init();
+                    
                     /* Test: Lister le contenu de la racine */
                     console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
                     console_puts("\n--- Root Directory Contents ---\n");

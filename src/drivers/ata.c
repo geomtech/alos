@@ -1,7 +1,7 @@
 /* src/drivers/ata.c - ATA PIO Mode Driver Implementation */
 #include "ata.h"
 #include "../arch/x86/io.h"
-#include "../kernel/console.h"
+#include "../kernel/klog.h"
 
 /* Flag indiquant si un disque a été détecté */
 static int ata_disk_present = 0;
@@ -85,9 +85,7 @@ int ata_is_present(void)
  */
 int ata_init(void)
 {
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("\n=== ATA/IDE Driver ===\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    KLOG_INFO("ATA", "Initializing ATA/IDE driver...");
     
     /* Sélectionner le Master drive */
     outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER);
@@ -107,9 +105,7 @@ int ata_init(void)
     
     /* Si status = 0xFF, aucun disque n'est connecté (bus flottant) */
     if (status == 0xFF) {
-        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-        console_puts("[ATA] No disk detected on Primary Master\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        KLOG_WARN("ATA", "No disk detected on Primary Master");
         ata_disk_present = 0;
         return -1;
     }
@@ -127,9 +123,7 @@ int ata_init(void)
     /* Vérifier la réponse */
     status = inb(ATA_PRIMARY_STATUS);
     if (status == 0) {
-        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-        console_puts("[ATA] No disk detected (IDENTIFY returned 0)\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        KLOG_WARN("ATA", "No disk detected (IDENTIFY returned 0)");
         ata_disk_present = 0;
         return -1;
     }
@@ -142,9 +136,7 @@ int ata_init(void)
     uint8_t lba_high = inb(ATA_PRIMARY_LBA_HIGH);
     
     if (lba_mid != 0 || lba_high != 0) {
-        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-        console_puts("[ATA] Device is not ATA (ATAPI or SATA?)\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        KLOG_WARN("ATA", "Device is not ATA (ATAPI or SATA?)");
         /* On continue quand même, c'est peut-être un disque émulé */
     }
     
@@ -152,9 +144,7 @@ int ata_init(void)
     while (1) {
         status = inb(ATA_PRIMARY_STATUS);
         if (status & ATA_SR_ERR) {
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-            console_puts("[ATA] IDENTIFY command failed\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            KLOG_ERROR("ATA", "IDENTIFY command failed");
             ata_disk_present = 0;
             return -1;
         }
@@ -172,20 +162,15 @@ int ata_init(void)
     /* Le disque est présent et fonctionnel */
     ata_disk_present = 1;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[ATA] Disk detected on Primary Master\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    KLOG_INFO("ATA", "Disk detected on Primary Master");
     
     /* Afficher quelques infos du disque */
     /* Word 60-61: Total sectors in LBA28 mode */
     uint32_t total_sectors = identify_data[60] | ((uint32_t)identify_data[61] << 16);
     uint32_t size_mb = total_sectors / 2048;  /* 512 bytes/sector, 1MB = 2048 sectors */
     
-    console_puts("[ATA] Total sectors: ");
-    console_put_dec(total_sectors);
-    console_puts(" (~");
-    console_put_dec(size_mb);
-    console_puts(" MB)\n");
+    KLOG_INFO_DEC("ATA", "Total sectors: ", total_sectors);
+    KLOG_INFO_DEC("ATA", "Size (MB): ", size_mb);
     
     return 0;
 }

@@ -2,7 +2,7 @@
 #include "pci.h"
 #include "../arch/x86/io.h"
 #include "../mm/kheap.h"
-#include "../kernel/console.h"
+#include "../kernel/klog.h"
 
 /* Liste chaînée globale des périphériques PCI */
 static PCIDevice* pci_devices = NULL;
@@ -128,33 +128,15 @@ static void pci_check_device(uint8_t bus, uint8_t slot, uint8_t func)
     pci_add_device(device);
     
     /* Afficher l'info */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-    console_puts("[PCI] ");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    console_puts("Found ");
-    console_puts(pci_get_vendor_name(device->vendor_id));
-    console_puts(" (");
-    console_put_hex(device->vendor_id);
-    console_puts(":");
-    console_put_hex(device->device_id);
-    console_puts(") at ");
-    console_put_dec(bus);
-    console_puts(":");
-    console_put_dec(slot);
-    console_puts(":");
-    console_put_dec(func);
-    console_puts(" [");
-    console_puts(pci_get_class_name(device->class_code));
-    console_puts("] BAR0=");
-    console_put_hex(device->bar0);
-    console_puts("\n");
+    klog(LOG_INFO, "PCI", "Found device ");
+    klog(LOG_INFO, "PCI", pci_get_vendor_name(device->vendor_id));
+    klog_hex(LOG_INFO, "PCI", "  Vendor:Device = ", device->vendor_id);
+    klog_hex(LOG_DEBUG, "PCI", "  BAR0 = ", device->bar0);
 }
 
 void pci_probe(void)
 {
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("\n=== PCI Bus Enumeration ===\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    KLOG_INFO("PCI", "Starting PCI bus enumeration...");
     
     /* Scanner tous les bus, slots et fonctions */
     for (int bus = 0; bus < 256; bus++) {
@@ -180,11 +162,7 @@ void pci_probe(void)
         }
     }
     
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-    console_puts("PCI scan complete: ");
-    console_put_dec(pci_device_count);
-    console_puts(" device(s) found\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    KLOG_INFO_DEC("PCI", "PCI scan complete, devices found: ", pci_device_count);
 }
 
 PCIDevice* pci_get_device(uint16_t vendor_id, uint16_t device_id)

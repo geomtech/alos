@@ -1,7 +1,7 @@
 /* src/fs/vfs.c - Virtual File System Implementation */
 #include "vfs.h"
 #include "../mm/kheap.h"
-#include "../kernel/console.h"
+#include "../kernel/klog.h"
 
 /* ===========================================
  * Variables globales
@@ -65,10 +65,7 @@ void vfs_init(void)
     registered_filesystems = NULL;
     vfs_root = NULL;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("\n=== Virtual File System ===\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    console_puts("[VFS] Initialized\n");
+    KLOG_INFO("VFS", "Virtual File System initialized");
 }
 
 /* ===========================================
@@ -83,9 +80,8 @@ int vfs_register_fs(vfs_filesystem_t* fs)
     fs->next = registered_filesystems;
     registered_filesystems = fs;
     
-    console_puts("[VFS] Registered filesystem: ");
-    console_puts(fs->name);
-    console_puts("\n");
+    klog(LOG_INFO, "VFS", "Registered filesystem: ");
+    klog(LOG_INFO, "VFS", fs->name);
     
     return 0;
 }
@@ -111,11 +107,8 @@ int vfs_mount(const char* path, const char* fs_name, void* device)
     /* Trouver le système de fichiers */
     vfs_filesystem_t* fs = vfs_find_fs(fs_name);
     if (fs == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-        console_puts("[VFS] Unknown filesystem: ");
-        console_puts(fs_name);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        klog(LOG_ERROR, "VFS", "Unknown filesystem: ");
+        klog(LOG_ERROR, "VFS", fs_name);
         return -1;
     }
     
@@ -129,9 +122,7 @@ int vfs_mount(const char* path, const char* fs_name, void* device)
     }
     
     if (slot == -1) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-        console_puts("[VFS] No free mount slots\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        KLOG_ERROR("VFS", "No free mount slots");
         return -1;
     }
     
@@ -146,13 +137,8 @@ int vfs_mount(const char* path, const char* fs_name, void* device)
     if (fs->mount != NULL) {
         if (fs->mount(mount, device) != 0) {
             mount->active = 0;
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-            console_puts("[VFS] Failed to mount ");
-            console_puts(fs_name);
-            console_puts(" at ");
-            console_puts(path);
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            klog(LOG_ERROR, "VFS", "Failed to mount ");
+            klog(LOG_ERROR, "VFS", fs_name);
             return -1;
         }
     }
@@ -167,13 +153,10 @@ int vfs_mount(const char* path, const char* fs_name, void* device)
         vfs_root = mount->root;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[VFS] Mounted ");
-    console_puts(fs_name);
-    console_puts(" at ");
-    console_puts(path);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    klog(LOG_INFO, "VFS", "Mounted ");
+    klog(LOG_INFO, "VFS", fs_name);
+    klog(LOG_INFO, "VFS", " at ");
+    klog(LOG_INFO, "VFS", path);
     
     return 0;
 }
@@ -351,9 +334,57 @@ vfs_node_t* vfs_finddir(vfs_node_t* node, const char* name)
 
 int vfs_create(const char* path)
 {
-    /* TODO: Implémenter création de fichier */
-    (void)path;
-    return -1;
+    if (path == NULL || path[0] == '\0') return -1;
+    if (path[0] != '/') return -1;  /* Chemin absolu requis */
+    
+    /* Trouver le dernier '/' pour séparer le chemin parent du nom */
+    int last_slash = -1;
+    int i = 0;
+    while (path[i] != '\0') {
+        if (path[i] == '/') last_slash = i;
+        i++;
+    }
+    
+    if (last_slash < 0) return -1;
+    
+    /* Extraire le nom du nouveau fichier */
+    const char* name = path + last_slash + 1;
+    if (name[0] == '\0') return -1;  /* Pas de nom après le dernier / */
+    
+    /* Construire le chemin du parent */
+    char parent_path[VFS_MAX_PATH];
+    if (last_slash == 0) {
+        /* Le parent est la racine */
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    } else {
+        for (i = 0; i < last_slash && i < VFS_MAX_PATH - 1; i++) {
+            parent_path[i] = path[i];
+        }
+        parent_path[i] = '\0';
+    }
+    
+    /* Résoudre le répertoire parent */
+    vfs_node_t* parent = vfs_resolve_path(parent_path);
+    if (parent == NULL) {
+        KLOG_ERROR("VFS", "create: parent directory not found");
+        return -1;
+    }
+    
+    /* Vérifier que c'est un répertoire */
+    if ((parent->type & VFS_DIRECTORY) == 0) {
+        KLOG_ERROR("VFS", "create: parent is not a directory");
+        return -1;
+    }
+    
+    /* Vérifier que le callback create existe */
+    if (parent->create == NULL) {
+        KLOG_ERROR("VFS", "create: operation not supported");
+        return -1;
+    }
+    
+    /* Appeler le callback create du filesystem */
+    return parent->create(parent, name, VFS_FILE);
 }
 
 int vfs_mkdir(const char* path)
@@ -391,19 +422,19 @@ int vfs_mkdir(const char* path)
     /* Résoudre le répertoire parent */
     vfs_node_t* parent = vfs_resolve_path(parent_path);
     if (parent == NULL) {
-        console_puts("[VFS] mkdir: parent directory not found\n");
+        KLOG_ERROR("VFS", "mkdir: parent directory not found");
         return -1;
     }
     
     /* Vérifier que c'est un répertoire */
     if ((parent->type & VFS_DIRECTORY) == 0) {
-        console_puts("[VFS] mkdir: parent is not a directory\n");
+        KLOG_ERROR("VFS", "mkdir: parent is not a directory");
         return -1;
     }
     
     /* Vérifier que le callback mkdir existe */
     if (parent->mkdir == NULL) {
-        console_puts("[VFS] mkdir: operation not supported\n");
+        KLOG_ERROR("VFS", "mkdir: operation not supported");
         return -1;
     }
     
@@ -424,27 +455,20 @@ int vfs_unlink(const char* path)
 
 void vfs_debug(void)
 {
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-    console_puts("\n--- VFS Debug ---\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    KLOG_DEBUG("VFS", "--- VFS Debug ---");
     
-    console_puts("Registered filesystems: ");
+    klog(LOG_DEBUG, "VFS", "Registered filesystems:");
     vfs_filesystem_t* fs = registered_filesystems;
     while (fs != NULL) {
-        console_puts(fs->name);
-        if (fs->next) console_puts(", ");
+        klog(LOG_DEBUG, "VFS", fs->name);
         fs = fs->next;
     }
-    console_puts("\n");
     
-    console_puts("Mount points:\n");
+    klog(LOG_DEBUG, "VFS", "Mount points:");
     for (int i = 0; i < VFS_MAX_MOUNTS; i++) {
         if (mounts[i].active) {
-            console_puts("  ");
-            console_puts(mounts[i].path);
-            console_puts(" -> ");
-            console_puts(mounts[i].fs->name);
-            console_puts("\n");
+            klog(LOG_DEBUG, "VFS", mounts[i].path);
+            klog(LOG_DEBUG, "VFS", mounts[i].fs->name);
         }
     }
 }

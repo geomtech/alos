@@ -243,4 +243,17 @@ int32_t ext2_alloc_inode(ext2_fs_t* fs);
  */
 int ext2_free_inode(ext2_fs_t* fs, uint32_t inode_num);
 
+/* ===========================================
+ * API Ext2 - Création de fichiers/dossiers
+ * =========================================== */
+
+/**
+ * Crée un nouveau fichier dans un répertoire.
+ * @param parent   Noeud VFS du répertoire parent
+ * @param name     Nom du nouveau fichier
+ * @param type     Type VFS du fichier (ignoré, crée toujours un fichier régulier)
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_vfs_create(struct vfs_node* parent, const char* name, uint32_t type);
+
 #endif /* EXT2_H */

@@ -3,7 +3,7 @@
 #include "vfs.h"
 #include "../drivers/ata.h"
 #include "../mm/kheap.h"
-#include "../kernel/console.h"
+#include "../kernel/klog.h"
 
 /* ===========================================
  * Variables globales
@@ -1069,6 +1069,7 @@ static vfs_node_t* ext2_create_node(ext2_fs_t* fs, uint32_t inode_num, const cha
         node->readdir = ext2_vfs_readdir;
         node->finddir = ext2_vfs_finddir;
         node->mkdir = ext2_vfs_mkdir;
+        node->create = ext2_vfs_create;
     }
     
     return node;
@@ -1298,6 +1299,77 @@ static int ext2_add_dir_entry(ext2_fs_t* fs, ext2_inode_t* dir_inode,
 }
 
 /* ===========================================
+ * Création de fichier (create)
+ * =========================================== */
+
+/**
+ * Crée un nouveau fichier vide.
+ * 
+ * @param parent     Noeud VFS du répertoire parent
+ * @param name       Nom du nouveau fichier
+ * @param type       Type VFS (ignoré, crée toujours un fichier régulier)
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_vfs_create(vfs_node_t* parent, const char* name, uint32_t type)
+{
+    (void)type;  /* On crée toujours un fichier régulier */
+    
+    if (parent == NULL || parent->fs_data == NULL || name == NULL) return -1;
+    if ((parent->type & VFS_DIRECTORY) == 0) return -1;
+    
+    ext2_node_data_t* parent_data = (ext2_node_data_t*)parent->fs_data;
+    ext2_fs_t* fs = parent_data->fs;
+    
+    /* Vérifier que le nom n'existe pas déjà */
+    vfs_node_t* existing = ext2_vfs_finddir(parent, name);
+    if (existing != NULL) {
+        /* Le nom existe déjà */
+        return -1;
+    }
+    
+    /* 1. Allouer un nouvel inode */
+    int32_t new_inode_num = ext2_alloc_inode(fs);
+    if (new_inode_num < 0) {
+        KLOG_ERROR("EXT2", "create: failed to allocate inode");
+        return -1;
+    }
+    
+    /* 2. Initialiser l'inode du nouveau fichier (vide, pas de bloc alloué) */
+    ext2_inode_t new_inode;
+    memset(&new_inode, 0, sizeof(ext2_inode_t));
+    
+    new_inode.i_mode = EXT2_S_IFREG | 0644;  /* Fichier avec permissions rw-r--r-- */
+    new_inode.i_uid = 0;
+    new_inode.i_gid = 0;
+    new_inode.i_size = 0;  /* Fichier vide */
+    new_inode.i_atime = 0;  /* TODO: utiliser le temps réel */
+    new_inode.i_ctime = 0;
+    new_inode.i_mtime = 0;
+    new_inode.i_dtime = 0;
+    new_inode.i_links_count = 1;  /* Un seul lien (depuis le parent) */
+    new_inode.i_blocks = 0;  /* Pas de blocs alloués */
+    /* Tous les i_block[] sont déjà à 0 grâce au memset */
+    
+    /* 3. Écrire l'inode sur le disque */
+    if (ext2_write_inode(fs, (uint32_t)new_inode_num, &new_inode) != 0) {
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    
+    /* 4. Ajouter l'entrée dans le répertoire parent */
+    if (ext2_add_dir_entry(fs, &parent_data->inode, parent_data->inode_num,
+                           (uint32_t)new_inode_num, name, EXT2_FT_REG_FILE) != 0) {
+        ext2_free_inode(fs, (uint32_t)new_inode_num);
+        return -1;
+    }
+    
+    klog(LOG_INFO, "EXT2", "Created file: ");
+    klog(LOG_INFO, "EXT2", name);
+    
+    return 0;
+}
+
+/* ===========================================
  * Création de répertoire (mkdir)
  * =========================================== */
 
@@ -1326,7 +1398,7 @@ static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
     /* 1. Allouer un nouvel inode */
     int32_t new_inode_num = ext2_alloc_inode(fs);
     if (new_inode_num < 0) {
-        console_puts("[EXT2] mkdir: failed to allocate inode\n");
+        KLOG_ERROR("EXT2", "mkdir: failed to allocate inode");
         return -1;
     }
     
@@ -1334,7 +1406,7 @@ static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
     int32_t new_block = ext2_alloc_block(fs);
     if (new_block < 0) {
         ext2_free_inode(fs, (uint32_t)new_inode_num);
-        console_puts("[EXT2] mkdir: failed to allocate block\n");
+        KLOG_ERROR("EXT2", "mkdir: failed to allocate block");
         return -1;
     }
     
@@ -1408,7 +1480,7 @@ static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
     parent_data->inode.i_links_count++;
     if (ext2_write_inode(fs, parent_data->inode_num, &parent_data->inode) != 0) {
         /* L'entrée est déjà ajoutée, on continue quand même */
-        console_puts("[EXT2] mkdir: warning - failed to update parent links\n");
+        KLOG_WARN("EXT2", "mkdir: failed to update parent links");
     }
     
     /* 9. Mettre à jour le compteur de répertoires du groupe */
@@ -1418,11 +1490,8 @@ static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
         ext2_write_group_desc(fs, group);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[EXT2] Created directory: ");
-    console_puts(name);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    klog(LOG_INFO, "EXT2", "Created directory: ");
+    klog(LOG_INFO, "EXT2", name);
     
     return 0;
 }
@@ -1435,12 +1504,12 @@ int ext2_mount(vfs_mount_t* mount, void* device)
 {
     (void)device;  /* Pas utilisé pour l'instant, on lit depuis ATA primary */
     
-    console_puts("[EXT2] Mounting filesystem...\n");
+    KLOG_INFO("EXT2", "Mounting filesystem...");
     
     /* Allouer la structure du FS */
     ext2_fs_t* fs = (ext2_fs_t*)kmalloc(sizeof(ext2_fs_t));
     if (fs == NULL) {
-        console_puts("[EXT2] Failed to allocate fs structure\n");
+        KLOG_ERROR("EXT2", "Failed to allocate fs structure");
         return -1;
     }
     
@@ -1456,7 +1525,7 @@ int ext2_mount(vfs_mount_t* mount, void* device)
     
     /* Le superblock est à l'offset 1024, donc LBA 2 */
     if (ata_read_sectors(2, 2, sb_buffer) != 0) {
-        console_puts("[EXT2] Failed to read superblock\n");
+        KLOG_ERROR("EXT2", "Failed to read superblock");
         kfree(sb_buffer);
         kfree(fs);
         return -1;
@@ -1467,9 +1536,7 @@ int ext2_mount(vfs_mount_t* mount, void* device)
     
     /* Vérifier le magic number */
     if (fs->superblock.s_magic != EXT2_MAGIC) {
-        console_puts("[EXT2] Invalid magic number: ");
-        console_put_hex(fs->superblock.s_magic);
-        console_puts("\n");
+        KLOG_ERROR_HEX("EXT2", "Invalid magic number: ", fs->superblock.s_magic);
         kfree(fs);
         return -1;
     }
@@ -1487,30 +1554,15 @@ int ext2_mount(vfs_mount_t* mount, void* device)
         fs->inode_size = fs->superblock.s_inode_size;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[EXT2] Superblock valid!\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    
-    console_puts("[EXT2] Block size: ");
-    console_put_dec(fs->block_size);
-    console_puts(" bytes\n");
-    
-    console_puts("[EXT2] Total inodes: ");
-    console_put_dec(fs->superblock.s_inodes_count);
-    console_puts("\n");
-    
-    console_puts("[EXT2] Total blocks: ");
-    console_put_dec(fs->superblock.s_blocks_count);
-    console_puts("\n");
-    
-    console_puts("[EXT2] Block groups: ");
-    console_put_dec(fs->num_groups);
-    console_puts("\n");
+    KLOG_INFO("EXT2", "Superblock valid!");
+    KLOG_INFO_DEC("EXT2", "Block size: ", fs->block_size);
+    KLOG_INFO_DEC("EXT2", "Total inodes: ", fs->superblock.s_inodes_count);
+    KLOG_INFO_DEC("EXT2", "Total blocks: ", fs->superblock.s_blocks_count);
+    KLOG_INFO_DEC("EXT2", "Block groups: ", fs->num_groups);
     
     if (fs->superblock.s_volume_name[0] != '\0') {
-        console_puts("[EXT2] Volume name: ");
-        console_puts(fs->superblock.s_volume_name);
-        console_puts("\n");
+        klog(LOG_INFO, "EXT2", "Volume name: ");
+        klog(LOG_INFO, "EXT2", fs->superblock.s_volume_name);
     }
     
     /* Lire la table des descripteurs de groupes */
@@ -1528,7 +1580,7 @@ int ext2_mount(vfs_mount_t* mount, void* device)
     for (uint32_t i = 0; i < gdt_blocks; i++) {
         if (ext2_read_block(fs, gdt_block + i, 
                            (uint8_t*)fs->group_descs + i * fs->block_size) != 0) {
-            console_puts("[EXT2] Failed to read group descriptors\n");
+            KLOG_ERROR("EXT2", "Failed to read group descriptors");
             kfree(fs->group_descs);
             kfree(fs);
             return -1;
