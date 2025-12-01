@@ -64,34 +64,62 @@ static void pcnet_reset(PCNetDevice* dev)
 
 uint32_t pcnet_read_csr(PCNetDevice* dev, uint32_t csr_no)
 {
+    /* Désactiver les interruptions pour protéger l'accès RAP/RDP */
+    asm volatile("cli");
+    
     /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
     outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
     /* Lire la valeur depuis RDP (16-bit WIO) */
-    return inw(dev->io_base + PCNET_RDP);
+    uint32_t value = inw(dev->io_base + PCNET_RDP);
+    
+    /* Réactiver les interruptions */
+    asm volatile("sti");
+    
+    return value;
 }
 
 void pcnet_write_csr(PCNetDevice* dev, uint32_t csr_no, uint32_t value)
 {
+    /* Désactiver les interruptions pour protéger l'accès RAP/RDP */
+    asm volatile("cli");
+    
     /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
     outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
     /* Écrire la valeur dans RDP (16-bit WIO) */
     outw(dev->io_base + PCNET_RDP, (uint16_t)value);
+    
+    /* Réactiver les interruptions */
+    asm volatile("sti");
 }
 
 uint32_t pcnet_read_bcr(PCNetDevice* dev, uint32_t bcr_no)
 {
+    /* Désactiver les interruptions pour protéger l'accès RAP/BDP */
+    asm volatile("cli");
+    
     /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
     outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
     /* Lire la valeur depuis BDP (16-bit WIO) */
-    return inw(dev->io_base + PCNET_BDP);
+    uint32_t value = inw(dev->io_base + PCNET_BDP);
+    
+    /* Réactiver les interruptions */
+    asm volatile("sti");
+    
+    return value;
 }
 
 void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 {
+    /* Désactiver les interruptions pour protéger l'accès RAP/BDP */
+    asm volatile("cli");
+    
     /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
     outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
     /* Écrire la valeur dans BDP (16-bit WIO) */
     outw(dev->io_base + PCNET_BDP, (uint16_t)value);
+    
+    /* Réactiver les interruptions */
+    asm volatile("sti");
 }
 
 /* ============================================ */
@@ -101,6 +129,10 @@ void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 /**
  * Handler d'interruption PCnet (IRQ 11).
  * Appelé par le handler ASM irq11_handler.
+ * 
+ * IMPORTANT: Les interruptions PCI sont "level triggered".
+ * Il faut acquitter les flags dans CSR0 AVANT d'envoyer l'EOI au PIC,
+ * sinon la carte continue d'asserter l'IRQ et on boucle infiniment.
  */
 void pcnet_irq_handler(void)
 {
@@ -109,27 +141,41 @@ void pcnet_irq_handler(void)
     /* Lire CSR0 pour voir ce qui a déclenché l'interruption */
     uint32_t csr0 = pcnet_read_csr(g_pcnet_dev, CSR0);
     
-    /* Acquitter les interruptions en écrivant les bits à 1 */
-    /* On garde IENA (bit 6) actif */
-    pcnet_write_csr(g_pcnet_dev, CSR0, csr0 & 0xFF00);
+    /* 
+     * Acquitter les interruptions en écrivant 1 sur les bits d'interruption.
+     * Les bits 8-15 sont "write-1-to-clear" (écrire 1 efface le flag).
+     * On doit garder IENA (bit 6) actif pour continuer à recevoir les IRQ.
+     * 
+     * Bits à effacer (écrire 1):
+     * - IDON (bit 8): Initialization Done
+     * - TINT (bit 9): Transmit Interrupt
+     * - RINT (bit 10): Receive Interrupt
+     * - MERR (bit 11): Memory Error
+     * - MISS (bit 12): Missed Frame
+     * - CERR (bit 13): Collision Error
+     * - BABL (bit 14): Babble
+     * - ERR (bit 15): Error summary
+     * 
+     * On écrit: (csr0 & 0xFF00) | IENA
+     * Cela efface tous les flags actifs tout en gardant IENA.
+     */
+    uint32_t ack = (csr0 & 0xFF00) | CSR0_IENA;
+    pcnet_write_csr(g_pcnet_dev, CSR0, ack);
     
+    /* Mettre à jour les statistiques */
     if (csr0 & CSR0_RINT) {
-        /* Paquet reçu */
         g_pcnet_dev->packets_rx++;
     }
     
     if (csr0 & CSR0_TINT) {
-        /* Paquet transmis */
         g_pcnet_dev->packets_tx++;
     }
     
     if (csr0 & CSR0_ERR) {
-        /* Erreur */
         g_pcnet_dev->errors++;
     }
     
     if (csr0 & CSR0_IDON) {
-        /* Initialization done */
         g_pcnet_dev->initialized = true;
     }
 }
@@ -430,12 +476,12 @@ bool pcnet_start(PCNetDevice* dev)
     console_put_hex(init_addr);
     console_puts("\n");
     
-    /* Étape 2: Lancer l'initialisation (INIT + IENA) */
-    pcnet_write_csr(dev, CSR0, CSR0_INIT | CSR0_IENA);
+    /* Étape 2: Lancer l'initialisation SANS interruptions (juste INIT) */
+    pcnet_write_csr(dev, CSR0, CSR0_INIT);
     
     console_puts("[PCnet] Waiting for IDON...\n");
     
-    /* Étape 3: Attendre IDON (Initialization Done) */
+    /* Étape 3: Attendre IDON (Initialization Done) par polling */
     int timeout = 100000;
     uint32_t csr0;
     while (timeout > 0) {
@@ -463,7 +509,7 @@ bool pcnet_start(PCNetDevice* dev)
     /* Acquitter IDON en écrivant 1 */
     pcnet_write_csr(dev, CSR0, CSR0_IDON);
     
-    /* Étape 4: Démarrer la carte (STRT + IENA) */
+    /* Étape 4: Démarrer la carte (STRT + IENA pour activer les interruptions) */
     pcnet_write_csr(dev, CSR0, CSR0_STRT | CSR0_IENA);
     
     /* Vérifier que la carte est démarrée */
@@ -528,8 +574,8 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     /* Passer au descripteur suivant */
     dev->tx_index = (dev->tx_index + 1) % PCNET_TX_BUFFERS;
     
-    /* Déclencher l'envoi immédiat avec TDMD */
-    pcnet_write_csr(dev, CSR0, CSR0_IENA | CSR0_TDMD);
+    /* Déclencher l'envoi immédiat avec TDMD + garder IENA actif */
+    pcnet_write_csr(dev, CSR0, CSR0_TDMD | CSR0_IENA);
     
     return true;
 }
