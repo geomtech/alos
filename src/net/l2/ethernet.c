@@ -1,9 +1,9 @@
-/* src/net/ethernet.c - Ethernet Frame Handling */
+/* src/net/l2/ethernet.c - Ethernet Frame Handling */
 #include "ethernet.h"
 #include "arp.h"
-#include "ipv4.h"
-#include "utils.h"
-#include "../console.h"
+#include "../l3/ipv4.h"
+#include "../utils.h"
+#include "../../kernel/console.h"
 
 /**
  * Traite un paquet Ethernet reçu.

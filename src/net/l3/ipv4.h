@@ -1,9 +1,9 @@
-/* src/net/ipv4.h - IPv4 Protocol Handler */
+/* src/net/l3/ipv4.h - IPv4 Protocol Handler */
 #ifndef NET_IPV4_H
 #define NET_IPV4_H
 
 #include <stdint.h>
-#include "ethernet.h"
+#include "../l2/ethernet.h"
 
 /* IP Protocol Numbers */
 #define IP_PROTO_ICMP   1

@@ -1,10 +1,10 @@
-/* src/drivers/pcnet.c - AMD PCnet-PCI II (Am79C970A) Driver */
+/* src/drivers/net/pcnet.c - AMD PCnet-PCI II (Am79C970A) Driver */
 #include "pcnet.h"
-#include "../io.h"
-#include "../kheap.h"
-#include "../console.h"
-#include "../net/utils.h"
-#include "../net/ethernet.h"
+#include "../../arch/x86/io.h"
+#include "../../mm/kheap.h"
+#include "../../kernel/console.h"
+#include "../../net/utils.h"
+#include "../../net/l2/ethernet.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;

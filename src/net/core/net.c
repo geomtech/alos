@@ -1,6 +1,6 @@
-/* src/net/net.c - Network Configuration */
+/* src/net/core/net.c - Network Configuration */
 #include "net.h"
-#include "../console.h"
+#include "../../kernel/console.h"
 
 /* Notre adresse IP (10.0.2.15 - IP par défaut dans QEMU SLIRP) */
 uint8_t MY_IP[4] = {10, 0, 2, 15};

@@ -1,11 +1,11 @@
-/* src/net/ipv4.c - IPv4 Protocol Handler */
+/* src/net/l3/ipv4.c - IPv4 Protocol Handler */
 #include "ipv4.h"
 #include "icmp.h"
-#include "net.h"
-#include "netdev.h"
-#include "ethernet.h"
-#include "utils.h"
-#include "../console.h"
+#include "../core/net.h"
+#include "../core/netdev.h"
+#include "../l2/ethernet.h"
+#include "../utils.h"
+#include "../../kernel/console.h"
 
 /* Compteur d'identification pour les paquets sortants */
 static uint16_t ip_id_counter = 0;

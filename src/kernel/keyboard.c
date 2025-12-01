@@ -1,9 +1,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "io.h"
+#include "../arch/x86/io.h"
 #include "console.h"
-#include "drivers/pcnet.h"
+#include "../drivers/net/pcnet.h"
 
 /* Scancodes spéciaux pour les flèches */
 #define SCANCODE_UP_ARROW    0x48

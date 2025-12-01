@@ -1,10 +1,10 @@
-/* src/net/arp.c - Address Resolution Protocol Handler */
+/* src/net/l2/arp.c - Address Resolution Protocol Handler */
 #include "arp.h"
-#include "net.h"
-#include "netdev.h"
+#include "../core/net.h"
+#include "../core/netdev.h"
 #include "ethernet.h"
-#include "utils.h"
-#include "../console.h"
+#include "../utils.h"
+#include "../../kernel/console.h"
 
 /**
  * Affiche une adresse MAC au format XX:XX:XX:XX:XX:XX

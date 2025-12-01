@@ -1,8 +1,8 @@
-/* src/net/netdev.c - Network Device Abstraction Layer */
+/* src/net/core/netdev.c - Network Device Abstraction Layer */
 #include "netdev.h"
-#include "../console.h"
-#include "../pci.h"
-#include "../drivers/pcnet.h"
+#include "../../kernel/console.h"
+#include "../../drivers/pci.h"
+#include "../../drivers/net/pcnet.h"
 
 /* Maximum de périphériques réseau supportés */
 #define MAX_NETDEVS     4

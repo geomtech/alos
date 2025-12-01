@@ -1,19 +1,19 @@
-/* src/kernel.c */
+/* src/kernel/kernel.c */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "gdt.h"
-#include "idt.h"
-#include "io.h"
-#include "multiboot.h"
-#include "pmm.h"
-#include "kheap.h"
+#include "../arch/x86/gdt.h"
+#include "../arch/x86/idt.h"
+#include "../arch/x86/io.h"
+#include "../include/multiboot.h"
+#include "../mm/pmm.h"
+#include "../mm/kheap.h"
 #include "console.h"
-#include "pci.h"
-#include "drivers/pcnet.h"
-#include "net/netdev.h"
-#include "net/net.h"
-#include "net/route.h"
+#include "../drivers/pci.h"
+#include "../drivers/net/pcnet.h"
+#include "../net/core/netdev.h"
+#include "../net/core/net.h"
+#include "../net/l3/route.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;

@@ -1,4 +1,4 @@
-/* src/drivers/pcnet.h - AMD PCnet-PCI II (Am79C970A) Driver */
+/* src/drivers/net/pcnet.h - AMD PCnet-PCI II (Am79C970A) Driver */
 #ifndef PCNET_H
 #define PCNET_H
 

@@ -1,9 +1,9 @@
-/* src/net/icmp.c - ICMP Protocol Handler */
+/* src/net/l3/icmp.c - ICMP Protocol Handler */
 #include "icmp.h"
 #include "ipv4.h"
-#include "net.h"
-#include "utils.h"
-#include "../console.h"
+#include "../core/net.h"
+#include "../utils.h"
+#include "../../kernel/console.h"
 
 /**
  * Affiche une adresse IP au format X.X.X.X

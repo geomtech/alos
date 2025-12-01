@@ -1,10 +1,10 @@
-/* src/pmm.h - Physical Memory Manager */
+/* src/mm/pmm.h - Physical Memory Manager */
 #ifndef PMM_H
 #define PMM_H
 
 #include <stdint.h>
 #include <stddef.h>
-#include "multiboot.h"
+#include "../include/multiboot.h"
 
 /* Taille d'un bloc/page physique : 4 KiB */
 #define PMM_BLOCK_SIZE      4096

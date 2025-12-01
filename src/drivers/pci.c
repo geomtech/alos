@@ -1,8 +1,8 @@
-/* src/pci.c - PCI Bus Driver Implementation */
+/* src/drivers/pci.c - PCI Bus Driver Implementation */
 #include "pci.h"
-#include "io.h"
-#include "kheap.h"
-#include "console.h"
+#include "../arch/x86/io.h"
+#include "../mm/kheap.h"
+#include "../kernel/console.h"
 
 /* Liste chaînée globale des périphériques PCI */
 static PCIDevice* pci_devices = NULL;

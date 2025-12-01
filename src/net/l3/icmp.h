@@ -1,10 +1,10 @@
-/* src/net/icmp.h - ICMP Protocol Handler */
+/* src/net/l3/icmp.h - ICMP Protocol Handler */
 #ifndef NET_ICMP_H
 #define NET_ICMP_H
 
 #include <stdint.h>
 #include "ipv4.h"
-#include "ethernet.h"
+#include "../l2/ethernet.h"
 
 /* ICMP Types */
 #define ICMP_TYPE_ECHO_REPLY    0

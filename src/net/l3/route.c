@@ -1,8 +1,8 @@
-/* src/net/route.c - Simple Routing Table */
+/* src/net/l3/route.c - Simple Routing Table */
 #include "route.h"
-#include "net.h"
-#include "netdev.h"
-#include "../console.h"
+#include "../core/net.h"
+#include "../core/netdev.h"
+#include "../../kernel/console.h"
 
 /* Table de routage statique */
 static route_entry_t routes[MAX_ROUTES];

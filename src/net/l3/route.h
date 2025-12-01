@@ -1,10 +1,10 @@
-/* src/net/route.h - Simple Routing Table */
+/* src/net/l3/route.h - Simple Routing Table */
 #ifndef NET_ROUTE_H
 #define NET_ROUTE_H
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "netdev.h"
+#include "../core/netdev.h"
 
 /**
  * Structure d'une entrée de la table de routage.
