@@ -37,6 +37,16 @@ clean:
 run: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0
 
+# Run avec capture de paquets (pour Wireshark)
+run-pcap: alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0 -object filter-dump,id=dump0,netdev=net0,file=alos-network.pcap
+	@echo "Capture sauvée dans alos-network.pcap"
+
+# Run avec TAP (paquets visibles sur l'hôte via Wireshark sur tap0)
+# Prérequis: sudo ip tuntap add dev tap0 mode tap user $USER && sudo ip link set tap0 up
+run-tap: alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M -netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device pcnet,netdev=net0
+
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0 -s -S &

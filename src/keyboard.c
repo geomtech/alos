@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include "io.h"
 #include "console.h"
+#include "drivers/pcnet.h"
 
 /* Scancodes spéciaux pour les flèches */
 #define SCANCODE_UP_ARROW    0x48
@@ -11,6 +12,7 @@
 #define SCANCODE_RIGHT_ARROW 0x4D
 #define SCANCODE_PAGE_UP     0x49
 #define SCANCODE_PAGE_DOWN   0x51
+#define SCANCODE_ENTER       0x1C
 
 static uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
 
@@ -173,6 +175,48 @@ void keyboard_handler_c(void)
             case SCANCODE_DOWN_ARROW:
             case SCANCODE_PAGE_DOWN:
                 console_scroll_down();
+                break;
+            case SCANCODE_ENTER:
+                {
+                    /* Envoyer un paquet broadcast de test */
+                    PCNetDevice* pcnet = pcnet_get_device();
+                    if (pcnet != NULL && pcnet->initialized) {
+                        uint8_t packet[64];
+                        
+                        /* Destination MAC: broadcast */
+                        packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = 0xFF;
+                        packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
+                        
+                        /* Source MAC */
+                        for (int i = 0; i < 6; i++) {
+                            packet[6 + i] = pcnet->mac_addr[i];
+                        }
+                        
+                        /* EtherType: 0x0800 */
+                        packet[12] = 0x08;
+                        packet[13] = 0x00;
+                        
+                        /* Payload */
+                        const char* msg = "ALOS Broadcast!";
+                        for (int i = 0; msg[i] != '\0' && i < 46; i++) {
+                            packet[14 + i] = msg[i];
+                        }
+                        
+                        /* Padding */
+                        for (int i = 14 + 15; i < 64; i++) {
+                            packet[i] = 0;
+                        }
+                        
+                        if (pcnet_send(pcnet, packet, 64)) {
+                            console_puts("\n[Broadcast sent!]\n");
+                        } else {
+                            console_puts("\n[Broadcast FAILED]\n");
+                        }
+                        console_refresh();
+                    } else {
+                        terminal_putc('\n');
+                    }
+                }
                 break;
             default:
                 // Touche normale

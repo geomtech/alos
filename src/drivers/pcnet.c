@@ -256,13 +256,27 @@ static void pcnet_set_software_style(PCNetDevice* dev)
 {
     /* Lire BCR20 (Software Style) */
     uint32_t bcr20 = pcnet_read_bcr(dev, BCR20);
+    console_puts("[PCnet] BCR20 before: ");
+    console_put_hex(bcr20);
     
     /* Forcer le style PCNET-PCI 32-bit (Style 2) */
     bcr20 = (bcr20 & ~0xFF) | SWSTYLE_PCNET_PCI;
     
     pcnet_write_bcr(dev, BCR20, bcr20);
     
-    console_puts("[PCnet] Software Style set to PCNET-PCI (32-bit)\n");
+    /* Vérifier que ça a pris */
+    bcr20 = pcnet_read_bcr(dev, BCR20);
+    console_puts(" -> after: ");
+    console_put_hex(bcr20);
+    console_puts("\n");
+    
+    if ((bcr20 & 0xFF) == SWSTYLE_PCNET_PCI) {
+        console_puts("[PCnet] Software Style set to PCNET-PCI (32-bit descriptors)\n");
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_puts("[PCnet] WARNING: Failed to set SWSTYLE!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    }
 }
 
 PCNetDevice* pcnet_init(PCIDevice* pci_dev)
@@ -313,6 +327,9 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     
     /* Petite pause post-reset */
     for (volatile int i = 0; i < 100000; i++);
+    
+    /* Étape 2b: Configurer SWSTYLE = 2 (32-bit PCnet-PCI) AVANT toute allocation */
+    pcnet_set_software_style(dev);
     
     /* Étape 3: Vérifier l'état initial (CSR0) - en mode WIO 16-bit */
     pcnet_print_status(dev);
@@ -561,21 +578,48 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     
     /* Configurer le descripteur */
     desc->tbadr = (uint32_t)(uintptr_t)buf;
-    desc->bcnt = (int16_t)(-(int16_t)len);  /* Complément à 2 */
+    
+    /* BCNT: 12 bits, complément à 2, bits 15-12 doivent être 1 (0xF000) */
+    desc->bcnt = 0xF000 | ((uint16_t)(-(int16_t)len) & 0x0FFF);
     desc->misc = 0;
     
     /* 
      * Status: OWN=1 (card owns), STP=1 (start of packet), ENP=1 (end of packet)
-     * 0x8300 = 1000 0011 0000 0000
-     *          OWN  ERR  -    -    STP  ENP
+     * 0x8300 = OWN | STP | ENP
      */
     desc->status = 0x8300;
+    
+    /* Debug: afficher l'état du descripteur */
+    console_puts("[TX] idx=");
+    console_put_dec(idx);
+    console_puts(" buf=");
+    console_put_hex((uint32_t)(uintptr_t)buf);
+    console_puts(" len=");
+    console_put_dec(len);
+    console_puts(" bcnt=");
+    console_put_hex(desc->bcnt);
+    console_puts(" status=");
+    console_put_hex(desc->status);
+    console_puts("\n");
     
     /* Passer au descripteur suivant */
     dev->tx_index = (dev->tx_index + 1) % PCNET_TX_BUFFERS;
     
     /* Déclencher l'envoi immédiat avec TDMD + garder IENA actif */
     pcnet_write_csr(dev, CSR0, CSR0_TDMD | CSR0_IENA);
+    
+    /* Attendre un peu et vérifier le status */
+    for (volatile int i = 0; i < 100000; i++);
+    
+    uint16_t csr0_after = pcnet_read_csr(dev, CSR0);
+    console_puts("[TX] CSR0 after=");
+    console_put_hex(csr0_after);
+    console_puts(" desc->status=");
+    console_put_hex(desc->status);
+    if (!(desc->status & 0x8000)) {
+        console_puts(" (OWN cleared = sent!)");
+    }
+    console_puts("\n");
     
     return true;
 }
