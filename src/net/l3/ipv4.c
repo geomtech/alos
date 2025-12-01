@@ -115,8 +115,18 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
         }
     }
     
-    /* Vérifier que le paquet est destiné à notre IP */
-    if (!ip_addr_equals(ip->dest_ip, my_ip)) {
+    /* Vérifier l'IP de destination:
+     * - Accepter si c'est notre IP
+     * - Accepter si c'est broadcast (255.255.255.255) - nécessaire pour DHCP
+     * - Accepter si notre IP est 0.0.0.0 (pendant DHCP on n'a pas d'IP)
+     */
+    bool is_broadcast = (ip->dest_ip[0] == 255 && ip->dest_ip[1] == 255 &&
+                         ip->dest_ip[2] == 255 && ip->dest_ip[3] == 255);
+    bool we_have_no_ip = (my_ip[0] == 0 && my_ip[1] == 0 &&
+                          my_ip[2] == 0 && my_ip[3] == 0);
+    bool is_for_us = ip_addr_equals(ip->dest_ip, my_ip);
+    
+    if (!is_for_us && !is_broadcast && !we_have_no_ip) {
         /* Pas pour nous, ignorer silencieusement */
         return;
     }

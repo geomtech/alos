@@ -1,5 +1,6 @@
 /* src/net/l4/udp.c - UDP Protocol Handler */
 #include "udp.h"
+#include "dhcp.h"
 #include "../l3/ipv4.h"
 #include "../l3/route.h"
 #include "../l2/arp.h"
@@ -71,11 +72,8 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     /* Dispatcher selon le port de destination */
     switch (dest_port) {
         case UDP_PORT_DHCP_CLIENT:
-            /* DHCP response (à implémenter) */
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
-            console_puts("[UDP] DHCP packet (dhcp_handle_packet not implemented)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-            /* dhcp_handle_packet(ip_hdr, payload, payload_len); */
+            /* DHCP response - router vers le handler DHCP */
+            dhcp_handle_packet(NULL, payload, payload_len);
             break;
 
         case UDP_PORT_DNS:

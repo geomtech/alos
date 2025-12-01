@@ -45,8 +45,8 @@ NET_L2_OBJ = src/net/l2/ethernet.o src/net/l2/arp.o
 NET_L3_SRC = src/net/l3/ipv4.c src/net/l3/icmp.c src/net/l3/route.c
 NET_L3_OBJ = src/net/l3/ipv4.o src/net/l3/icmp.o src/net/l3/route.o
 
-NET_L4_SRC = src/net/l4/udp.c
-NET_L4_OBJ = src/net/l4/udp.o
+NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c
+NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o
 
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
@@ -120,7 +120,7 @@ run-pcap: alos.bin
 # Run avec TAP (paquets visibles sur l'hôte via Wireshark sur tap0)
 # Prérequis: sudo ip tuntap add dev tap0 mode tap user $USER && sudo ip link set tap0 up
 run-tap: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device pcnet,netdev=net0
+	qemu-system-i386 -kernel alos.bin -m 1024M -netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device pcnet,netdev=net0
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin

@@ -14,6 +14,7 @@
 #include "../net/core/netdev.h"
 #include "../net/core/net.h"
 #include "../net/l3/route.h"
+#include "../net/l4/dhcp.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -242,17 +243,19 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                         console_puts("[NET] Network stack ready!\n");
                         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
                         
-                        /* === Configurer l'interface via la nouvelle API === */
+                        /* === Configuration IP via DHCP === */
                         NetInterface* netif = netif_get_default();
                         if (netif != NULL) {
-                            /* Configurer une IP statique pour le test (10.0.2.15) */
-                            netif->ip_addr = IP4(10, 0, 2, 15);
-                            netif->netmask = IP4(255, 255, 255, 0);
-                            netif->gateway = IP4(10, 0, 2, 2);
-                            netif->dns_server = IP4(10, 0, 2, 3);
+                            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+                            console_puts("\n[NET] Starting DHCP configuration...\n");
+                            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
                             
-                            /* Afficher la configuration style ipconfig */
-                            netdev_ipconfig_display();
+                            /* Initialiser et démarrer DHCP */
+                            dhcp_init(netif);
+                            dhcp_discover(netif);
+                            
+                            /* Note: la configuration sera appliquée quand on recevra
+                             * le DHCPACK. Pour l'instant on continue en mode "stateless". */
                         }
                     }
                 }

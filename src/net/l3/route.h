@@ -31,6 +31,14 @@ typedef struct {
 void route_init(void);
 
 /**
+ * Met à jour les routes depuis la configuration d'une interface.
+ * Appelé après DHCP pour configurer les routes avec les vraies valeurs.
+ * 
+ * @param netif Interface avec la configuration IP (ip_addr, netmask, gateway)
+ */
+void route_update_from_netif(NetInterface* netif);
+
+/**
  * Ajoute une route à la table.
  * 
  * @param network  Adresse réseau (4 bytes)

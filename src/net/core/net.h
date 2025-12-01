@@ -12,26 +12,22 @@
  * - DNS Server: 10.0.2.3
  * - Notre IP suggérée: 10.0.2.15
  * - Réseau: 10.0.2.0/24
+ * 
+ * NOTE: Les variables globales MY_IP, GATEWAY_IP, etc. sont conservées
+ * pour compatibilité mais seront supprimées. Utiliser NetInterface à la place.
  */
 
-/* Notre adresse IP (10.0.2.15) */
+/* Variables globales legacy - DEPRECATED, utiliser NetInterface */
 extern uint8_t MY_IP[4];
-
-/* Notre adresse MAC (sera récupérée depuis la carte PCnet) */
 extern uint8_t MY_MAC[6];
-
-/* Adresse de la gateway QEMU */
 extern uint8_t GATEWAY_IP[4];
-
-/* Adresse du serveur DNS QEMU */
 extern uint8_t DNS_IP[4];
-
-/* Masque de sous-réseau */
 extern uint8_t NETMASK[4];
 
 /**
  * Initialise les paramètres réseau.
- * Doit être appelée après l'initialisation de la carte réseau.
+ * Note: Cette fonction est maintenant simplifiée car la vraie config
+ * est dans NetInterface et sera faite par DHCP.
  * 
  * @param mac Adresse MAC de notre interface (6 bytes)
  */

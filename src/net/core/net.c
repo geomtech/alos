@@ -1,51 +1,41 @@
 /* src/net/core/net.c - Network Configuration */
 #include "net.h"
+#include "netdev.h"
 #include "../../kernel/console.h"
 
-/* Notre adresse IP (10.0.2.15 - IP par défaut dans QEMU SLIRP) */
-uint8_t MY_IP[4] = {10, 0, 2, 15};
-
-/* Notre adresse MAC (initialisée à zéro, sera remplie par net_init) */
+/* 
+ * Variables globales LEGACY - DEPRECATED
+ * Ces variables sont conservées pour compatibilité mais seront supprimées.
+ * La vraie configuration est maintenant dans NetInterface.
+ * 
+ * Pour DHCP: l'IP sera 0.0.0.0 jusqu'à réception d'un bail.
+ */
+uint8_t MY_IP[4] = {0, 0, 0, 0};      /* Pas d'IP statique par défaut */
 uint8_t MY_MAC[6] = {0, 0, 0, 0, 0, 0};
-
-/* Adresse de la gateway QEMU (10.0.2.2) */
-uint8_t GATEWAY_IP[4] = {10, 0, 2, 2};
-
-/* Adresse du serveur DNS QEMU (10.0.2.3) */
-uint8_t DNS_IP[4] = {10, 0, 2, 3};
-
-/* Masque de sous-réseau (255.255.255.0) */
-uint8_t NETMASK[4] = {255, 255, 255, 0};
+uint8_t GATEWAY_IP[4] = {0, 0, 0, 0}; /* Sera configuré par DHCP */
+uint8_t DNS_IP[4] = {0, 0, 0, 0};     /* Sera configuré par DHCP */
+uint8_t NETMASK[4] = {0, 0, 0, 0};    /* Sera configuré par DHCP */
 
 /**
  * Initialise les paramètres réseau.
+ * Note: La vraie configuration IP est dans NetInterface et sera faite par DHCP.
  */
 void net_init(uint8_t* mac)
 {
-    /* Copier notre adresse MAC */
+    /* Copier notre adresse MAC dans la variable legacy */
     for (int i = 0; i < 6; i++) {
         MY_MAC[i] = mac[i];
     }
     
-    /* Afficher la configuration */
+    /* Afficher l'état initial (en attente de DHCP) */
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[NET] Network identity configured:\n");
-    console_puts("      IP:      ");
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(MY_IP[i]);
-    }
-    console_puts("\n      MAC:     ");
+    console_puts("[NET] Network layer initialized\n");
+    console_puts("      MAC:     ");
     for (int i = 0; i < 6; i++) {
         if (i > 0) console_putc(':');
         console_put_hex_byte(MY_MAC[i]);
     }
-    console_puts("\n      Gateway: ");
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(GATEWAY_IP[i]);
-    }
-    console_puts("\n");
+    console_puts("\n      Status:  Waiting for DHCP or static configuration\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
 }
 

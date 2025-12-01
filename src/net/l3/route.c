@@ -2,6 +2,7 @@
 #include "route.h"
 #include "../core/net.h"
 #include "../core/netdev.h"
+#include "../utils.h"
 #include "../../kernel/console.h"
 
 /* Table de routage statique */
@@ -90,19 +91,54 @@ void route_init(void)
         return;
     }
     
-    /* Route pour le réseau local (10.0.2.0/24) - accès direct */
-    uint8_t local_net[4] = {10, 0, 2, 0};
-    uint8_t local_mask[4] = {255, 255, 255, 0};
-    uint8_t no_gateway[4] = {0, 0, 0, 0};
-    route_add(local_net, local_mask, no_gateway, default_iface);
-    
-    /* Route par défaut (0.0.0.0/0) via la gateway */
-    uint8_t default_net[4] = {0, 0, 0, 0};
-    uint8_t default_mask[4] = {0, 0, 0, 0};
-    route_add(default_net, default_mask, GATEWAY_IP, default_iface);
+    /* Note: On n'ajoute pas de routes statiques ici.
+     * Les routes seront ajoutées dynamiquement par DHCP via route_update_from_netif().
+     * Cela évite le problème de gateway 0.0.0.0 avant DHCP.
+     */
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[ROUTE] Routing table ready (");
+    console_puts("[ROUTE] Routing table initialized (waiting for DHCP)\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+}
+
+/**
+ * Met à jour les routes depuis la configuration d'une interface.
+ * Appelé après DHCP pour configurer les routes avec les vraies valeurs.
+ */
+void route_update_from_netif(NetInterface* netif)
+{
+    if (netif == NULL || netif->ip_addr == 0) {
+        return;
+    }
+    
+    /* Obtenir l'interface legacy */
+    netdev_t* iface = netdev_get_default();
+    if (iface == NULL) {
+        return;
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_puts("[ROUTE] Updating routes from DHCP...\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    
+    /* Calculer l'adresse réseau à partir de l'IP et du masque */
+    uint8_t network[4], netmask[4], gateway[4], no_gw[4] = {0, 0, 0, 0};
+    ip_u32_to_bytes(netif->ip_addr & netif->netmask, network);
+    ip_u32_to_bytes(netif->netmask, netmask);
+    ip_u32_to_bytes(netif->gateway, gateway);
+    
+    /* Route pour le réseau local - accès direct */
+    route_add(network, netmask, no_gw, iface);
+    
+    /* Route par défaut via la gateway (si gateway configurée) */
+    if (netif->gateway != 0) {
+        uint8_t default_net[4] = {0, 0, 0, 0};
+        uint8_t default_mask[4] = {0, 0, 0, 0};
+        route_add(default_net, default_mask, gateway, iface);
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_puts("[ROUTE] Routes updated (");
     console_put_dec(route_count);
     console_puts(" routes)\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
