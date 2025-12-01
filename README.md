@@ -62,7 +62,7 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - Command history (Up/Down arrows, 16 entries)
   - Current working directory (CWD) state
   - Command parsing with argument support
-  - Built-in commands: `help`, `ping`, `ps`, `tasks`
+  - Built-in commands: `help`, `ping`, `ps`, `tasks`, `usermode`, `exec`, `elfinfo`, `netinfo`
   - Extensible command system
 
 ### Multitasking
@@ -75,6 +75,38 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - Process states: READY, RUNNING, BLOCKED, TERMINATED
   - `ps` command to list processes
   - `tasks` command for testing (launches A/B threads)
+
+### User Space (Ring 3)
+
+- **Task State Segment (TSS)**
+  - Hardware-assisted privilege level switching
+  - Kernel stack (ESP0/SS0) for interrupts from Ring 3
+  - TSS entry in GDT (selector 0x28)
+
+- **User Mode Support**
+  - Ring 3 code execution with restricted privileges
+  - User stack allocation and management
+  - Page table entries with User bit for accessible memory
+  - `usermode` shell command for testing
+
+### System Calls
+
+- **POSIX/BSD-like Interface**
+  - `int 0x80` software interrupt mechanism
+  - File operations: `open`, `read`, `write`, `close`
+  - Process control: `exit`, `getpid`
+  - Socket operations: `socket`, `bind`, `listen`, `accept`, `send`, `recv`
+  - File descriptor table with stdin/stdout/stderr (fd 0, 1, 2)
+
+### ELF Loader
+
+- **32-bit ELF Executable Support**
+  - Magic number and header validation
+  - i386 architecture verification
+  - Program header parsing (PT_LOAD segments)
+  - Memory allocation and segment loading
+  - Entry point extraction
+  - `exec` and `elfinfo` shell commands
 
 ### Kernel Logging System
 
@@ -134,6 +166,15 @@ The networking stack follows the OSI model architecture:
 - **UDP**: User Datagram Protocol
   - Connectionless packet transmission
   - Port multiplexing
+- **TCP**: Transmission Control Protocol
+  - Full RFC 793 state machine (11 states)
+  - 3-way handshake (SYN, SYN-ACK, ACK)
+  - Connection termination (FIN, FIN-ACK)
+  - Sequence and acknowledgment number tracking
+  - Receive buffer with circular queue (4KB per socket)
+  - Checksum calculation with pseudo-header
+  - Server socket support (bind, listen, accept)
+  - Up to 16 concurrent sockets
 - **DHCP**: Dynamic Host Configuration Protocol client
   - Full DHCP state machine (DISCOVER, OFFER, REQUEST, ACK)
   - Automatic IP configuration
@@ -158,8 +199,8 @@ The networking stack follows the OSI model architecture:
 
 ```
 src/
-├── arch/x86/          # x86-specific code (boot, GDT, IDT, I/O)
-├── kernel/            # Kernel core (main, console, keyboard)
+├── arch/x86/          # x86-specific code (boot, GDT, IDT, TSS, usermode)
+├── kernel/            # Kernel core (main, console, keyboard, syscalls, elf)
 ├── mm/                # Memory Management (PMM, heap, VMM)
 ├── drivers/           # Hardware drivers
 │   ├── ata.c/h        # ATA/IDE disk driver
@@ -172,12 +213,16 @@ src/
 │   ├── core/          # Network infrastructure
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
 │   ├── l3/            # Layer 3 (IPv4, ICMP, Routing)
-│   └── l4/            # Layer 4 (UDP, DHCP, DNS)
+│   └── l4/            # Layer 4 (UDP, TCP, DHCP, DNS)
 ├── lib/               # Common utilities (string functions)
 ├── shell/             # Command interpreter
 │   ├── shell.c/h      # Shell core (readline, history, parsing)
-│   └── commands.c/h   # Built-in commands (help, ping)
-└── include/           # Shared headers (Multiboot, linker script)
+│   └── commands.c/h   # Built-in commands (help, ping, exec, etc.)
+├── userland/          # User space programs (server, hello, test)
+└── include/           # Shared headers (Multiboot, linker script, ELF)
+
+userland/
+└── libc.h             # Minimal C library for user space programs
 ```
 
 ## Building
@@ -245,12 +290,17 @@ make run-pcap
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Applications                         │
+│              User Space (Ring 3)                        │
+│         ELF Programs  │  Userland libc                  │
+├─────────────────────────────────────────────────────────┤
+│                  System Calls (int 0x80)                │
+├─────────────────────────────────────────────────────────┤
+│              Kernel Space (Ring 0)                      │
 ├─────────────────────────────────────────────────────────┤
 │     VFS API              │         Network API          │
 │  (open, read, readdir)   │    (send, recv, socket)      │
 ├──────────────────────────┼──────────────────────────────┤
-│   Ext2   │  (Future FS)  │  UDP/DHCP │ ICMP │ (TCP...)  │
+│   Ext2   │  (Future FS)  │  TCP/UDP  │ ICMP │ DHCP/DNS  │
 ├──────────────────────────┼──────────────────────────────┤
 │      ATA Driver          │     IPv4  │  ARP  │ Ethernet │
 ├──────────────────────────┼──────────────────────────────┤
@@ -285,12 +335,12 @@ make run-pcap
 - [x] Virtual Memory (Paging) - Identity mapping
 - [x] Multitasking (Round Robin scheduler)
 - [x] Context Switching (kernel threads)
-- [ ] User Space (Ring 3)
-- [ ] ELF Loader
-- [ ] TCP Implementation
+- [x] User Space (Ring 3) with TSS
+- [x] ELF Loader (32-bit executables)
+- [x] TCP Implementation (full state machine)
+- [x] System Calls (POSIX/BSD-like interface)
 - [ ] Scripting files
 - [ ] Network configuration files
-- [ ] System Calls
 - [ ] GUI
 - [ ] OpenGL
 - [ ] SSL
