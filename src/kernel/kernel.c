@@ -241,6 +241,19 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
                         console_puts("[NET] Network stack ready!\n");
                         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                        
+                        /* === Configurer l'interface via la nouvelle API === */
+                        NetInterface* netif = netif_get_default();
+                        if (netif != NULL) {
+                            /* Configurer une IP statique pour le test (10.0.2.15) */
+                            netif->ip_addr = IP4(10, 0, 2, 15);
+                            netif->netmask = IP4(255, 255, 255, 0);
+                            netif->gateway = IP4(10, 0, 2, 2);
+                            netif->dns_server = IP4(10, 0, 2, 3);
+                            
+                            /* Afficher la configuration style ipconfig */
+                            netdev_ipconfig_display();
+                        }
                     }
                 }
             }

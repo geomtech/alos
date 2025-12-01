@@ -6,6 +6,9 @@
 #include "ipv4.h"
 #include "../l2/ethernet.h"
 
+/* Forward declaration */
+struct NetInterface;
+
 /* ICMP Types */
 #define ICMP_TYPE_ECHO_REPLY    0
 #define ICMP_TYPE_DEST_UNREACH  3
@@ -47,12 +50,13 @@ typedef struct __attribute__((packed)) {
 /**
  * Traite un paquet ICMP reçu.
  * 
+ * @param netif     Interface réseau sur laquelle le paquet a été reçu
  * @param eth       Header Ethernet (pour récupérer la MAC source)
  * @param ip_hdr    Header IPv4 du paquet
  * @param icmp_data Pointeur vers le début du paquet ICMP
  * @param len       Longueur du paquet ICMP en bytes
  */
-void icmp_handle_packet(ethernet_header_t* eth, ipv4_header_t* ip_hdr,
-                        uint8_t* icmp_data, int len);
+void icmp_handle_packet(struct NetInterface* netif, ethernet_header_t* eth, 
+                        ipv4_header_t* ip_hdr, uint8_t* icmp_data, int len);
 
 #endif /* NET_ICMP_H */

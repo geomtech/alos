@@ -2,6 +2,7 @@
 #include "icmp.h"
 #include "ipv4.h"
 #include "../core/net.h"
+#include "../core/netdev.h"
 #include "../utils.h"
 #include "../../kernel/console.h"
 
@@ -19,8 +20,8 @@ static void print_ip(const uint8_t* ip)
 /**
  * Traite un paquet ICMP reçu.
  */
-void icmp_handle_packet(ethernet_header_t* eth, ipv4_header_t* ip_hdr,
-                        uint8_t* icmp_data, int len)
+void icmp_handle_packet(NetInterface* netif, ethernet_header_t* eth, 
+                        ipv4_header_t* ip_hdr, uint8_t* icmp_data, int len)
 {
     /* Vérifier la taille minimale */
     if (icmp_data == NULL || len < ICMP_HEADER_SIZE) {
@@ -84,9 +85,9 @@ void icmp_handle_packet(ethernet_header_t* eth, ipv4_header_t* ip_hdr,
             /* 2. Calculer le nouveau checksum sur tout le paquet ICMP */
             reply->checksum = ip_checksum(reply_buffer, len);
             
-            /* Envoyer la réponse via IPv4 */
+            /* Envoyer la réponse via IPv4 en utilisant l'interface */
             /* On utilise la MAC source du paquet reçu comme destination */
-            ipv4_send_packet(eth->src_mac, ip_hdr->src_ip, IP_PROTO_ICMP,
+            ipv4_send_packet(netif, eth->src_mac, ip_hdr->src_ip, IP_PROTO_ICMP,
                            reply_buffer, len);
             break;
             

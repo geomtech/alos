@@ -5,9 +5,13 @@
 #include "../../kernel/console.h"
 #include "../../net/utils.h"
 #include "../../net/l2/ethernet.h"
+#include "../../net/core/netdev.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;
+
+/* NetInterface pour la nouvelle API */
+static NetInterface* g_pcnet_netif = NULL;
 
 /* ============================================ */
 /*           PCI Helper Functions               */
@@ -342,6 +346,28 @@ static void pcnet_set_software_style(PCNetDevice* dev)
     }
 }
 
+/**
+ * Wrapper de la fonction send pour NetInterface.
+ * Cette fonction est appelée via le pointeur netif->send().
+ */
+static int pcnet_netif_send(NetInterface* netif, uint8_t* data, int len)
+{
+    if (netif == NULL || netif->driver_data == NULL) return -1;
+    
+    PCNetDevice* dev = (PCNetDevice*)netif->driver_data;
+    
+    bool result = pcnet_send(dev, data, (uint16_t)len);
+    
+    if (result) {
+        netif->packets_tx++;
+        netif->bytes_tx += len;
+        return len;
+    } else {
+        netif->errors++;
+        return -1;
+    }
+}
+
 PCNetDevice* pcnet_init(PCIDevice* pci_dev)
 {
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
@@ -532,6 +558,50 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     g_pcnet_dev = dev;
     dev->initialized = false;  /* Sera mis à true par pcnet_start */
     
+    /* ============================================ */
+    /* Créer et enregistrer la NetInterface         */
+    /* ============================================ */
+    
+    /* Allouer la NetInterface */
+    g_pcnet_netif = (NetInterface*)kmalloc(sizeof(NetInterface));
+    if (g_pcnet_netif != NULL) {
+        /* Initialiser la structure à zéro */
+        uint8_t* ptr = (uint8_t*)g_pcnet_netif;
+        for (unsigned int i = 0; i < sizeof(NetInterface); i++) {
+            ptr[i] = 0;
+        }
+        
+        /* Nom de l'interface */
+        g_pcnet_netif->name[0] = 'e';
+        g_pcnet_netif->name[1] = 't';
+        g_pcnet_netif->name[2] = 'h';
+        g_pcnet_netif->name[3] = '0';
+        g_pcnet_netif->name[4] = '\0';
+        
+        /* Copier l'adresse MAC depuis l'EEPROM */
+        for (int i = 0; i < 6; i++) {
+            g_pcnet_netif->mac_addr[i] = dev->mac_addr[i];
+        }
+        
+        /* Configuration IP initialement vide (sera configurée par DHCP ou manuellement) */
+        g_pcnet_netif->ip_addr = 0;
+        g_pcnet_netif->netmask = 0;
+        g_pcnet_netif->gateway = 0;
+        g_pcnet_netif->dns_server = 0;
+        
+        /* Interface down par défaut (sera mise UP par pcnet_start) */
+        g_pcnet_netif->flags = NETIF_FLAG_DOWN;
+        
+        /* Assigner la fonction d'envoi */
+        g_pcnet_netif->send = pcnet_netif_send;
+        
+        /* Données du driver */
+        g_pcnet_netif->driver_data = dev;
+        
+        /* Enregistrer l'interface */
+        netdev_register(g_pcnet_netif);
+    }
+    
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
     console_puts("[PCnet] Driver initialized successfully!\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
@@ -606,6 +676,12 @@ bool pcnet_start(PCNetDevice* dev)
     console_puts(")\n");
     
     dev->initialized = true;
+    
+    /* Mettre à jour les flags de la NetInterface */
+    if (g_pcnet_netif != NULL) {
+        g_pcnet_netif->flags &= ~NETIF_FLAG_DOWN;
+        g_pcnet_netif->flags |= NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
+    }
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
     console_puts("\n*** PCnet Started! Ready to send/receive packets ***\n\n");

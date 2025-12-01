@@ -139,14 +139,26 @@ bool arp_cache_lookup(uint8_t* ip, uint8_t* mac_out)
 /**
  * Envoie une requête ARP.
  */
-void arp_send_request(uint8_t* target_ip)
+void arp_send_request(NetInterface* netif, uint8_t* target_ip)
 {
     /* Buffer de 60 octets (taille min Ethernet) */
     uint8_t buffer[60];
     
-    /* Récupérer notre MAC */
+    /* Utiliser la MAC de l'interface si fournie, sinon fallback sur l'ancienne API */
     uint8_t my_mac[6];
-    netdev_get_mac(my_mac);
+    uint8_t my_ip[4];
+    
+    if (netif != NULL) {
+        for (int i = 0; i < 6; i++) {
+            my_mac[i] = netif->mac_addr[i];
+        }
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        netdev_get_mac(my_mac);
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
     
     /* Initialiser à zéro */
     for (int i = 0; i < 60; i++) {
@@ -182,7 +194,7 @@ void arp_send_request(uint8_t* target_ip)
         arp->src_mac[i] = my_mac[i];
     }
     for (int i = 0; i < 4; i++) {
-        arp->src_ip[i] = MY_IP[i];
+        arp->src_ip[i] = my_ip[i];
     }
     
     /* Target = MAC inconnue (0), IP cible */
@@ -194,7 +206,14 @@ void arp_send_request(uint8_t* target_ip)
     }
     
     /* Envoyer */
-    if (netdev_send(buffer, 60)) {
+    bool sent = false;
+    if (netif != NULL && netif->send != NULL) {
+        sent = (netif->send(netif, buffer, 60) >= 0);
+    } else {
+        sent = netdev_send(buffer, 60);
+    }
+    
+    if (sent) {
         console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
         console_puts("[ARP] Request: Who has ");
         print_ip(target_ip);
@@ -210,17 +229,30 @@ void arp_send_request(uint8_t* target_ip)
 /**
  * Envoie une réponse ARP.
  * 
+ * @param netif      Interface réseau à utiliser pour l'envoi
  * @param target_mac MAC de la cible (celui qui a envoyé la requête)
  * @param target_ip  IP de la cible
  */
-void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
+void arp_send_reply(NetInterface* netif, uint8_t* target_mac, uint8_t* target_ip)
 {
     /* Buffer de 60 octets (taille min Ethernet) sur la stack */
     uint8_t buffer[60];
     
-    /* Récupérer notre vraie adresse MAC via la couche d'abstraction */
+    /* Utiliser la MAC/IP de l'interface si fournie, sinon fallback */
     uint8_t my_mac[6];
-    netdev_get_mac(my_mac);
+    uint8_t my_ip[4];
+    
+    if (netif != NULL) {
+        for (int i = 0; i < 6; i++) {
+            my_mac[i] = netif->mac_addr[i];
+        }
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        netdev_get_mac(my_mac);
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
     
     /* Initialiser à zéro (padding) */
     for (int i = 0; i < 60; i++) {
@@ -268,7 +300,7 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
     
     /* Sender IP = notre IP */
     for (int i = 0; i < 4; i++) {
-        arp->src_ip[i] = MY_IP[i];
+        arp->src_ip[i] = my_ip[i];
     }
     
     /* Target MAC = MAC de celui qui a demandé */
@@ -281,12 +313,19 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
         arp->dest_ip[i] = target_ip[i];
     }
     
-    /* Envoyer le paquet via la couche d'abstraction */
-    if (netdev_send(buffer, 60)) {
+    /* Envoyer le paquet via l'interface ou l'ancienne API */
+    bool sent = false;
+    if (netif != NULL && netif->send != NULL) {
+        sent = (netif->send(netif, buffer, 60) >= 0);
+    } else {
+        sent = netdev_send(buffer, 60);
+    }
+    
+    if (sent) {
         /* Log */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
         console_puts("[ARP] Sent Reply: ");
-        print_ip(MY_IP);
+        print_ip(my_ip);
         console_puts(" is at ");
         print_mac(my_mac);
         console_puts(" -> ");
@@ -302,11 +341,8 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
 
 /**
  * Traite un paquet ARP reçu.
- * 
- * Pour l'instant, on ne fait que parser et afficher les infos.
- * Ultérieurement, on répondra aux ARP Requests pour notre IP.
  */
-void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len)
+void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* packet_data, int len)
 {
     (void)eth;  /* Utilisé plus tard pour construire la réponse */
     
@@ -339,6 +375,16 @@ void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len)
         return;
     }
     
+    /* Obtenir notre IP depuis l'interface ou les globales */
+    uint8_t my_ip[4];
+    if (netif != NULL && netif->ip_addr != 0) {
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
+    
     /* Traiter selon l'opcode */
     switch (opcode) {
         case ARP_OP_REQUEST:
@@ -357,13 +403,13 @@ void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len)
             arp_cache_add(arp->src_ip, arp->src_mac);
             
             /* Vérifier si c'est pour nous */
-            if (ip_equals(arp->dest_ip, MY_IP)) {
+            if (arp_ip_equals(arp->dest_ip, my_ip)) {
                 console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
                 console_puts("[ARP] >>> That's us! Sending reply... <<<\n");
                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
                 
-                /* Envoyer la réponse ARP */
-                arp_send_reply(arp->src_mac, arp->src_ip);
+                /* Envoyer la réponse ARP via l'interface */
+                arp_send_reply(netif, arp->src_mac, arp->src_ip);
             }
             break;
             

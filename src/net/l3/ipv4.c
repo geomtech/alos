@@ -23,6 +23,15 @@ static void print_ip(const uint8_t* ip)
 }
 
 /**
+ * Compare deux adresses IP.
+ */
+static bool ip_addr_equals(const uint8_t* ip1, const uint8_t* ip2)
+{
+    return (ip1[0] == ip2[0] && ip1[1] == ip2[1] &&
+            ip1[2] == ip2[2] && ip1[3] == ip2[3]);
+}
+
+/**
  * Calcule le checksum Internet (RFC 1071).
  * Somme complémentée à 1 sur 16 bits.
  */
@@ -54,7 +63,7 @@ uint16_t ip_checksum(void* data, int len)
 /**
  * Traite un paquet IPv4 reçu.
  */
-void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len)
+void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < IPV4_HEADER_SIZE) {
@@ -96,8 +105,18 @@ void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len)
         return;
     }
     
+    /* Obtenir notre IP depuis l'interface ou les globales */
+    uint8_t my_ip[4];
+    if (netif != NULL && netif->ip_addr != 0) {
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
+    
     /* Vérifier que le paquet est destiné à notre IP */
-    if (!ip_equals(ip->dest_ip, MY_IP)) {
+    if (!ip_addr_equals(ip->dest_ip, my_ip)) {
         /* Pas pour nous, ignorer silencieusement */
         return;
     }
@@ -122,7 +141,7 @@ void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len)
     /* Dispatcher selon le protocole */
     switch (ip->protocol) {
         case IP_PROTO_ICMP:
-            icmp_handle_packet(eth, ip, payload, payload_len);
+            icmp_handle_packet(netif, eth, ip, payload, payload_len);
             break;
             
         case IP_PROTO_TCP:
@@ -148,8 +167,8 @@ void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len)
 /**
  * Envoie un paquet IPv4.
  */
-void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
-                      uint8_t* payload, int payload_len)
+void ipv4_send_packet(NetInterface* netif, uint8_t* dest_mac, uint8_t* dest_ip, 
+                      uint8_t protocol, uint8_t* payload, int payload_len)
 {
     /* Buffer pour le paquet complet (Ethernet + IPv4 + payload) */
     /* Taille max: 14 (Eth) + 20 (IP) + payload, min 60 bytes */
@@ -165,9 +184,21 @@ void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
         total_len = 60;
     }
     
-    /* Récupérer notre MAC via la couche d'abstraction */
+    /* Obtenir notre MAC et IP depuis l'interface ou les globales */
     uint8_t my_mac[6];
-    netdev_get_mac(my_mac);
+    uint8_t my_ip[4];
+    
+    if (netif != NULL) {
+        for (int i = 0; i < 6; i++) {
+            my_mac[i] = netif->mac_addr[i];
+        }
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        netdev_get_mac(my_mac);
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
     
     /* === Construire le header Ethernet === */
     ethernet_header_t* eth = (ethernet_header_t*)buffer;
@@ -207,7 +238,7 @@ void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
     
     /* Adresses IP */
     for (int i = 0; i < 4; i++) {
-        ip->src_ip[i] = MY_IP[i];
+        ip->src_ip[i] = my_ip[i];
         ip->dest_ip[i] = dest_ip[i];
     }
     
@@ -220,8 +251,15 @@ void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
         data[i] = payload[i];
     }
     
-    /* === Envoyer le paquet via la couche d'abstraction === */
-    if (netdev_send(buffer, total_len)) {
+    /* === Envoyer le paquet via l'interface ou l'ancienne API === */
+    bool sent = false;
+    if (netif != NULL && netif->send != NULL) {
+        sent = (netif->send(netif, buffer, total_len) >= 0);
+    } else {
+        sent = netdev_send(buffer, total_len);
+    }
+    
+    if (sent) {
         /* Log */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
         console_puts("[IPv4] Sent to ");

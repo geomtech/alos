@@ -58,29 +58,35 @@ typedef struct __attribute__((packed)) {
 #define ARP_OP_REQUEST          1
 #define ARP_OP_REPLY            2
 
+/* Forward declaration */
+struct NetInterface;
+
 /**
  * Traite un paquet ARP reçu.
  * 
+ * @param netif       Interface réseau sur laquelle le paquet a été reçu
  * @param eth         Pointeur vers le header Ethernet du paquet
  * @param packet_data Pointeur vers les données ARP (après le header Ethernet)
  * @param len         Longueur des données ARP
  */
-void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len);
+void arp_handle_packet(struct NetInterface* netif, ethernet_header_t* eth, uint8_t* packet_data, int len);
 
 /**
  * Envoie une réponse ARP (ARP Reply).
  * 
+ * @param netif      Interface réseau à utiliser pour l'envoi
  * @param target_mac MAC de la cible (celui qui a envoyé la requête)
  * @param target_ip  IP de la cible (4 bytes)
  */
-void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip);
+void arp_send_reply(struct NetInterface* netif, uint8_t* target_mac, uint8_t* target_ip);
 
 /**
  * Envoie une requête ARP (ARP Request).
  * 
+ * @param netif     Interface réseau à utiliser pour l'envoi
  * @param target_ip IP cible dont on veut connaître la MAC (4 bytes)
  */
-void arp_send_request(uint8_t* target_ip);
+void arp_send_request(struct NetInterface* netif, uint8_t* target_ip);
 
 /**
  * Ajoute une entrée dans le cache ARP.

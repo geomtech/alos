@@ -5,6 +5,9 @@
 #include <stdint.h>
 #include "../l2/ethernet.h"
 
+/* Forward declaration */
+struct NetInterface;
+
 /* IP Protocol Numbers */
 #define IP_PROTO_ICMP   1
 #define IP_PROTO_TCP    6
@@ -50,23 +53,25 @@ typedef struct __attribute__((packed)) {
 /**
  * Traite un paquet IPv4 reçu.
  * 
- * @param eth  Header Ethernet du paquet (pour récupérer la MAC source)
- * @param data Pointeur vers le début du paquet IPv4 (payload Ethernet)
- * @param len  Longueur totale du paquet IPv4 en bytes
+ * @param netif Interface réseau sur laquelle le paquet a été reçu
+ * @param eth   Header Ethernet du paquet (pour récupérer la MAC source)
+ * @param data  Pointeur vers le début du paquet IPv4 (payload Ethernet)
+ * @param len   Longueur totale du paquet IPv4 en bytes
  */
-void ipv4_handle_packet(ethernet_header_t* eth, uint8_t* data, int len);
+void ipv4_handle_packet(struct NetInterface* netif, ethernet_header_t* eth, uint8_t* data, int len);
 
 /**
  * Envoie un paquet IPv4.
  * 
+ * @param netif      Interface réseau à utiliser pour l'envoi
  * @param dest_mac   MAC de destination (6 bytes)
  * @param dest_ip    IP de destination (4 bytes)
  * @param protocol   Protocole (1=ICMP, 6=TCP, 17=UDP)
  * @param payload    Données à envoyer
  * @param payload_len Longueur des données
  */
-void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
-                      uint8_t* payload, int payload_len);
+void ipv4_send_packet(struct NetInterface* netif, uint8_t* dest_mac, uint8_t* dest_ip, 
+                      uint8_t protocol, uint8_t* payload, int payload_len);
 
 /**
  * Calcule le checksum Internet (RFC 1071).

@@ -2,17 +2,14 @@
 #include "ethernet.h"
 #include "arp.h"
 #include "../l3/ipv4.h"
+#include "../core/netdev.h"
 #include "../utils.h"
 #include "../../kernel/console.h"
 
 /**
- * Traite un paquet Ethernet reçu.
- * 
- * Cette fonction est le point d'entrée pour tous les paquets reçus
- * par le driver réseau. Elle parse le header Ethernet et dispatch
- * vers le handler approprié selon l'EtherType.
+ * Traite un paquet Ethernet reçu (nouvelle API avec NetInterface).
  */
-void ethernet_handle_packet(uint8_t* data, int len)
+void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale (header Ethernet = 14 bytes) */
     if (data == NULL || len < ETHERNET_HEADER_SIZE) {
@@ -38,12 +35,12 @@ void ethernet_handle_packet(uint8_t* data, int len)
     switch (ethertype) {
         case ETH_TYPE_ARP:
             /* Paquet ARP */
-            arp_handle_packet(eth, payload, payload_len);
+            arp_handle_packet(netif, eth, payload, payload_len);
             break;
             
         case ETH_TYPE_IPV4:
             /* Paquet IPv4 */
-            ipv4_handle_packet(eth, payload, payload_len);
+            ipv4_handle_packet(netif, eth, payload, payload_len);
             break;
             
         case ETH_TYPE_IPV6:
@@ -62,4 +59,18 @@ void ethernet_handle_packet(uint8_t* data, int len)
             console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
             break;
     }
+}
+
+/**
+ * Traite un paquet Ethernet reçu (ancienne API pour compatibilité).
+ * 
+ * Cette fonction est le point d'entrée pour tous les paquets reçus
+ * par le driver réseau. Elle parse le header Ethernet et dispatch
+ * vers le handler approprié selon l'EtherType.
+ */
+void ethernet_handle_packet(uint8_t* data, int len)
+{
+    /* Utiliser l'interface par défaut */
+    NetInterface* netif = netif_get_default();
+    ethernet_handle_packet_netif(netif, data, len);
 }

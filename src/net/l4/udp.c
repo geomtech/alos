@@ -3,6 +3,7 @@
 #include "../l3/ipv4.h"
 #include "../l3/route.h"
 #include "../l2/arp.h"
+#include "../core/netdev.h"
 #include "../utils.h"
 #include "../../kernel/console.h"
 
@@ -142,6 +143,9 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
         return;
     }
     
+    /* Obtenir l'interface par défaut */
+    NetInterface* netif = netif_get_default();
+    
     /* Résoudre la MAC via ARP cache */
     if (!arp_cache_lookup(next_hop, dest_mac)) {
         /* MAC pas dans le cache, envoyer une requête ARP */
@@ -151,7 +155,7 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
         console_puts(", sending ARP request...\n");
         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
         
-        arp_send_request(next_hop);
+        arp_send_request(netif, next_hop);
         
         /* Pour l'instant, on abandonne - dans un vrai OS, on mettrait
          * le paquet en queue et on réessaierait après la réponse ARP */
@@ -162,7 +166,7 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     }
 
     /* === Envoyer via IPv4 === */
-    ipv4_send_packet(dest_mac, dest_ip, IP_PROTO_UDP, buffer, UDP_HEADER_SIZE + len);
+    ipv4_send_packet(netif, dest_mac, dest_ip, IP_PROTO_UDP, buffer, UDP_HEADER_SIZE + len);
 
     /* Log */
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);

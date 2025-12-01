@@ -4,6 +4,9 @@
 
 #include <stdint.h>
 
+/* Forward declaration */
+struct NetInterface;
+
 /**
  * Ethernet Frame Header (14 bytes)
  * 
@@ -32,6 +35,15 @@ typedef struct __attribute__((packed)) {
 
 /**
  * Traite un paquet Ethernet reçu.
+ * 
+ * @param netif Interface réseau sur laquelle le paquet a été reçu (peut être NULL)
+ * @param data  Pointeur vers le début du paquet (header Ethernet inclus)
+ * @param len   Longueur totale du paquet en bytes
+ */
+void ethernet_handle_packet_netif(struct NetInterface* netif, uint8_t* data, int len);
+
+/**
+ * Traite un paquet Ethernet reçu (ancienne API sans NetInterface).
  * 
  * @param data Pointeur vers le début du paquet (header Ethernet inclus)
  * @param len  Longueur totale du paquet en bytes
