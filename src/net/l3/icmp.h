@@ -3,6 +3,7 @@
 #define NET_ICMP_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "ipv4.h"
 #include "../l2/ethernet.h"
 
@@ -47,6 +48,23 @@ typedef struct __attribute__((packed)) {
 /* Taille du header ICMP Echo */
 #define ICMP_HEADER_SIZE    8
 
+/* Ping default data size */
+#define PING_DATA_SIZE      56
+#define PING_DEFAULT_COUNT  4
+#define PING_TIMEOUT_MS     2000
+
+/* État du ping en cours */
+typedef struct {
+    uint8_t dest_ip[4];         /* IP de destination */
+    char hostname[64];          /* Hostname (si résolu via DNS) */
+    uint16_t identifier;        /* ID du ping */
+    uint16_t sequence;          /* Numéro de séquence actuel */
+    uint16_t sent;              /* Nombre envoyés */
+    uint16_t received;          /* Nombre reçus */
+    bool waiting;               /* Attente d'une réponse */
+    bool active;                /* Ping en cours */
+} ping_state_t;
+
 /**
  * Traite un paquet ICMP reçu.
  * 
@@ -58,5 +76,43 @@ typedef struct __attribute__((packed)) {
  */
 void icmp_handle_packet(struct NetInterface* netif, ethernet_header_t* eth, 
                         ipv4_header_t* ip_hdr, uint8_t* icmp_data, int len);
+
+/**
+ * Envoie un Echo Request (ping) vers une adresse IP.
+ * 
+ * @param dest_ip Adresse IP de destination (4 bytes)
+ */
+void icmp_send_echo_request(const uint8_t* dest_ip);
+
+/**
+ * Ping une adresse IP (envoie un Echo Request et attend la réponse).
+ * 
+ * @param dest_ip Adresse IP de destination (4 bytes)
+ * @return 0 si succès, -1 si erreur
+ */
+int ping_ip(const uint8_t* dest_ip);
+
+/**
+ * Ping un hostname (résolution DNS puis ping).
+ * 
+ * @param hostname Nom d'hôte à pinger (ex: "google.com")
+ * @return 0 si succès, -1 si erreur DNS, -2 si pas de réponse
+ */
+int ping(const char* hostname);
+
+/**
+ * Vérifie si un ping est en attente de réponse.
+ * 
+ * @return true si en attente
+ */
+bool ping_is_waiting(void);
+
+/**
+ * Récupère les statistiques du dernier ping.
+ * 
+ * @param sent     Nombre de paquets envoyés (peut être NULL)
+ * @param received Nombre de paquets reçus (peut être NULL)
+ */
+void ping_get_stats(uint16_t* sent, uint16_t* received);
 
 #endif /* NET_ICMP_H */
