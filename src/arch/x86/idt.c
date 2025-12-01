@@ -40,6 +40,8 @@ extern void isr31(void);
 extern void irq0_handler(void);
 extern void irq1_handler(void);
 extern void irq11_handler(void);
+extern void irq14_handler(void);
+extern void irq15_handler(void);
 
 struct idt_entry_struct idt_entries[IDT_ENTRIES];
 struct idt_ptr_struct idt_ptr;
@@ -232,10 +234,12 @@ void init_idt(void)
     outb(0x21, 0x0);
     outb(0xA1, 0x0);
 
-    // IRQ 0 = Timer, IRQ 1 = Clavier, IRQ 11 = PCnet
+    // IRQ 0 = Timer, IRQ 1 = Clavier, IRQ 11 = PCnet, IRQ 14/15 = IDE
     idt_set_gate(32, (uint32_t)irq0_handler, 0x08, 0x8E);
     idt_set_gate(33, (uint32_t)irq1_handler, 0x08, 0x8E);
     idt_set_gate(43, (uint32_t)irq11_handler, 0x08, 0x8E);  /* IRQ 11 = PCnet */
+    idt_set_gate(46, (uint32_t)irq14_handler, 0x08, 0x8E);  /* IRQ 14 = IDE Primary */
+    idt_set_gate(47, (uint32_t)irq15_handler, 0x08, 0x8E);  /* IRQ 15 = IDE Secondary */
 
     idt_flush((uint32_t)&idt_ptr);
 }

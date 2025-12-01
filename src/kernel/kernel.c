@@ -10,7 +10,10 @@
 #include "../mm/kheap.h"
 #include "console.h"
 #include "../drivers/pci.h"
+#include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
+#include "../fs/vfs.h"
+#include "../fs/ext2.h"
 #include "../net/core/netdev.h"
 #include "../net/core/net.h"
 #include "../net/l3/route.h"
@@ -220,6 +223,91 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             /* PCI Bus Enumeration                          */
             /* ============================================ */
             pci_probe();
+            
+            /* ============================================ */
+            /* ATA/IDE Disk Driver                          */
+            /* ============================================ */
+            int disk_ready = 0;
+            if (ata_init() == 0) {
+                disk_ready = 1;
+            }
+            
+            /* ============================================ */
+            /* Virtual File System + Ext2                   */
+            /* ============================================ */
+            if (disk_ready) {
+                /* Initialiser le VFS */
+                vfs_init();
+                
+                /* Enregistrer le driver Ext2 */
+                ext2_init();
+                
+                /* Monter le disque en tant que racine */
+                if (vfs_mount("/", "ext2", NULL) == 0) {
+                    /* Test: Lister le contenu de la racine */
+                    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                    console_puts("\n--- Root Directory Contents ---\n");
+                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                    
+                    vfs_node_t* root = vfs_get_root();
+                    if (root != NULL) {
+                        uint32_t index = 0;
+                        vfs_dirent_t* entry;
+                        
+                        while ((entry = vfs_readdir(root, index)) != NULL) {
+                            /* Afficher le type */
+                            if (entry->type == VFS_DIRECTORY) {
+                                console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+                                console_puts("[DIR]  ");
+                            } else {
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                                console_puts("[FILE] ");
+                            }
+                            
+                            console_puts(entry->name);
+                            
+                            /* Afficher la taille pour les fichiers */
+                            if (entry->type == VFS_FILE) {
+                                vfs_node_t* file = vfs_finddir(root, entry->name);
+                                if (file != NULL) {
+                                    console_puts(" (");
+                                    console_put_dec(file->size);
+                                    console_puts(" bytes)");
+                                }
+                            }
+                            
+                            console_puts("\n");
+                            index++;
+                        }
+                        
+                        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                        console_puts("Total: ");
+                        console_put_dec(index);
+                        console_puts(" entries\n");
+                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                        
+                        /* Test: Lire un fichier si présent */
+                        vfs_node_t* test_file = vfs_open("/hello.txt", VFS_O_RDONLY);
+                        if (test_file != NULL) {
+                            console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                            console_puts("\n--- Content of /hello.txt ---\n");
+                            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            
+                            uint8_t* buf = (uint8_t*)kmalloc(test_file->size + 1);
+                            if (buf != NULL) {
+                                int bytes = vfs_read(test_file, 0, test_file->size, buf);
+                                if (bytes > 0) {
+                                    buf[bytes] = '\0';
+                                    console_puts((const char*)buf);
+                                    console_puts("\n");
+                                }
+                                kfree(buf);
+                            }
+                            vfs_close(test_file);
+                        }
+                    }
+                }
+            }
             
             /* ============================================ */
             /* Network Device Initialization                */

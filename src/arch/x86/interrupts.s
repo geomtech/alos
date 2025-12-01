@@ -111,3 +111,29 @@ irq11_handler:
     out 0x20, al
     popa
     iretd
+
+; --- HANDLER IDE Primary (IRQ 14) ---
+; IRQ 14 = IDT index 46 (32 + 14 = 46)
+global irq14_handler
+extern ata_irq_handler
+irq14_handler:
+    pusha
+    call ata_irq_handler
+    ; EOI au Slave (0xA0) ET au Master (0x20) car IRQ > 7
+    mov al, 0x20
+    out 0xA0, al
+    out 0x20, al
+    popa
+    iretd
+
+; --- HANDLER IDE Secondary (IRQ 15) ---
+; IRQ 15 = IDT index 47 (32 + 15 = 47)
+global irq15_handler
+irq15_handler:
+    pusha
+    ; On ne fait rien pour l'IDE secondaire pour l'instant, juste EOI
+    mov al, 0x20
+    out 0xA0, al
+    out 0x20, al
+    popa
+    iretd

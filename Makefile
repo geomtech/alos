@@ -39,8 +39,8 @@ MM_SRC = src/mm/pmm.c src/mm/kheap.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o
 
 # Drivers
-DRIVERS_SRC = src/drivers/pci.c src/drivers/net/pcnet.c
-DRIVERS_OBJ = src/drivers/pci.o src/drivers/net/pcnet.o
+DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c
+DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o
 
 # Network stack (par couche OSI)
 NET_L2_SRC = src/net/l2/ethernet.c src/net/l2/arp.c
@@ -55,8 +55,12 @@ NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 
+# Filesystem (VFS + drivers)
+FS_SRC = src/fs/vfs.c src/fs/ext2.c
+FS_OBJ = src/fs/vfs.o src/fs/ext2.o
+
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ)
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -105,11 +109,16 @@ src/net/l4/%.o: src/net/l4/%.c
 src/net/core/%.o: src/net/core/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# Filesystem
+src/fs/%.o: src/fs/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage
 clean:
 	rm -f src/arch/x86/*.o src/kernel/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
+	rm -f src/fs/*.o
 	rm -f alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)
