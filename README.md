@@ -246,6 +246,8 @@ make run-pcap
 - [ ] SSL
 - [ ] SSH
 - [ ] Telnet
+- [ ] RTC Real-Time Clock
+- [ ] PIT Programmable Interval Timer
 
 ## License
 

@@ -9,6 +9,7 @@
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "console.h"
+#include "timer.h"
 #include "../drivers/pci.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
@@ -33,8 +34,15 @@ size_t strlen(const char *str)
     return len;
 }
 
+/* Fonction externe pour incrémenter les ticks */
+extern void timer_tick(void);
+
 void timer_handler_c(void)
 {
+    /* Incrémenter le compteur de ticks */
+    timer_tick();
+    
+    /* Envoyer EOI au PIC */
     outb(0x20, 0x20);
 }
 
@@ -96,6 +104,18 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
         console_puts("Flags: ");
         console_put_hex(mboot_info->flags);
         console_puts("\n\n");
+
+        /* ============================================ */
+        /* Initialisation du Timer (PIT + RTC)         */
+        /* ============================================ */
+        timer_init(TIMER_FREQUENCY);  /* 1000 Hz = 1ms par tick */
+        
+        /* Afficher la date/heure de boot */
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+        console_puts("Boot time: ");
+        timestamp_print_now();
+        console_puts("\n\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
 
         /* ============================================ */
         /* Initialisation du PMM                       */
