@@ -75,7 +75,8 @@ int netdev_init(void)
     PCIDevice* pci_dev = pci_get_device(0x1022, 0x2000);
     if (pci_dev != NULL) {
         PCNetDevice* pcnet = pcnet_init(pci_dev);
-        if (pcnet != NULL && pcnet->initialized) {
+        /* Note: pcnet->initialized sera mis à true par pcnet_start() plus tard */
+        if (pcnet != NULL) {
             netdev_t* dev = &netdevs[netdev_count_val];
             
             dev->name = "eth0";

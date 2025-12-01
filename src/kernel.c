@@ -13,6 +13,7 @@
 #include "drivers/pcnet.h"
 #include "net/netdev.h"
 #include "net/net.h"
+#include "net/route.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -228,6 +229,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                 uint8_t mac[6];
                 netdev_get_mac(mac);
                 net_init(mac);
+                
+                /* Initialiser la table de routage */
+                route_init();
                 
                 /* Démarrer la carte PCnet si c'est le driver utilisé */
                 netdev_t* dev = netdev_get_default();

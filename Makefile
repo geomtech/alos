@@ -8,8 +8,8 @@ ASFLAGS = -felf32 -g
 LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 
 # Sources
-SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c src/kheap.c src/console.c src/pci.c src/drivers/pcnet.c src/net/ethernet.c src/net/arp.c src/net/net.c src/net/ipv4.c src/net/icmp.c src/net/netdev.c
-OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o src/kheap.o src/console.o src/pci.o src/drivers/pcnet.o src/net/ethernet.o src/net/arp.o src/net/net.o src/net/ipv4.o src/net/icmp.o src/net/netdev.o
+SRC = src/boot.s src/kernel.c src/gdt.c src/idt.c src/interrupts.s src/keyboard.c src/pmm.c src/kheap.c src/console.c src/pci.c src/drivers/pcnet.c src/net/ethernet.c src/net/arp.c src/net/net.c src/net/ipv4.c src/net/icmp.c src/net/netdev.c src/net/route.c
+OBJ = src/boot.o src/kernel.o src/gdt.o src/idt.o src/interrupts.o src/keyboard.o src/pmm.o src/kheap.o src/console.o src/pci.o src/drivers/pcnet.o src/net/ethernet.o src/net/arp.o src/net/net.o src/net/ipv4.o src/net/icmp.o src/net/netdev.o src/net/route.o
 
 # Cible finale
 alos.bin: $(OBJ)
