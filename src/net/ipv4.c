@@ -2,10 +2,10 @@
 #include "ipv4.h"
 #include "icmp.h"
 #include "net.h"
+#include "netdev.h"
 #include "ethernet.h"
 #include "utils.h"
 #include "../console.h"
-#include "../drivers/pcnet.h"
 
 /* Compteur d'identification pour les paquets sortants */
 static uint16_t ip_id_counter = 0;
@@ -166,9 +166,9 @@ void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
         total_len = 60;
     }
     
-    /* Récupérer notre MAC */
+    /* Récupérer notre MAC via la couche d'abstraction */
     uint8_t my_mac[6];
-    pcnet_get_mac(my_mac);
+    netdev_get_mac(my_mac);
     
     /* === Construire le header Ethernet === */
     ethernet_header_t* eth = (ethernet_header_t*)buffer;
@@ -221,11 +221,8 @@ void ipv4_send_packet(uint8_t* dest_mac, uint8_t* dest_ip, uint8_t protocol,
         data[i] = payload[i];
     }
     
-    /* === Envoyer le paquet === */
-    PCNetDevice* dev = pcnet_get_device();
-    if (dev != NULL) {
-        pcnet_send(dev, buffer, total_len);
-        
+    /* === Envoyer le paquet via la couche d'abstraction === */
+    if (netdev_send(buffer, total_len)) {
         /* Log */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
         console_puts("[IPv4] Sent to ");

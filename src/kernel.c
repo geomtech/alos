@@ -11,6 +11,8 @@
 #include "console.h"
 #include "pci.h"
 #include "drivers/pcnet.h"
+#include "net/netdev.h"
+#include "net/net.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -217,76 +219,26 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             /* ============================================ */
             pci_probe();
             
-            /* Chercher la carte réseau AMD PCnet */
-            PCIDevice* pcnet_pci = pci_get_device(PCI_VENDOR_AMD, PCI_DEVICE_AMD_PCNET);
-            if (pcnet_pci != NULL) {
-                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-                console_puts("\n*** SUCCESS: AMD PCnet II found! ***\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-                console_puts("    BAR0 (I/O Base): ");
-                console_put_hex(pcnet_pci->bar0 & 0xFFFFFFFC);
-                console_puts("\n    IRQ: ");
-                console_put_dec(pcnet_pci->interrupt_line);
-                console_puts("\n");
+            /* ============================================ */
+            /* Network Device Initialization                */
+            /* ============================================ */
+            int num_netdevs = netdev_init();
+            if (num_netdevs > 0) {
+                /* Initialiser la couche réseau avec la MAC du périphérique par défaut */
+                uint8_t mac[6];
+                netdev_get_mac(mac);
+                net_init(mac);
                 
-                /* ============================================ */
-                /* Initialiser le driver PCnet                  */
-                /* ============================================ */
-                PCNetDevice* pcnet_dev = pcnet_init(pcnet_pci);
-                if (pcnet_dev != NULL) {
-                    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-                    console_puts("\n*** PCnet driver ready! ***\n");
-                    
-                    /* Démarrer la carte */
+                /* Démarrer la carte PCnet si c'est le driver utilisé */
+                netdev_t* dev = netdev_get_default();
+                if (dev != NULL && dev->type == NETDEV_TYPE_PCNET) {
+                    PCNetDevice* pcnet_dev = (PCNetDevice*)dev->driver_data;
                     if (pcnet_start(pcnet_dev)) {
-                        /* Envoyer un paquet broadcast test */
-                        console_puts("[Test] Sending broadcast packet...\n");
-                        
-                        /* Construire une frame Ethernet simple */
-                        uint8_t packet[64];
-                        
-                        /* Destination MAC: broadcast (FF:FF:FF:FF:FF:FF) */
-                        packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = 0xFF;
-                        packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
-                        
-                        /* Source MAC: notre adresse */
-                        for (int i = 0; i < 6; i++) {
-                            packet[6 + i] = pcnet_dev->mac_addr[i];
-                        }
-                        
-                        /* EtherType: 0x0800 (IPv4) ou custom */
-                        packet[12] = 0x08;
-                        packet[13] = 0x00;
-                        
-                        /* Payload: "Hello from ALOS!" */
-                        const char* msg = "Hello from ALOS!";
-                        for (int i = 0; msg[i] != '\0' && i < 46; i++) {
-                            packet[14 + i] = msg[i];
-                        }
-                        
-                        /* Padding pour atteindre 64 octets minimum */
-                        for (int i = 14 + 17; i < 64; i++) {
-                            packet[i] = 0;
-                        }
-                        
-                        if (pcnet_send(pcnet_dev, packet, 64)) {
-                            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-                            console_puts("[Test] Packet sent successfully!\n");
-                        } else {
-                            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-                            console_puts("[Test] Failed to send packet!\n");
-                        }
-                    } else {
-                        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-                        console_puts("\n*** PCnet START failed! ***\n");
+                        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                        console_puts("[NET] Network stack ready!\n");
+                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
                     }
-                } else {
-                    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-                    console_puts("\n*** PCnet driver init FAILED! ***\n");
                 }
-            } else {
-                console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-                console_puts("\nAMD PCnet not found (run QEMU with -nic model=pcnet)\n");
             }
         }
         

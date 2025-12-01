@@ -1,10 +1,10 @@
 /* src/net/arp.c - Address Resolution Protocol Handler */
 #include "arp.h"
 #include "net.h"
+#include "netdev.h"
 #include "ethernet.h"
 #include "utils.h"
 #include "../console.h"
-#include "../drivers/pcnet.h"
 
 /**
  * Affiche une adresse MAC au format XX:XX:XX:XX:XX:XX
@@ -39,9 +39,9 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
     /* Buffer de 60 octets (taille min Ethernet) sur la stack */
     uint8_t buffer[60];
     
-    /* Récupérer notre vraie adresse MAC depuis le driver */
+    /* Récupérer notre vraie adresse MAC via la couche d'abstraction */
     uint8_t my_mac[6];
-    pcnet_get_mac(my_mac);
+    netdev_get_mac(my_mac);
     
     /* Initialiser à zéro (padding) */
     for (int i = 0; i < 60; i++) {
@@ -102,11 +102,8 @@ void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip)
         arp->dest_ip[i] = target_ip[i];
     }
     
-    /* Envoyer le paquet */
-    PCNetDevice* dev = pcnet_get_device();
-    if (dev != NULL) {
-        pcnet_send(dev, buffer, 60);
-        
+    /* Envoyer le paquet via la couche d'abstraction */
+    if (netdev_send(buffer, 60)) {
         /* Log */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
         console_puts("[ARP] Sent Reply: ");
