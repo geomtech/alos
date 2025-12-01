@@ -44,19 +44,11 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
             break;
             
         case ETH_TYPE_IPV6:
-            /* Paquet IPv6 - non supporté pour l'instant */
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
-            console_puts("[ETH] IPv6 Packet (not supported)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            /* Paquet IPv6 - non supporté, ignorer silencieusement */
             break;
             
         default:
-            /* Type inconnu */
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
-            console_puts("[ETH] Unknown packet type: 0x");
-            console_put_hex(ethertype);
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            /* Type inconnu - ignorer silencieusement */
             break;
     }
 }

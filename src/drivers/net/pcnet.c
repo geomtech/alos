@@ -166,14 +166,7 @@ static void pcnet_receive(PCNetDevice* dev)
             /* Récupérer le pointeur vers les données */
             uint8_t* buffer = (uint8_t*)(uintptr_t)desc->rbadr;
             
-            /* Log minimal de réception */
-            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-            console_puts("[RX] Packet: ");
-            console_put_dec(len);
-            console_puts(" bytes\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-            
-            /* Passer le paquet à la couche Ethernet pour traitement */
+            /* Passer le paquet à la couche Ethernet pour traitement (pas de log) */
             ethernet_handle_packet(buffer, len);
         }
         
@@ -751,38 +744,14 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     desc->status = status_val;
     desc->misc = 0;
     
-    /* Debug: afficher l'état du descripteur */
-    console_puts("[TX] idx=");
-    console_put_dec(idx);
-    console_puts(" buf=");
-    console_put_hex((uint32_t)(uintptr_t)buf);
-    console_puts(" len=");
-    console_put_dec(len);
-    console_puts("\n");
-    console_puts("     bcnt=");
-    console_put_hex(desc->bcnt);
-    console_puts(" status=");
-    console_put_hex(desc->status);
-    console_puts("\n");
-    
     /* Passer au descripteur suivant */
     dev->tx_index = (dev->tx_index + 1) % PCNET_TX_BUFFERS;
     
     /* Déclencher l'envoi immédiat avec TDMD + garder IENA actif */
     pcnet_write_csr(dev, CSR0, CSR0_TDMD | CSR0_IENA);
     
-    /* Attendre un peu et vérifier le status */
-    for (volatile int i = 0; i < 100000; i++);
-    
-    uint16_t csr0_after = pcnet_read_csr(dev, CSR0);
-    console_puts("[TX] CSR0 after=");
-    console_put_hex(csr0_after);
-    console_puts(" desc->status=");
-    console_put_hex(desc->status);
-    if (!(desc->status & 0x8000)) {
-        console_puts(" (OWN cleared = sent!)");
-    }
-    console_puts("\n");
+    /* Petit délai pour laisser la carte traiter */
+    for (volatile int i = 0; i < 10000; i++);
     
     return true;
 }

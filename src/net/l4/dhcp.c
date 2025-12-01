@@ -275,9 +275,7 @@ int dhcp_discover(NetInterface* netif)
     dhcp_ctx.discover_count++;
     
     console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-    console_puts("[DHCP] Sending DISCOVER (xid=0x");
-    console_put_hex(dhcp_ctx.xid);
-    console_puts(")\n");
+    console_puts("[DHCP] Discovering...\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     
     /* Construire le paquet DHCP DISCOVER */
@@ -314,12 +312,7 @@ int dhcp_discover(NetInterface* netif)
  */
 static int dhcp_send_request(NetInterface* netif)
 {
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
-    console_puts("[DHCP] Sending REQUEST for ");
-    print_ip_u32(dhcp_ctx.offered_ip);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    
+    /* Pas de log verbose - on attend juste le ACK */
     dhcp_ctx.state = DHCP_STATE_REQUESTING;
     dhcp_ctx.request_count++;
     
@@ -464,15 +457,7 @@ static void dhcp_handle_offer(NetInterface* netif, dhcp_header_t* dhcp,
     dhcp_ctx.offered_ip = ip_bytes_to_u32((uint8_t*)&dhcp->yiaddr);
     dhcp_ctx.server_ip = server_ip;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-    console_puts("[DHCP] Received OFFER: ");
-    print_ip_u32(dhcp_ctx.offered_ip);
-    console_puts(" from server ");
-    print_ip_u32(server_ip);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    
-    /* Envoyer un REQUEST pour accepter l'offre */
+    /* Envoyer un REQUEST pour accepter l'offre (pas de log) */
     dhcp_send_request(netif);
 }
 
@@ -543,7 +528,6 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
 void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
 {
     if (!dhcp_initialized) {
-        console_puts("[DHCP] Not initialized, ignoring packet\n");
         return;
     }
     
@@ -553,44 +537,23 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     }
     
     if (netif == NULL || netif != dhcp_ctx.netif) {
-        console_puts("[DHCP] Wrong interface, ignoring\n");
         return;
     }
     
     /* Vérifier la taille minimale */
     if (len < (int)(DHCP_HEADER_SIZE + 4)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-        console_puts("[DHCP] Packet too short\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
         return;
     }
     
     dhcp_header_t* dhcp = (dhcp_header_t*)data;
     
-    /* Debug: afficher l'état actuel */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-    console_puts("[DHCP] Received packet, state=");
-    console_put_dec(dhcp_ctx.state);
-    console_puts(" op=");
-    console_put_dec(dhcp->op);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-    
     /* Vérifier que c'est une réponse (BOOTREPLY) */
     if (dhcp->op != DHCP_BOOTREPLY) {
-        console_puts("[DHCP] Not a BOOTREPLY, ignoring\n");
         return;
     }
     
     /* Vérifier le transaction ID */
     if (ntohl(dhcp->xid) != dhcp_ctx.xid) {
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
-        console_puts("[DHCP] XID mismatch (expected 0x");
-        console_put_hex(dhcp_ctx.xid);
-        console_puts(", got 0x");
-        console_put_hex(ntohl(dhcp->xid));
-        console_puts(")\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
         return;
     }
     
@@ -598,9 +561,6 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     uint8_t* cookie = data + DHCP_HEADER_SIZE;
     if (cookie[0] != 0x63 || cookie[1] != 0x82 ||
         cookie[2] != 0x53 || cookie[3] != 0x63) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
-        console_puts("[DHCP] Invalid magic cookie\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
         return;
     }
     

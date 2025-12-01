@@ -131,31 +131,9 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
     bool is_dhcp_response = (ip->protocol == IP_PROTO_UDP && we_have_no_ip);
     
     if (!is_for_us && !is_broadcast && !we_have_no_ip && !is_dhcp_response) {
-        /* Debug: afficher les paquets rejetés */
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
-        console_puts("[IPv4] REJECTED: ");
-        print_ip(ip->src_ip);
-        console_puts(" -> ");
-        print_ip(ip->dest_ip);
-        console_puts(" (our IP: ");
-        print_ip(my_ip);
-        console_puts(")\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        /* Paquet pas pour nous - ignorer silencieusement */
         return;
     }
-    
-    /* Log: paquet IPv4 reçu pour nous */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-    console_puts("[IPv4] Received from ");
-    print_ip(ip->src_ip);
-    console_puts(" -> ");
-    print_ip(ip->dest_ip);
-    console_puts(" (Proto=");
-    console_put_dec(ip->protocol);
-    console_puts(", TTL=");
-    console_put_dec(ip->ttl);
-    console_puts(")\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     
     /* Calculer le pointeur vers le payload */
     uint8_t* payload = data + header_len;
