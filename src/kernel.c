@@ -236,6 +236,50 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                 if (pcnet_dev != NULL) {
                     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
                     console_puts("\n*** PCnet driver ready! ***\n");
+                    
+                    /* Démarrer la carte */
+                    if (pcnet_start(pcnet_dev)) {
+                        /* Envoyer un paquet broadcast test */
+                        console_puts("[Test] Sending broadcast packet...\n");
+                        
+                        /* Construire une frame Ethernet simple */
+                        uint8_t packet[64];
+                        
+                        /* Destination MAC: broadcast (FF:FF:FF:FF:FF:FF) */
+                        packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = 0xFF;
+                        packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
+                        
+                        /* Source MAC: notre adresse */
+                        for (int i = 0; i < 6; i++) {
+                            packet[6 + i] = pcnet_dev->mac_addr[i];
+                        }
+                        
+                        /* EtherType: 0x0800 (IPv4) ou custom */
+                        packet[12] = 0x08;
+                        packet[13] = 0x00;
+                        
+                        /* Payload: "Hello from ALOS!" */
+                        const char* msg = "Hello from ALOS!";
+                        for (int i = 0; msg[i] != '\0' && i < 46; i++) {
+                            packet[14 + i] = msg[i];
+                        }
+                        
+                        /* Padding pour atteindre 64 octets minimum */
+                        for (int i = 14 + 17; i < 64; i++) {
+                            packet[i] = 0;
+                        }
+                        
+                        if (pcnet_send(pcnet_dev, packet, 64)) {
+                            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                            console_puts("[Test] Packet sent successfully!\n");
+                        } else {
+                            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                            console_puts("[Test] Failed to send packet!\n");
+                        }
+                    } else {
+                        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                        console_puts("\n*** PCnet START failed! ***\n");
+                    }
                 } else {
                     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
                     console_puts("\n*** PCnet driver init FAILED! ***\n");

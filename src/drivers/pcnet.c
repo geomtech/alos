@@ -310,9 +310,101 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
         console_puts("[PCnet] Init Block alignment: OK (4-byte aligned)\n");
     }
     
+    /* Étape 6: Allouer les Descriptor Rings (alignés sur 16 octets) */
+    dev->rx_ring = (PCNetRxDesc*)kmalloc(sizeof(PCNetRxDesc) * PCNET_RX_BUFFERS + 16);
+    dev->tx_ring = (PCNetTxDesc*)kmalloc(sizeof(PCNetTxDesc) * PCNET_TX_BUFFERS + 16);
+    
+    if (dev->rx_ring == NULL || dev->tx_ring == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_puts("[PCnet] ERROR: Failed to allocate descriptor rings!\n");
+        return NULL;
+    }
+    
+    /* Aligner les rings sur 16 octets */
+    uint32_t rx_ring_addr = (uint32_t)(uintptr_t)dev->rx_ring;
+    if (rx_ring_addr & 0xF) {
+        rx_ring_addr = (rx_ring_addr + 15) & ~0xF;
+        dev->rx_ring = (PCNetRxDesc*)(uintptr_t)rx_ring_addr;
+    }
+    
+    uint32_t tx_ring_addr = (uint32_t)(uintptr_t)dev->tx_ring;
+    if (tx_ring_addr & 0xF) {
+        tx_ring_addr = (tx_ring_addr + 15) & ~0xF;
+        dev->tx_ring = (PCNetTxDesc*)(uintptr_t)tx_ring_addr;
+    }
+    
+    console_puts("[PCnet] RX Ring at: ");
+    console_put_hex((uint32_t)(uintptr_t)dev->rx_ring);
+    console_puts(", TX Ring at: ");
+    console_put_hex((uint32_t)(uintptr_t)dev->tx_ring);
+    console_puts("\n");
+    
+    /* Étape 7: Allouer les buffers de données */
+    dev->rx_buffers = (uint8_t*)kmalloc(PCNET_BUFFER_SIZE * PCNET_RX_BUFFERS);
+    dev->tx_buffers = (uint8_t*)kmalloc(PCNET_BUFFER_SIZE * PCNET_TX_BUFFERS);
+    
+    if (dev->rx_buffers == NULL || dev->tx_buffers == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_puts("[PCnet] ERROR: Failed to allocate data buffers!\n");
+        return NULL;
+    }
+    
+    console_puts("[PCnet] RX Buffers at: ");
+    console_put_hex((uint32_t)(uintptr_t)dev->rx_buffers);
+    console_puts(", TX Buffers at: ");
+    console_put_hex((uint32_t)(uintptr_t)dev->tx_buffers);
+    console_puts("\n");
+    
+    /* Étape 8: Initialiser les descripteurs RX */
+    for (int i = 0; i < PCNET_RX_BUFFERS; i++) {
+        dev->rx_ring[i].rbadr = (uint32_t)(uintptr_t)(dev->rx_buffers + i * PCNET_BUFFER_SIZE);
+        dev->rx_ring[i].bcnt = (int16_t)(-(int16_t)PCNET_BUFFER_SIZE);  /* Complément à 2 */
+        dev->rx_ring[i].status = 0x8000;  /* OWN = 1 (Card owned, prêt à recevoir) */
+        dev->rx_ring[i].mcnt = 0;
+        dev->rx_ring[i].user = 0;
+    }
+    
+    /* Étape 9: Initialiser les descripteurs TX */
+    for (int i = 0; i < PCNET_TX_BUFFERS; i++) {
+        dev->tx_ring[i].tbadr = (uint32_t)(uintptr_t)(dev->tx_buffers + i * PCNET_BUFFER_SIZE);
+        dev->tx_ring[i].bcnt = 0;
+        dev->tx_ring[i].status = 0;  /* OWN = 0 (CPU owned) */
+        dev->tx_ring[i].misc = 0;
+        dev->tx_ring[i].user = 0;
+    }
+    
+    console_puts("[PCnet] Descriptors initialized (");
+    console_put_dec(PCNET_RX_BUFFERS);
+    console_puts(" RX, ");
+    console_put_dec(PCNET_TX_BUFFERS);
+    console_puts(" TX)\n");
+    
+    /* Étape 10: Configurer l'Initialization Block */
+    dev->init_block->mode = 0;  /* Normal operation */
+    dev->init_block->rlen = (PCNET_LOG2_RX_BUFFERS << 4);  /* log2(16) = 4, shifted */
+    dev->init_block->tlen = (PCNET_LOG2_TX_BUFFERS << 4);  /* log2(16) = 4, shifted */
+    
+    /* Copier l'adresse MAC */
+    for (int i = 0; i < 6; i++) {
+        dev->init_block->padr[i] = dev->mac_addr[i];
+    }
+    
+    dev->init_block->reserved = 0;
+    
+    /* Filtre multicast (accepter tout pour l'instant) */
+    for (int i = 0; i < 8; i++) {
+        dev->init_block->ladr[i] = 0xFF;
+    }
+    
+    /* Adresses des rings */
+    dev->init_block->rdra = (uint32_t)(uintptr_t)dev->rx_ring;
+    dev->init_block->tdra = (uint32_t)(uintptr_t)dev->tx_ring;
+    
+    console_puts("[PCnet] Init Block configured\n");
+    
     /* Stocker l'instance globale */
     g_pcnet_dev = dev;
-    dev->initialized = true;
+    dev->initialized = false;  /* Sera mis à true par pcnet_start */
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
     console_puts("[PCnet] Driver initialized successfully!\n");
@@ -323,9 +415,123 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
 
 bool pcnet_start(PCNetDevice* dev)
 {
-    /* TODO: Implémenter le démarrage complet */
-    (void)dev;
-    return false;
+    if (dev == NULL) return false;
+    
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_puts("[PCnet] Starting card...\n");
+    
+    /* Étape 1: Écrire l'adresse de l'Init Block dans CSR1 et CSR2 */
+    uint32_t init_addr = (uint32_t)(uintptr_t)dev->init_block;
+    
+    pcnet_write_csr(dev, CSR1, init_addr & 0xFFFF);         /* 16 bits bas */
+    pcnet_write_csr(dev, CSR2, (init_addr >> 16) & 0xFFFF); /* 16 bits hauts */
+    
+    console_puts("[PCnet] Init Block address written to CSR1/CSR2: ");
+    console_put_hex(init_addr);
+    console_puts("\n");
+    
+    /* Étape 2: Lancer l'initialisation (INIT + IENA) */
+    pcnet_write_csr(dev, CSR0, CSR0_INIT | CSR0_IENA);
+    
+    console_puts("[PCnet] Waiting for IDON...\n");
+    
+    /* Étape 3: Attendre IDON (Initialization Done) */
+    int timeout = 100000;
+    uint32_t csr0;
+    while (timeout > 0) {
+        csr0 = pcnet_read_csr(dev, CSR0);
+        if (csr0 & CSR0_IDON) {
+            break;
+        }
+        timeout--;
+    }
+    
+    if (timeout == 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_puts("[PCnet] ERROR: Timeout waiting for IDON!\n");
+        console_puts("[PCnet] CSR0 = ");
+        console_put_hex(csr0);
+        console_puts("\n");
+        return false;
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_puts("[PCnet] IDON received! CSR0 = ");
+    console_put_hex(csr0);
+    console_puts("\n");
+    
+    /* Acquitter IDON en écrivant 1 */
+    pcnet_write_csr(dev, CSR0, CSR0_IDON);
+    
+    /* Étape 4: Démarrer la carte (STRT + IENA) */
+    pcnet_write_csr(dev, CSR0, CSR0_STRT | CSR0_IENA);
+    
+    /* Vérifier que la carte est démarrée */
+    csr0 = pcnet_read_csr(dev, CSR0);
+    
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_puts("[PCnet] After START, CSR0 = ");
+    console_put_hex(csr0);
+    console_puts(" (");
+    if (csr0 & CSR0_TXON) console_puts("TXON ");
+    if (csr0 & CSR0_RXON) console_puts("RXON ");
+    if (csr0 & CSR0_IENA) console_puts("IENA ");
+    if (csr0 & CSR0_STRT) console_puts("STRT ");
+    console_puts(")\n");
+    
+    dev->initialized = true;
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_puts("\n*** PCnet Started! Ready to send/receive packets ***\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    
+    return true;
+}
+
+/**
+ * Envoie un paquet Ethernet.
+ */
+bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
+{
+    if (dev == NULL || data == NULL || len == 0) return false;
+    if (len > PCNET_BUFFER_SIZE) return false;
+    
+    /* Obtenir le descripteur TX actuel */
+    int idx = dev->tx_index;
+    PCNetTxDesc* desc = &dev->tx_ring[idx];
+    
+    /* Vérifier que le descripteur est libre (OWN = 0) */
+    if (desc->status & 0x8000) {
+        /* Descripteur encore possédé par la carte */
+        console_puts("[PCnet] TX buffer busy!\n");
+        return false;
+    }
+    
+    /* Copier les données dans le buffer */
+    uint8_t* buf = dev->tx_buffers + idx * PCNET_BUFFER_SIZE;
+    for (uint16_t i = 0; i < len; i++) {
+        buf[i] = data[i];
+    }
+    
+    /* Configurer le descripteur */
+    desc->tbadr = (uint32_t)(uintptr_t)buf;
+    desc->bcnt = (int16_t)(-(int16_t)len);  /* Complément à 2 */
+    desc->misc = 0;
+    
+    /* 
+     * Status: OWN=1 (card owns), STP=1 (start of packet), ENP=1 (end of packet)
+     * 0x8300 = 1000 0011 0000 0000
+     *          OWN  ERR  -    -    STP  ENP
+     */
+    desc->status = 0x8300;
+    
+    /* Passer au descripteur suivant */
+    dev->tx_index = (dev->tx_index + 1) % PCNET_TX_BUFFERS;
+    
+    /* Déclencher l'envoi immédiat avec TDMD */
+    pcnet_write_csr(dev, CSR0, CSR0_IENA | CSR0_TDMD);
+    
+    return true;
 }
 
 void pcnet_stop(PCNetDevice* dev)

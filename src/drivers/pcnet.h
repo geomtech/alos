@@ -220,6 +220,15 @@ void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value);
 bool pcnet_start(PCNetDevice* dev);
 
 /**
+ * Envoie un paquet Ethernet.
+ * @param dev Le périphérique PCnet
+ * @param data Les données à envoyer (frame Ethernet complète)
+ * @param len La longueur des données
+ * @return true si le paquet a été mis en queue, false sinon
+ */
+bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len);
+
+/**
  * Arrête la carte.
  */
 void pcnet_stop(PCNetDevice* dev);
