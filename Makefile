@@ -59,8 +59,16 @@ NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 FS_SRC = src/fs/vfs.c src/fs/ext2.c
 FS_OBJ = src/fs/vfs.o src/fs/ext2.o
 
+# Library (common utilities)
+LIB_SRC = src/lib/string.c
+LIB_OBJ = src/lib/string.o
+
+# Shell
+SHELL_SRC = src/shell/shell.c src/shell/commands.c
+SHELL_OBJ = src/shell/shell.o src/shell/commands.o
+
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ)
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -113,12 +121,20 @@ src/net/core/%.o: src/net/core/%.c
 src/fs/%.o: src/fs/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# Library
+src/lib/%.o: src/lib/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+# Shell
+src/shell/%.o: src/shell/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage
 clean:
 	rm -f src/arch/x86/*.o src/kernel/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
-	rm -f src/fs/*.o
+	rm -f src/fs/*.o src/lib/*.o src/shell/*.o
 	rm -f alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)

@@ -1,11 +1,12 @@
+/* src/kernel/keyboard.c - Keyboard driver with input buffer */
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include "../arch/x86/io.h"
 #include "console.h"
-#include "../drivers/net/pcnet.h"
+#include "keyboard.h"
 
-/* Scancodes spéciaux pour les flèches */
+/* Scancodes spéciaux */
 #define SCANCODE_UP_ARROW    0x48
 #define SCANCODE_DOWN_ARROW  0x50
 #define SCANCODE_LEFT_ARROW  0x4B
@@ -13,225 +14,149 @@
 #define SCANCODE_PAGE_UP     0x49
 #define SCANCODE_PAGE_DOWN   0x51
 #define SCANCODE_ENTER       0x1C
+#define SCANCODE_BACKSPACE   0x0E
 
-static uint16_t *const VGA_MEMORY = (uint16_t *)0xB8000;
+/* Codes spéciaux pour le shell (non-ASCII) */
+#define KEY_UP      0x80
+#define KEY_DOWN    0x81
+#define KEY_LEFT    0x82
+#define KEY_RIGHT   0x83
 
-// Position actuelle du curseur à l'écran
-static int terminal_col = 0;
-static int terminal_row = 0;
+/* Buffer circulaire pour les caractères */
+static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
+static volatile int kb_head = 0;  /* Position d'écriture */
+static volatile int kb_tail = 0;  /* Position de lecture */
 
-// Table de correspondance Scancode Set 1 -> ASCII (Layout QWERTY US simplifié)
-unsigned char kbdus[128] =
-    {
-        0,
-        27,
-        '1',
-        '2',
-        '3',
-        '4',
-        '5',
-        '6',
-        '7',
-        '8', /* 9 */
-        '9',
-        '0',
-        '-',
-        '=',
-        '\b', /* Backspace */
-        '\t', /* Tab */
-        'q',
-        'w',
-        'e',
-        'r', /* 19 */
-        't',
-        'y',
-        'u',
-        'i',
-        'o',
-        'p',
-        '[',
-        ']',
-        '\n', /* Enter key */
-        0,    /* 29   - Control */
-        'a',
-        's',
-        'd',
-        'f',
-        'g',
-        'h',
-        'j',
-        'k',
-        'l',
-        ';', /* 39 */
-        '\'',
-        '`',
-        0, /* Left shift */
-        '\\',
-        'z',
-        'x',
-        'c',
-        'v',
-        'b',
-        'n', /* 49 */
-        'm',
-        ',',
-        '.',
-        '/',
-        0, /* Right shift */
-        '*',
-        0,   /* Alt */
-        ' ', /* Space bar */
-        0,   /* Caps lock */
-        0,   /* 59 - F1 key ... > */
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0, /* < ... F10 */
-        0, /* 69 - Num lock*/
-        0, /* Scroll Lock */
-        0, /* Home key */
-        0, /* Up Arrow */
-        0, /* Page Up */
-        '-',
-        0, /* Left Arrow */
-        0,
-        0, /* Right Arrow */
-        '+',
-        0, /* 79 - End key*/
-        0, /* Down Arrow */
-        0, /* Page Down */
-        0, /* Insert Key */
-        0, /* Delete Key */
-        0,
-        0,
-        0,
-        0, /* F11 Key */
-        0, /* F12 Key */
-        0, /* All other keys are undefined */
+/* Table de correspondance Scancode Set 1 -> ASCII (Layout QWERTY US) */
+static unsigned char kbdus[128] = {
+    0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',   /* 0x00-0x09 */
+    '9',  '0',  '-',  '=',  '\b', '\t', 'q',  'w',  'e',  'r',   /* 0x0A-0x13 */
+    't',  'y',  'u',  'i',  'o',  'p',  '[',  ']',  '\n', 0,     /* 0x14-0x1D (0x1C = Enter, 0x1D = Ctrl) */
+    'a',  's',  'd',  'f',  'g',  'h',  'j',  'k',  'l',  ';',   /* 0x1E-0x27 */
+    '\'', '`',  0,    '\\', 'z',  'x',  'c',  'v',  'b',  'n',   /* 0x28-0x31 (0x2A = LShift) */
+    'm',  ',',  '.',  '/',  0,    '*',  0,    ' ',  0,    0,     /* 0x32-0x3B (0x38 = Alt, 0x3A = Caps) */
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x3C-0x45 (F1-F10) */
+    0,    0,    0,    0,    '-',  0,    0,    0,    '+',  0,     /* 0x46-0x4F (NumLock, etc.) */
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x50-0x59 */
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x5A-0x63 */
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x64-0x6D */
+    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x6E-0x77 */
+    0,    0,    0,    0,    0,    0,    0,    0                   /* 0x78-0x7F */
 };
 
-// Fonction pour afficher un caractère et avancer le curseur
-void terminal_putc(char c)
+/**
+ * Ajoute un caractère dans le buffer circulaire.
+ */
+static void keyboard_buffer_put(char c)
 {
-    if (c == '\n')
-    {
-        terminal_col = 0;
-        terminal_row++;
-    }
-    else if (c == '\b')
-    {
-        if (terminal_col > 0)
-            terminal_col--;
-        const size_t index = terminal_row * VGA_WIDTH + terminal_col;
-        VGA_MEMORY[index] = (uint16_t)' ' | (uint16_t)0x07 << 8; // Efface
-    }
-    else
-    {
-        const size_t index = terminal_row * VGA_WIDTH + terminal_col;
-        VGA_MEMORY[index] = (uint16_t)c | (uint16_t)0x07 << 8; // 0x07 = Gris clair sur noir
-        terminal_col++;
-    }
-
-    // Gestion du retour à la ligne automatique
-    if (terminal_col >= VGA_WIDTH)
-    {
-        terminal_col = 0;
-        terminal_row++;
-    }
-
-    // Si on arrive en bas, on remonte (scroll très basique : on repart en haut pour l'instant)
-    if (terminal_row >= VGA_HEIGHT)
-    {
-        terminal_row = 0;
-        terminal_col = 0;
+    int next_head = (kb_head + 1) % KEYBOARD_BUFFER_SIZE;
+    
+    /* Si le buffer est plein, on ignore le caractère */
+    if (next_head != kb_tail) {
+        keyboard_buffer[kb_head] = c;
+        kb_head = next_head;
     }
 }
 
+/**
+ * Lit un caractère du buffer (non-bloquant).
+ * @return Le caractère ou 0 si buffer vide
+ */
+static char keyboard_buffer_get(void)
+{
+    if (kb_head == kb_tail) {
+        return 0;  /* Buffer vide */
+    }
+    
+    char c = keyboard_buffer[kb_tail];
+    kb_tail = (kb_tail + 1) % KEYBOARD_BUFFER_SIZE;
+    return c;
+}
+
+/**
+ * Vérifie si un caractère est disponible.
+ */
+bool keyboard_has_char(void)
+{
+    return kb_head != kb_tail;
+}
+
+/**
+ * Vide le buffer clavier.
+ */
+void keyboard_clear_buffer(void)
+{
+    kb_head = 0;
+    kb_tail = 0;
+}
+
+/**
+ * Lit un caractère du buffer (bloquant).
+ * Attend avec hlt jusqu'à ce qu'un caractère soit disponible.
+ */
+char keyboard_getchar(void)
+{
+    while (!keyboard_has_char()) {
+        /* Activer les interruptions et attendre */
+        asm volatile("sti");
+        asm volatile("hlt");
+    }
+    return keyboard_buffer_get();
+}
+
+/**
+ * Handler d'interruption clavier (IRQ1).
+ * Stocke les caractères dans le buffer au lieu de les afficher.
+ */
 void keyboard_handler_c(void)
 {
-    // 1. Lire le scancode
+    /* 1. Lire le scancode */
     uint8_t scancode = inb(0x60);
 
-    // 2. Vérifier si c'est un appui (Bit de poids fort à 0) ou un relâchement (Bit à 1)
-    if (scancode & 0x80)
-    {
-        // C'est un "Break Code" (touche relâchée).
-        // On ne fait RIEN ici.
-    }
-    else
-    {
-        // C'est un "Make Code" (touche appuyée).
-        // Gérer les touches spéciales (flèches)
+    /* 2. Vérifier si c'est un appui (bit 7 = 0) ou relâchement (bit 7 = 1) */
+    if (!(scancode & 0x80)) {
+        /* Make Code (touche appuyée) */
         switch (scancode) {
             case SCANCODE_UP_ARROW:
+                /* Flèche haut -> code spécial pour historique shell */
+                keyboard_buffer_put(KEY_UP);
+                break;
+                
+            case SCANCODE_DOWN_ARROW:
+                /* Flèche bas -> code spécial pour historique shell */
+                keyboard_buffer_put(KEY_DOWN);
+                break;
+                
+            case SCANCODE_LEFT_ARROW:
+                keyboard_buffer_put(KEY_LEFT);
+                break;
+                
+            case SCANCODE_RIGHT_ARROW:
+                keyboard_buffer_put(KEY_RIGHT);
+                break;
+                
             case SCANCODE_PAGE_UP:
+                /* Page Up -> scroll console */
                 console_scroll_up();
                 break;
-            case SCANCODE_DOWN_ARROW:
+                
             case SCANCODE_PAGE_DOWN:
+                /* Page Down -> scroll console */
                 console_scroll_down();
                 break;
-            case SCANCODE_ENTER:
-                {
-                    /* Envoyer un paquet broadcast de test */
-                    PCNetDevice* pcnet = pcnet_get_device();
-                    if (pcnet != NULL && pcnet->initialized) {
-                        uint8_t packet[64];
-                        
-                        /* Destination MAC: broadcast */
-                        packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = 0xFF;
-                        packet[3] = 0xFF; packet[4] = 0xFF; packet[5] = 0xFF;
-                        
-                        /* Source MAC */
-                        for (int i = 0; i < 6; i++) {
-                            packet[6 + i] = pcnet->mac_addr[i];
-                        }
-                        
-                        /* EtherType: 0x0800 */
-                        packet[12] = 0x08;
-                        packet[13] = 0x00;
-                        
-                        /* Payload */
-                        const char* msg = "ALOS Broadcast!";
-                        for (int i = 0; msg[i] != '\0' && i < 46; i++) {
-                            packet[14 + i] = msg[i];
-                        }
-                        
-                        /* Padding */
-                        for (int i = 14 + 15; i < 64; i++) {
-                            packet[i] = 0;
-                        }
-                        
-                        if (pcnet_send(pcnet, packet, 64)) {
-                            console_puts("\n[Broadcast sent!]\n");
-                        } else {
-                            console_puts("\n[Broadcast FAILED]\n");
-                        }
-                        console_refresh();
-                    } else {
-                        terminal_putc('\n');
-                    }
-                }
-                break;
+                
             default:
-                // Touche normale
-                if (scancode < 128)
-                {
+                /* Touche normale */
+                if (scancode < 128) {
                     char c = kbdus[scancode];
-                    if (c != 0)
-                    {
-                        terminal_putc(c);
+                    if (c != 0) {
+                        keyboard_buffer_put(c);
                     }
                 }
                 break;
         }
     }
 
-    // 3. Acquitter l'interruption (EOI)
+    /* 3. Acquitter l'interruption (EOI au PIC) */
     outb(0x20, 0x20);
 }

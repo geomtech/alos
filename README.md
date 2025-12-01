@@ -261,6 +261,7 @@ make run-pcap
 - [ ] Telnet
 - [ ] RTC Real-Time Clock
 - [ ] PIT Programmable Interval Timer
+- [ ] UTF-8 string and console
 
 ## License
 

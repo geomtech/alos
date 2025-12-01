@@ -22,18 +22,12 @@
 #include "../net/l3/icmp.h"
 #include "../net/l4/dhcp.h"
 #include "../net/l4/dns.h"
+#include "../shell/shell.h"
+#include "../include/string.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
 static uint32_t g_mboot_magic = 0;
-
-size_t strlen(const char *str)
-{
-    size_t len = 0;
-    while (str[len])
-        len++;
-    return len;
-}
 
 /* Fonction externe pour incrémenter les ticks */
 extern void timer_tick(void);
@@ -228,6 +222,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
     
     asm volatile("sti");
 
+    /* Lancer le shell interactif */
+    shell_init();
+    shell_run();
+    
+    /* Ne devrait jamais arriver */
     while (1)
     {
         asm volatile("hlt");
