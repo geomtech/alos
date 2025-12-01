@@ -59,4 +59,10 @@ int mac_equals(const uint8_t* mac1, const uint8_t* mac2);
  */
 int mac_is_broadcast(const uint8_t* mac);
 
+/**
+ * Traite les paquets réseau en attente (polling).
+ * Utile dans les boucles d'attente bloquantes.
+ */
+void net_poll(void);
+
 #endif /* NET_NET_H */

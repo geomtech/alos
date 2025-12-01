@@ -11,7 +11,17 @@
 #define SYS_EXIT        1       /* Terminer le processus */
 #define SYS_READ        3       /* Lire depuis un fichier/stdin */
 #define SYS_WRITE       4       /* Écrire vers un fichier/stdout */
+#define SYS_OPEN        5       /* Ouvrir un fichier */
 #define SYS_GETPID      20      /* Obtenir le PID du processus courant */
+
+/* Socket syscalls (BSD-like numbers) */
+#define SYS_SOCKET      41      /* Créer un socket */
+#define SYS_BIND        49      /* Lier un socket à une adresse */
+#define SYS_LISTEN      50      /* Mettre un socket en écoute */
+#define SYS_ACCEPT      43      /* Accepter une connexion */
+#define SYS_SEND        44      /* Envoyer des données */
+#define SYS_RECV        45      /* Recevoir des données */
+#define SYS_CLOSE       6       /* Fermer un file descriptor */
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS    256

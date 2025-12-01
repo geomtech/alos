@@ -2,6 +2,7 @@
 #include "net.h"
 #include "netdev.h"
 #include "../../kernel/console.h"
+#include "../../drivers/net/pcnet.h"
 
 /* 
  * Variables globales LEGACY - DEPRECATED
@@ -70,4 +71,15 @@ int mac_is_broadcast(const uint8_t* mac)
         if (mac[i] != 0xFF) return 0;
     }
     return 1;
+}
+
+/**
+ * Traite les paquets réseau en attente (polling mode).
+ * Cette fonction appelle le handler d'interruption PCNet
+ * pour traiter les paquets reçus.
+ */
+void net_poll(void)
+{
+    /* Appeler le handler d'interruption pour traiter les paquets */
+    pcnet_irq_handler();
 }

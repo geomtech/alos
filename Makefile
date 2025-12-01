@@ -173,7 +173,7 @@ run-tap: alos.bin
 # Nécessite: brew install qemu (version avec vmnet support)
 # Note: Peut nécessiter sudo ou des permissions spéciales
 run-vmnet: alos.bin
-	sudo qemu-system-i386 -kernel alos.bin -m 128M \
+	sudo qemu-system-i386 -kernel alos.bin -m 2048M \
 		-netdev vmnet-shared,id=net0 \
 		-device pcnet,netdev=net0 \
 		-d int,cpu_reset -no-reboot \

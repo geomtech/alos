@@ -16,14 +16,14 @@ CFLAGS = -ffreestanding -nostdlib -fno-builtin -m32 -O0 -g -Wall
 USER_BASE = 0x400000
 
 # Liste des programmes à compiler
-PROGRAMS = test.elf hello.elf
+PROGRAMS = test.elf hello.elf server.elf
 
 # Cible par défaut
 all: $(PROGRAMS)
 
 # Règle générique pour compiler un programme
 %.elf: %.o
-	$(LD) -Ttext $(USER_BASE) -o $@ $< --entry main
+	$(LD) -Ttext $(USER_BASE) -o $@ $< --entry _start
 	@echo "Built $@"
 
 %.o: %.c
@@ -31,7 +31,7 @@ all: $(PROGRAMS)
 
 # Programme de test
 test.elf: test.o
-	$(LD) -Ttext $(USER_BASE) -o $@ $< --entry main
+	$(LD) -Ttext $(USER_BASE) -o $@ $< --entry _start
 
 # Nettoyer
 clean:

@@ -12,6 +12,9 @@
 /* Maximum number of TCP sockets */
 #define TCP_MAX_SOCKETS     16
 
+/* Receive buffer size per socket */
+#define TCP_RECV_BUFFER_SIZE    4096
+
 /* Well-known ports */
 #define TCP_PORT_HTTP       80
 #define TCP_PORT_HTTPS      443
@@ -95,7 +98,7 @@ typedef struct __attribute__((packed)) {
  * TCP Socket structure
  * Représente une connexion TCP (ou un socket en écoute)
  */
-typedef struct {
+typedef struct tcp_socket {
     /* État du socket */
     tcp_state_t state;          /* Current state (CLOSED, LISTEN, etc.) */
     bool        in_use;         /* Is this socket slot in use? */
@@ -114,6 +117,12 @@ typedef struct {
     
     /* Flags internes */
     uint8_t     flags;          /* Internal flags (awaiting ACK, etc.) */
+    
+    /* Receive buffer (circular) */
+    uint8_t     recv_buffer[TCP_RECV_BUFFER_SIZE];
+    uint16_t    recv_head;      /* Where to write next */
+    uint16_t    recv_tail;      /* Where to read next */
+    uint16_t    recv_count;     /* Number of bytes in buffer */
 } tcp_socket_t;
 
 /* Internal socket flags */
@@ -171,5 +180,50 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
  * @return Chaîne décrivant l'état
  */
 const char* tcp_state_name(tcp_state_t state);
+
+/**
+ * Crée un nouveau socket TCP (non connecté).
+ * 
+ * @return Pointeur vers le socket, ou NULL si erreur
+ */
+tcp_socket_t* tcp_socket_create(void);
+
+/**
+ * Lie un socket à un port local.
+ * 
+ * @param sock Socket à lier
+ * @param port Port local (host byte order)
+ * @return 0 si succès, -1 si erreur
+ */
+int tcp_bind(tcp_socket_t* sock, uint16_t port);
+
+/**
+ * Lit des données depuis le buffer de réception d'un socket.
+ * Non-bloquant: retourne immédiatement ce qui est disponible.
+ * 
+ * @param sock  Socket TCP
+ * @param buf   Buffer destination
+ * @param len   Taille maximale à lire
+ * @return Nombre de bytes lus, 0 si buffer vide, -1 si erreur
+ */
+int tcp_recv(tcp_socket_t* sock, uint8_t* buf, int len);
+
+/**
+ * Envoie des données via un socket TCP.
+ * 
+ * @param sock  Socket TCP (doit être ESTABLISHED)
+ * @param buf   Buffer source
+ * @param len   Nombre de bytes à envoyer
+ * @return Nombre de bytes envoyés, -1 si erreur
+ */
+int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len);
+
+/**
+ * Vérifie si des données sont disponibles en lecture.
+ * 
+ * @param sock Socket TCP
+ * @return Nombre de bytes disponibles
+ */
+int tcp_available(tcp_socket_t* sock);
 
 #endif /* NET_TCP_H */

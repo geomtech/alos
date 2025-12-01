@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ALOS Web Server</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .container {
+            background: rgba(255,255,255,0.1);
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        h1 {
+            color: #00ff88;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #888;
+            font-size: 1.2em;
+        }
+        .info {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(0,255,136,0.1);
+            border-radius: 10px;
+            border-left: 4px solid #00ff88;
+        }
+        .highlight {
+            color: #00ff88;
+            font-weight: bold;
+        }
+        ul { text-align: left; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to ALOS!</h1>
+        <p class="subtitle">A Learning Operating System</p>
+        <div class="info">
+            <p>This page is served by a <span class="highlight">userspace program</span></p>
+            <p>running on the ALOS kernel.</p>
+            <p>Features demonstrated:</p>
+            <ul>
+                <li>TCP/IP networking stack</li>
+                <li>Socket syscalls (socket, bind, listen, accept, recv, send)</li>
+                <li>File syscalls (open, read, close)</li>
+                <li>EXT2 filesystem support</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

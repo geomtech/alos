@@ -152,6 +152,9 @@ void tcp_init(void)
         tcp_sockets[i].ack = 0;
         tcp_sockets[i].window = 8192;  /* 8KB window par défaut */
         tcp_sockets[i].flags = 0;
+        tcp_sockets[i].recv_head = 0;
+        tcp_sockets[i].recv_tail = 0;
+        tcp_sockets[i].recv_count = 0;
         for (int j = 0; j < 4; j++) {
             tcp_sockets[i].remote_ip[j] = 0;
         }
@@ -560,17 +563,22 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 console_puts(" bytes of data\n");
                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 
-                /* TODO: Passer les données à la couche application */
-                /* Pour l'instant, afficher les premiers octets */
-                console_puts("  Data: ");
-                for (int i = 0; i < payload_len && i < 64; i++) {
-                    if (payload[i] >= 32 && payload[i] < 127) {
-                        console_putc(payload[i]);
+                /* Stocker les données dans le buffer circulaire */
+                int stored = 0;
+                for (int i = 0; i < payload_len; i++) {
+                    if (sock->recv_count < TCP_RECV_BUFFER_SIZE) {
+                        sock->recv_buffer[sock->recv_head] = payload[i];
+                        sock->recv_head = (sock->recv_head + 1) % TCP_RECV_BUFFER_SIZE;
+                        sock->recv_count++;
+                        stored++;
                     } else {
-                        console_putc('.');
+                        /* Buffer plein - on perd les données */
+                        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                        console_puts("[TCP] Recv buffer full! Dropping data.\n");
+                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                        break;
                     }
                 }
-                console_puts("\n");
                 
                 /* Mettre à jour notre ACK */
                 sock->ack = seq_num + payload_len;
@@ -637,4 +645,130 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             break;
     }
+}
+
+/* ===========================================
+ * Nouvelles fonctions pour l'API Socket
+ * =========================================== */
+
+/**
+ * Crée un nouveau socket TCP (non connecté).
+ */
+tcp_socket_t* tcp_socket_create(void)
+{
+    tcp_socket_t* sock = tcp_alloc_socket();
+    if (sock == NULL) {
+        return NULL;
+    }
+    
+    /* Initialiser le socket en état CLOSED */
+    sock->state = TCP_STATE_CLOSED;
+    sock->local_port = 0;
+    sock->remote_port = 0;
+    sock->seq = 0;
+    sock->ack = 0;
+    sock->window = 8192;
+    sock->flags = 0;
+    sock->recv_head = 0;
+    sock->recv_tail = 0;
+    sock->recv_count = 0;
+    for (int i = 0; i < 4; i++) {
+        sock->remote_ip[i] = 0;
+    }
+    
+    return sock;
+}
+
+/**
+ * Lie un socket à un port local.
+ */
+int tcp_bind(tcp_socket_t* sock, uint16_t port)
+{
+    if (sock == NULL) {
+        return -1;
+    }
+    
+    /* Vérifier si le port est déjà utilisé par un autre socket */
+    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+        if (tcp_sockets[i].in_use && 
+            &tcp_sockets[i] != sock &&
+            tcp_sockets[i].local_port == port) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("[TCP] Port ");
+            console_put_dec(port);
+            console_puts(" already bound\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+    }
+    
+    sock->local_port = port;
+    return 0;
+}
+
+/**
+ * Lit des données depuis le buffer de réception d'un socket.
+ * Non-bloquant: retourne immédiatement ce qui est disponible.
+ */
+int tcp_recv(tcp_socket_t* sock, uint8_t* buf, int len)
+{
+    if (sock == NULL || buf == NULL || len <= 0) {
+        return -1;
+    }
+    
+    /* Vérifier que le socket est dans un état valide pour la lecture */
+    if (sock->state != TCP_STATE_ESTABLISHED && 
+        sock->state != TCP_STATE_CLOSE_WAIT) {
+        /* Pas de données à lire si pas connecté */
+        return 0;
+    }
+    
+    /* Lire autant de données que possible (non-bloquant) */
+    int read = 0;
+    while (read < len && sock->recv_count > 0) {
+        buf[read] = sock->recv_buffer[sock->recv_tail];
+        sock->recv_tail = (sock->recv_tail + 1) % TCP_RECV_BUFFER_SIZE;
+        sock->recv_count--;
+        read++;
+    }
+    
+    return read;
+}
+
+/**
+ * Envoie des données via un socket TCP.
+ */
+int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len)
+{
+    if (sock == NULL || buf == NULL || len <= 0) {
+        return -1;
+    }
+    
+    /* Vérifier que le socket est connecté */
+    if (sock->state != TCP_STATE_ESTABLISHED) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("[TCP] Cannot send: socket not connected\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    /* Envoyer les données via tcp_send_packet */
+    /* Note: On devrait fragmenter si len > MSS, mais pour V1 on simplifie */
+    tcp_send_packet(sock, TCP_FLAG_ACK | TCP_FLAG_PSH, (uint8_t*)buf, len);
+    
+    /* Mettre à jour le numéro de séquence */
+    sock->seq += len;
+    
+    return len;
+}
+
+/**
+ * Vérifie si des données sont disponibles en lecture.
+ */
+int tcp_available(tcp_socket_t* sock)
+{
+    if (sock == NULL) {
+        return 0;
+    }
+    return sock->recv_count;
 }
