@@ -84,7 +84,8 @@ The networking stack follows the OSI model architecture:
   - Checksum calculation
   - TTL handling
 - **ICMP**: Internet Control Message Protocol
-  - Echo Request/Reply (ping)
+  - Echo Request/Reply (ping responder)
+  - **Ping command** with DNS resolution: `ping("google.com")`
   - Destination Unreachable messages
 - **Routing**: Basic routing table with gateway support
 
@@ -96,8 +97,23 @@ The networking stack follows the OSI model architecture:
   - Full DHCP state machine (DISCOVER, OFFER, REQUEST, ACK)
   - Automatic IP configuration
   - Lease management
+- **DNS**: Domain Name System resolver
+  - A record resolution (hostname → IP)
+  - PTR record resolution (reverse DNS: IP → hostname)
+  - CNAME support (alias resolution)
+  - DNS cache with TTL management
+  - Integrates with DHCP-provided DNS server
 
-## Project Structure
+#### Layer 3 - Network
+- **IPv4**: Internet Protocol v4
+  - Packet parsing and validation
+  - Checksum calculation
+  - TTL handling
+- **ICMP**: Internet Control Message Protocol
+  - Echo Request/Reply (ping responder)
+  - **Ping command** with DNS resolution (`ping("google.com")`)
+  - Destination Unreachable messages
+- **Routing**: Basic routing table with gateway support
 
 ```
 src/
@@ -215,6 +231,8 @@ make run-pcap
 - [x] Ethernet/ARP
 - [x] IPv4/ICMP
 - [x] UDP/DHCP
+- [x] DNS Resolver (A, PTR, CNAME + cache)
+- [x] Ping with DNS support
 - [ ] Ext2 Write Support
 - [ ] TCP Implementation
 - [ ] Interactive Shell
