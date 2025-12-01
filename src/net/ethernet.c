@@ -1,6 +1,7 @@
 /* src/net/ethernet.c - Ethernet Frame Handling */
 #include "ethernet.h"
 #include "arp.h"
+#include "ipv4.h"
 #include "utils.h"
 #include "../console.h"
 
@@ -42,12 +43,7 @@ void ethernet_handle_packet(uint8_t* data, int len)
             
         case ETH_TYPE_IPV4:
             /* Paquet IPv4 */
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
-            console_puts("[ETH] IP Packet detected (");
-            console_put_dec(payload_len);
-            console_puts(" bytes payload)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
-            /* TODO: Implémenter ip_handle_packet() */
+            ipv4_handle_packet(eth, payload, payload_len);
             break;
             
         case ETH_TYPE_IPV6:
