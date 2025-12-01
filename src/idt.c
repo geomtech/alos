@@ -4,6 +4,7 @@
 
 extern void irq0_handler(void);
 extern void irq1_handler(void);
+extern void irq11_handler(void);
 
 struct idt_entry_struct idt_entries[IDT_ENTRIES];
 struct idt_ptr_struct idt_ptr;
@@ -62,6 +63,7 @@ void init_idt(void)
     // 0x8E = Flags (Present, Ring 0, 32-bit Interrupt Gate)
     idt_set_gate(32, (uint32_t)irq0_handler, 0x08, 0x8E);
     idt_set_gate(33, (uint32_t)irq1_handler, 0x08, 0x8E);
+    idt_set_gate(43, (uint32_t)irq11_handler, 0x08, 0x8E);  /* IRQ 11 = PCnet */
 
     // Pour l'instant on laisse l'IDT vide de handlers (ça plantera si une IRQ arrive)
     // On charge juste la table vide pour que le CPU sache où elle est.

@@ -95,6 +95,46 @@ void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 }
 
 /* ============================================ */
+/*           Interrupt Handler                  */
+/* ============================================ */
+
+/**
+ * Handler d'interruption PCnet (IRQ 11).
+ * Appelé par le handler ASM irq11_handler.
+ */
+void pcnet_irq_handler(void)
+{
+    if (g_pcnet_dev == NULL) return;
+    
+    /* Lire CSR0 pour voir ce qui a déclenché l'interruption */
+    uint32_t csr0 = pcnet_read_csr(g_pcnet_dev, CSR0);
+    
+    /* Acquitter les interruptions en écrivant les bits à 1 */
+    /* On garde IENA (bit 6) actif */
+    pcnet_write_csr(g_pcnet_dev, CSR0, csr0 & 0xFF00);
+    
+    if (csr0 & CSR0_RINT) {
+        /* Paquet reçu */
+        g_pcnet_dev->packets_rx++;
+    }
+    
+    if (csr0 & CSR0_TINT) {
+        /* Paquet transmis */
+        g_pcnet_dev->packets_tx++;
+    }
+    
+    if (csr0 & CSR0_ERR) {
+        /* Erreur */
+        g_pcnet_dev->errors++;
+    }
+    
+    if (csr0 & CSR0_IDON) {
+        /* Initialization done */
+        g_pcnet_dev->initialized = true;
+    }
+}
+
+/* ============================================ */
 /*           MAC Address Reading                */
 /* ============================================ */
 

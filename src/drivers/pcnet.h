@@ -225,6 +225,11 @@ bool pcnet_start(PCNetDevice* dev);
 void pcnet_stop(PCNetDevice* dev);
 
 /**
+ * Handler d'interruption PCnet (appelé par IRQ 11).
+ */
+void pcnet_irq_handler(void);
+
+/**
  * Retourne le périphérique PCnet global (s'il est initialisé).
  */
 PCNetDevice* pcnet_get_device(void);
