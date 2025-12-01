@@ -3,6 +3,7 @@
 extern timer_handler_c
 extern keyboard_handler_c 
 extern exception_handler_c
+extern syscall_dispatcher
 
 ; --- IDT FLUSH ---
 global idt_flush
@@ -10,6 +11,52 @@ idt_flush:
     mov eax, [esp+4]  ; Récupère le pointeur vers l'IDT passé en argument
     lidt [eax]        ; Charge l'IDT
     ret
+
+; ============================================
+; SYSCALL HANDLER (INT 0x80)
+; ============================================
+; Appelé depuis Ring 3 via "int $0x80"
+; Convention: EAX = numéro syscall, EBX/ECX/EDX = arguments
+; Retour: EAX = valeur de retour
+
+global syscall_handler_asm
+syscall_handler_asm:
+    ; Pas de CLI ici - les interruptions restent activées pendant les syscalls
+    
+    ; Sauvegarder les segments utilisateur
+    push gs
+    push fs
+    push es
+    push ds
+    
+    ; Sauvegarder tous les registres généraux
+    pusha
+    
+    ; Charger les segments de données Kernel (0x10)
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    
+    ; Passer le pointeur vers la structure des registres
+    ; ESP pointe maintenant sur la structure syscall_regs_t
+    push esp
+    call syscall_dispatcher
+    add esp, 4          ; Nettoyer l'argument
+    
+    ; Restaurer les registres généraux
+    ; Note: EAX contient maintenant la valeur de retour du syscall
+    popa
+    
+    ; Restaurer les segments utilisateur
+    pop ds
+    pop es
+    pop fs
+    pop gs
+    
+    ; Retour en Ring 3
+    iretd
 
 ; ============================================
 ; EXCEPTION HANDLERS (0-31)

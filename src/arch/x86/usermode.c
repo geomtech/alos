@@ -92,48 +92,51 @@ void jump_to_usermode(void (*function)(void))
  * Fonction de test pour le mode utilisateur.
  * 
  * ATTENTION: Cette fonction s'exécute en Ring 3 !
- * Elle n'a PAS accès aux fonctions kernel (console, etc.)
- * car celles-ci nécessitent des syscalls (pas encore implémentés).
- * 
- * Pour l'instant, on fait juste une boucle infinie.
- * Si on n'a pas de Triple Fault, c'est que ça marche !
+ * Elle utilise les syscalls pour communiquer avec le kernel.
  */
 void user_mode_test(void)
 {
     /* 
-     * En Ring 3, on ne peut pas :
-     * - Accéder directement à la mémoire VGA (0xB8000) sans mapping
-     * - Utiliser les ports I/O (sauf si IOPL=3)
-     * - Exécuter des instructions privilégiées (cli, sti, hlt, etc.)
+     * En Ring 3, on ne peut plus appeler directement les fonctions kernel.
+     * On doit utiliser les syscalls via INT 0x80.
      * 
-     * Pour l'instant, on fait juste une boucle infinie.
-     * Plus tard, on implémentera des syscalls pour interagir avec le kernel.
+     * Convention:
+     *   EAX = numéro du syscall
+     *   EBX = argument 1
+     *   ECX = argument 2
+     *   EDX = argument 3
      */
     
-    /* Simple boucle infinie avec un compteur */
-    volatile uint32_t counter = 0;
+    /* Message à afficher */
+    const char* msg = "\n*** Hello from Ring 3 via Syscall! ***\n";
     
-    while (1) {
-        counter++;
-        
-        /* 
-         * On pourrait essayer d'écrire directement en mémoire VGA
-         * mais ça pourrait causer une Page Fault si la mémoire n'est
-         * pas mappée pour l'utilisateur.
-         * 
-         * Pour un vrai test visuel, on utilise la mémoire VGA directement
-         * (risqué mais permet de voir si on est vraiment en Ring 3)
-         */
-        
-        /* Écriture directe en VGA - caractère en haut à droite de l'écran */
-        /* 0xB8000 + (0 * 80 + 79) * 2 = 0xB809E */
-        volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-        
-        /* Afficher un caractère qui tourne: | / - \ */
-        char spinner[] = "|/-\\";
-        vga[79] = (uint16_t)(0x0F00 | spinner[(counter >> 16) & 3]);
-        
-        /* Petite pause */
-        for (volatile int i = 0; i < 10000; i++);
-    }
+    /* SYS_WRITE (4): Afficher le message */
+    /* arg1 (EBX) = fd (ignoré), arg2 (ECX) = buffer, arg3 (EDX) = count (0=null-term) */
+    int ret;
+    asm volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(4), "b"(0), "c"(msg), "d"(0)
+        : "memory"
+    );
+    
+    /* Deuxième message */
+    const char* msg2 = "Syscalls are working! User Mode is fully operational.\n";
+    asm volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(4), "b"(0), "c"(msg2), "d"(0)
+        : "memory"
+    );
+    
+    /* SYS_EXIT (1): Terminer le processus */
+    /* arg1 (EBX) = exit code */
+    asm volatile(
+        "int $0x80"
+        :
+        : "a"(1), "b"(0)
+    );
+    
+    /* Ne devrait jamais arriver ici */
+    while (1);
 }

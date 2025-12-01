@@ -13,6 +13,7 @@
 #include "console.h"
 #include "timer.h"
 #include "klog.h"
+#include "syscall.h"
 #include "../drivers/pci.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
@@ -67,6 +68,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
 
     init_gdt();
     init_idt();
+    syscall_init();  /* Initialiser les syscalls (INT 0x80) */
 
     /* Initialiser la console avec scrolling */
     console_init();

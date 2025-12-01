@@ -22,4 +22,7 @@ struct idt_ptr_struct
 
 void init_idt(void);
 
+/* Permet d'ajouter une entrée dans l'IDT (utilisé par syscall_init) */
+void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags);
+
 #endif
