@@ -149,6 +149,24 @@ void kill_all_user_tasks(void);
  */
 int should_exit(void);
 
+/**
+ * Exécute un programme ELF en créant un nouveau processus User Mode.
+ * Le processus est ajouté au scheduler et s'exécutera lors du prochain cycle.
+ * 
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @return          PID du nouveau processus, ou -1 si erreur
+ */
+int process_execute(const char* filename);
+
+/**
+ * Lance immédiatement un programme ELF (bloquant).
+ * Charge et exécute le programme, puis retourne au shell via sys_exit.
+ * 
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @return          0 si succès, -1 si erreur (ne retourne pas normalement)
+ */
+int process_exec_and_wait(const char* filename);
+
 /* ========================================
  * Fonction ASM (définie dans switch.s)
  * ======================================== */

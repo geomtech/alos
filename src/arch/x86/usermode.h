@@ -39,8 +39,9 @@ void init_usermode(void);
  * Alloue une stack, configure le TSS, et saute en Ring 3.
  * 
  * @param function  Fonction à exécuter en mode utilisateur
+ * @param user_esp  Pointeur de stack utilisateur (NULL = allocation automatique)
  */
-void jump_to_usermode(void (*function)(void));
+void jump_to_usermode(void (*function)(void), void* user_esp);
 
 /**
  * Fonction de test pour le mode utilisateur.

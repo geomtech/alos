@@ -36,27 +36,44 @@ void init_usermode(void)
     KLOG_INFO("USER", "User Mode support ready");
 }
 
-void jump_to_usermode(void (*function)(void))
+void jump_to_usermode(void (*function)(void), void* custom_esp)
 {
     KLOG_INFO("USER", "Preparing jump to User Mode (Ring 3)...");
     
-    /* Allouer une stack pour le mode utilisateur */
-    if (user_stack == NULL) {
-        /* Allouer plus pour garantir l'alignement sur une page */
-        user_stack = kmalloc(USER_STACK_SIZE + PAGE_SIZE);
+    uint32_t user_esp;
+    
+    /* Utiliser la stack fournie ou en allouer une nouvelle */
+    if (custom_esp != NULL) {
+        user_esp = (uint32_t)custom_esp;
+        KLOG_INFO("USER", "Using provided user stack");
+        KLOG_INFO_HEX("USER", "Custom ESP: ", user_esp);
+        
+        /* Rendre la stack utilisateur accessible (quelques pages en dessous de ESP) */
+        /* La stack grandit vers le bas, donc on doit mapper les pages en dessous de ESP */
+        uint32_t stack_bottom = (user_esp - (16 * PAGE_SIZE)) & ~(PAGE_SIZE - 1);
+        vmm_set_user_accessible(stack_bottom, 16 * PAGE_SIZE);
+    } else {
+        /* Allouer une stack pour le mode utilisateur */
         if (user_stack == NULL) {
-            KLOG_ERROR("USER", "Failed to allocate user stack!");
-            return;
+            /* Allouer plus pour garantir l'alignement sur une page */
+            user_stack = kmalloc(USER_STACK_SIZE + PAGE_SIZE);
+            if (user_stack == NULL) {
+                KLOG_ERROR("USER", "Failed to allocate user stack!");
+                return;
+            }
+            /* Aligner sur une page */
+            user_stack = (void*)(((uint32_t)user_stack + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
         }
-        /* Aligner sur une page */
-        user_stack = (void*)(((uint32_t)user_stack + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+        
+        /* La stack grandit vers le bas, donc on commence au sommet */
+        user_esp = (uint32_t)user_stack + USER_STACK_SIZE;
+        
+        /* Rendre la stack utilisateur accessible */
+        vmm_set_user_accessible((uint32_t)user_stack, USER_STACK_SIZE);
     }
     
-    /* La stack grandit vers le bas, donc on commence au sommet */
-    uint32_t user_esp = (uint32_t)user_stack + USER_STACK_SIZE;
     uint32_t user_eip = (uint32_t)function;
     
-    KLOG_INFO_HEX("USER", "User stack base: ", (uint32_t)user_stack);
     KLOG_INFO_HEX("USER", "User stack top (ESP): ", user_esp);
     KLOG_INFO_HEX("USER", "User entry point (EIP): ", user_eip);
     
@@ -68,10 +85,7 @@ void jump_to_usermode(void (*function)(void))
     /* 1. La page contenant le code de la fonction utilisateur */
     vmm_set_user_accessible(user_eip, PAGE_SIZE);
     
-    /* 2. La stack utilisateur */
-    vmm_set_user_accessible((uint32_t)user_stack, USER_STACK_SIZE);
-    
-    /* 3. La mémoire VGA pour pouvoir afficher quelque chose */
+    /* 2. La mémoire VGA pour pouvoir afficher quelque chose */
     vmm_set_user_accessible(0xB8000, PAGE_SIZE);
     
     /* Mettre à jour le TSS avec notre stack kernel actuelle */

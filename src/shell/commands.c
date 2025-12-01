@@ -4,6 +4,7 @@
 #include "../kernel/console.h"
 #include "../kernel/keyboard.h"
 #include "../kernel/process.h"
+#include "../kernel/elf.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
 #include "../arch/x86/usermode.h"
@@ -17,6 +18,8 @@ static int cmd_ping(int argc, char** argv);
 static int cmd_tasks(int argc, char** argv);
 static int cmd_ps(int argc, char** argv);
 static int cmd_usermode(int argc, char** argv);
+static int cmd_exec(int argc, char** argv);
+static int cmd_elfinfo(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -41,6 +44,8 @@ static shell_command_t commands[] = {
     { "tasks",    "Test multitasking (launches 2 threads)",  cmd_tasks },
     { "ps",       "List running processes",                  cmd_ps },
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
+    { "exec",     "Execute an ELF program",                  cmd_exec },
+    { "elfinfo",  "Display ELF file information",            cmd_elfinfo },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -469,9 +474,59 @@ static int cmd_usermode(int argc, char** argv)
     console_refresh();
     
     /* Le grand saut ! */
-    jump_to_usermode(user_mode_test);
+    jump_to_usermode(user_mode_test, NULL);
     
     /* On ne devrait JAMAIS arriver ici */
     console_puts("ERROR: Returned from User Mode!?\n");
     return -1;
+}
+
+/**
+ * Commande: exec <filename>
+ * Exécute un programme ELF.
+ */
+static int cmd_exec(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_puts("Usage: exec <filename>\n");
+        console_puts("Example: exec /bin/hello\n");
+        return -1;
+    }
+    
+    const char* filename = argv[1];
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("=== Executing ELF Program ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Exécuter le programme (bloquant) */
+    int result = process_exec_and_wait(filename);
+    
+    if (result < 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Failed to execute program.\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    
+    return result;
+}
+
+/**
+ * Commande: elfinfo <filename>
+ * Affiche les informations d'un fichier ELF.
+ */
+static int cmd_elfinfo(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_puts("Usage: elfinfo <filename>\n");
+        console_puts("Example: elfinfo /bin/hello\n");
+        return -1;
+    }
+    
+    const char* filename = argv[1];
+    
+    elf_info(filename);
+    
+    return 0;
 }

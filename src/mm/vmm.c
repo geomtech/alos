@@ -144,11 +144,37 @@ void vmm_map_page(uint32_t phys, uint32_t virt, uint32_t flags)
     uint32_t dir_index = PAGE_DIR_INDEX(virt);
     uint32_t table_index = PAGE_TABLE_INDEX(virt);
     
-    /* Vérifier que la Page Table existe */
+    /* Vérifier si la Page Table existe, sinon la créer */
     if (page_tables[dir_index] == NULL) {
-        /* Pour l'instant on ne supporte que les 4 premières tables (16 Mo) */
-        KLOG_ERROR("VMM", "Page table not allocated for this address!");
-        return;
+        /* Allouer une nouvelle Page Table */
+        void* new_table = pmm_alloc_block();
+        if (new_table == NULL) {
+            KLOG_ERROR("VMM", "Failed to allocate page table!");
+            return;
+        }
+        
+        /* Mettre la table à zéro */
+        page_entry_t* table = (page_entry_t*)new_table;
+        for (int i = 0; i < PAGES_PER_TABLE; i++) {
+            table[i] = 0;
+        }
+        
+        /* Enregistrer la table */
+        page_tables[dir_index] = table;
+        
+        /* Ajouter au Page Directory avec flags USER si demandé */
+        uint32_t dir_flags = PAGE_PRESENT | PAGE_RW;
+        if (flags & PAGE_USER) {
+            dir_flags |= PAGE_USER;
+        }
+        kernel_page_directory[dir_index] = ((uint32_t)new_table & PAGE_FRAME_MASK) | dir_flags;
+        
+        KLOG_INFO_HEX("VMM", "Created page table for addr: ", virt);
+    } else {
+        /* Si la table existe mais qu'on veut des flags USER, mettre à jour le PDE */
+        if (flags & PAGE_USER) {
+            kernel_page_directory[dir_index] |= PAGE_USER;
+        }
     }
     
     /* Mapper la page */

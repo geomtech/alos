@@ -31,8 +31,8 @@ ARCH_SRC = src/arch/x86/boot.s src/arch/x86/gdt.c src/arch/x86/idt.c src/arch/x8
 ARCH_OBJ = src/arch/x86/boot.o src/arch/x86/gdt.o src/arch/x86/idt.o src/arch/x86/interrupts.o src/arch/x86/switch.o src/arch/x86/tss.o src/arch/x86/usermode.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/syscall.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/syscall.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/syscall.c src/kernel/elf.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/syscall.o src/kernel/elf.o
 
 # Memory management
 MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c

@@ -3,9 +3,12 @@
 #include "console.h"
 #include "klog.h"
 #include "../mm/kheap.h"
+#include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../include/string.h"
 #include "../arch/x86/tss.h"
+#include "../arch/x86/usermode.h"
+#include "elf.h"
 
 /* ========================================
  * Variables globales
@@ -423,4 +426,232 @@ void kill_all_user_tasks(void)
         console_put_dec(killed_count);
         console_puts(" task(s)\n");
     }
+}
+
+/* ========================================
+ * Exécution de programmes ELF (User Mode)
+ * ======================================== */
+
+/* Adresse de base pour les programmes utilisateur */
+#define USER_STACK_TOP      0xBFFFF000  /* Sommet de la stack utilisateur */
+#define USER_STACK_SIZE     (16 * PAGE_SIZE)  /* 64 KiB */
+
+/**
+ * Exécute un programme ELF en créant un nouveau processus User Mode.
+ * 
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @return          PID du nouveau processus, ou -1 si erreur
+ */
+int process_execute(const char* filename)
+{
+    if (!multitasking_enabled) {
+        KLOG_ERROR("EXEC", "Multitasking not initialized!");
+        return -1;
+    }
+    
+    KLOG_INFO("EXEC", "=== Executing Program ===");
+    KLOG_INFO("EXEC", filename);
+    
+    /* Vérifier si le fichier est un ELF valide */
+    if (!elf_is_valid(filename)) {
+        KLOG_ERROR("EXEC", "Not a valid ELF file");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: ");
+        console_puts(filename);
+        console_puts(" is not a valid ELF executable\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    /* Allouer la structure du processus */
+    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
+    if (proc == NULL) {
+        KLOG_ERROR("EXEC", "Failed to allocate process structure!");
+        return -1;
+    }
+    
+    /* Allouer une stack kernel pour ce processus (pour les syscalls) */
+    void* kernel_stack = kmalloc(KERNEL_STACK_SIZE);
+    if (kernel_stack == NULL) {
+        KLOG_ERROR("EXEC", "Failed to allocate kernel stack!");
+        kfree(proc);
+        return -1;
+    }
+    
+    /* Initialiser le processus */
+    proc->pid = next_pid++;
+    
+    /* Extraire le nom du fichier pour le nom du processus */
+    const char* name = filename;
+    for (const char* p = filename; *p; p++) {
+        if (*p == '/') name = p + 1;
+    }
+    safe_strcpy(proc->name, name, sizeof(proc->name));
+    
+    proc->state = PROCESS_STATE_READY;
+    proc->should_terminate = 0;
+    
+    /* Pour l'instant, on utilise le même Page Directory que le kernel */
+    /* TODO: Créer un nouveau Page Directory pour l'isolation */
+    proc->page_directory = (uint32_t*)vmm_get_directory();
+    
+    /* Stack kernel */
+    proc->stack_base = kernel_stack;
+    proc->stack_size = KERNEL_STACK_SIZE;
+    proc->esp0 = (uint32_t)kernel_stack + KERNEL_STACK_SIZE;
+    
+    /* Charger le fichier ELF */
+    elf_load_result_t elf_result;
+    int err = elf_load_file(filename, proc, &elf_result);
+    if (err != ELF_OK) {
+        KLOG_ERROR("EXEC", "Failed to load ELF file");
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    
+    KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
+    
+    /* Allouer la stack utilisateur */
+    uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
+        if (!vmm_is_mapped(addr)) {
+            void* phys_page = pmm_alloc_block();
+            if (phys_page == NULL) {
+                KLOG_ERROR("EXEC", "Failed to allocate user stack!");
+                kfree(kernel_stack);
+                kfree(proc);
+                return -1;
+            }
+            vmm_map_page((uint32_t)phys_page, addr, PAGE_PRESENT | PAGE_RW | PAGE_USER);
+        }
+    }
+    
+    KLOG_INFO_HEX("EXEC", "User stack top: ", USER_STACK_TOP);
+    
+    /* ========================================
+     * Préparer le saut en User Mode
+     * ========================================
+     * 
+     * On va créer une frame sur la kernel stack qui simule
+     * une entrée en mode kernel via interruption.
+     * Quand on fera IRET, on passera en Ring 3.
+     * 
+     * Stack frame pour IRET vers User Mode:
+     * [ESP + 16] : SS (0x23 = User Data Segment avec RPL=3)
+     * [ESP + 12] : ESP utilisateur
+     * [ESP + 8]  : EFLAGS (avec IF=1)
+     * [ESP + 4]  : CS (0x1B = User Code Segment avec RPL=3)
+     * [ESP + 0]  : EIP (point d'entrée)
+     */
+    
+    uint32_t* kstack_top = (uint32_t*)((uint32_t)kernel_stack + KERNEL_STACK_SIZE);
+    
+    /* Frame pour IRET vers User Mode */
+    *(--kstack_top) = 0x23;                     /* SS */
+    *(--kstack_top) = USER_STACK_TOP - 16;     /* ESP utilisateur */
+    *(--kstack_top) = 0x202;                    /* EFLAGS (IF=1) */
+    *(--kstack_top) = 0x1B;                     /* CS */
+    *(--kstack_top) = elf_result.entry_point;  /* EIP */
+    
+    /* Simuler un pusha (pour que le retour soit cohérent) */
+    /* Ces valeurs seront chargées dans les registres avant iret */
+    *(--kstack_top) = 0;  /* EAX */
+    *(--kstack_top) = 0;  /* ECX */
+    *(--kstack_top) = 0;  /* EDX */
+    *(--kstack_top) = 0;  /* EBX */
+    *(--kstack_top) = 0;  /* ESP (ignoré par popa) */
+    *(--kstack_top) = 0;  /* EBP */
+    *(--kstack_top) = 0;  /* ESI */
+    *(--kstack_top) = 0;  /* EDI */
+    
+    /* Segments de données utilisateur */
+    *(--kstack_top) = 0x23;  /* DS */
+    *(--kstack_top) = 0x23;  /* ES */
+    *(--kstack_top) = 0x23;  /* FS */
+    *(--kstack_top) = 0x23;  /* GS */
+    
+    proc->esp = (uint32_t)kstack_top;
+    
+    /* ========================================
+     * Ajouter à la liste des processus
+     * ======================================== */
+    
+    asm volatile("cli");
+    
+    proc->next = current_process->next;
+    proc->prev = current_process;
+    current_process->next->prev = proc;
+    current_process->next = proc;
+    
+    asm volatile("sti");
+    
+    KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("Started process '");
+    console_puts(proc->name);
+    console_puts("' (PID ");
+    console_put_dec(proc->pid);
+    console_puts(")\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    return proc->pid;
+}
+
+/**
+ * Lance immédiatement un programme ELF (bloquant).
+ * Charge et exécute le programme, puis retourne au shell.
+ */
+int process_exec_and_wait(const char* filename)
+{
+    KLOG_INFO("EXEC", "=== Execute and Wait ===");
+    KLOG_INFO("EXEC", filename);
+    
+    /* Vérifier si le fichier est un ELF valide */
+    if (!elf_is_valid(filename)) {
+        KLOG_ERROR("EXEC", "Not a valid ELF file");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: ");
+        console_puts(filename);
+        console_puts(" is not a valid ELF executable\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    /* Charger le fichier ELF */
+    elf_load_result_t elf_result;
+    int err = elf_load_file(filename, NULL, &elf_result);
+    if (err != ELF_OK) {
+        KLOG_ERROR("EXEC", "Failed to load ELF file");
+        return -1;
+    }
+    
+    /* Allouer la stack utilisateur */
+    uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
+        if (!vmm_is_mapped(addr)) {
+            void* phys_page = pmm_alloc_block();
+            if (phys_page == NULL) {
+                KLOG_ERROR("EXEC", "Failed to allocate user stack!");
+                return -1;
+            }
+            vmm_map_page((uint32_t)phys_page, addr, PAGE_PRESENT | PAGE_RW | PAGE_USER);
+        }
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("Executing '");
+    console_puts(filename);
+    console_puts("'...\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Configurer le TSS pour le retour en mode kernel */
+    /* Le TSS doit contenir l'ESP0 (kernel stack) pour les syscalls */
+    
+    /* Sauter directement en User Mode */
+    jump_to_usermode((void*)elf_result.entry_point, (void*)(USER_STACK_TOP - 16));
+    
+    /* Ne devrait jamais arriver ici (sys_exit retourne au shell) */
+    return 0;
 }
