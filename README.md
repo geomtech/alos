@@ -236,8 +236,16 @@ make run-pcap
 - [x] Ext2 Write Support
 - [ ] TCP Implementation
 - [ ] Interactive Shell
+- [ ] Scripting files
+- [ ] Network configuration files
 - [ ] Process Management
 - [ ] Virtual Memory (Paging)
+- [ ] Multithreading
+- [ ] GUI
+- [ ] OpenGL
+- [ ] SSL
+- [ ] SSH
+- [ ] Telnet
 
 ## License
 
