@@ -10,13 +10,13 @@
 /*           Registres I/O (Mode DWIO 32-bit)   */
 /* ============================================ */
 
-/* Offsets depuis BAR0 en mode DWIO (32-bit) */
+/* Offsets depuis BAR0 en mode WIO (16-bit) - QEMU utilise ce mode */
 #define PCNET_APROM0    0x00    /* EEPROM/MAC Address bytes 0-3 */
 #define PCNET_APROM4    0x04    /* EEPROM/MAC Address bytes 4-5 */
-#define PCNET_RDP       0x10    /* Register Data Port (lecture/écriture CSR/BCR) */
-#define PCNET_RAP       0x14    /* Register Address Port (sélection CSR/BCR) */
-#define PCNET_RESET     0x18    /* Reset Register (lecture = reset) */
-#define PCNET_BDP       0x1C    /* Bus Configuration Register Data Port */
+#define PCNET_RDP       0x10    /* Register Data Port (lecture/écriture CSR) */
+#define PCNET_RAP       0x12    /* Register Address Port (sélection CSR/BCR) */
+#define PCNET_RESET     0x14    /* Reset Register (lecture = reset) */
+#define PCNET_BDP       0x16    /* Bus Configuration Register Data Port */
 
 /* ============================================ */
 /*           Control and Status Registers (CSR) */

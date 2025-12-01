@@ -31,7 +31,7 @@ src/interrupts.o: src/interrupts.s
 
 # Nettoyage
 clean:
-	rm -f src/*.o alos.bin
+	rm -f src/*.o src/drivers/*.o alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)
 run: alos.bin

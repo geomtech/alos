@@ -16,6 +16,10 @@ void pci_enable_bus_mastering(PCIDevice* dev)
     /* Lire le Command Register PCI (offset 0x04) */
     uint32_t command = pci_config_read_dword(dev->bus, dev->slot, dev->func, PCI_COMMAND);
     
+    console_puts("[PCnet] PCI Command before: ");
+    console_put_hex(command);
+    console_puts("\n");
+    
     /* 
      * Bits du Command Register:
      * Bit 0: I/O Space Enable
@@ -29,6 +33,12 @@ void pci_enable_bus_mastering(PCIDevice* dev)
     /* Écrire le nouveau Command Register */
     pci_config_write_dword(dev->bus, dev->slot, dev->func, PCI_COMMAND, command);
     
+    /* Relire pour vérifier */
+    uint32_t verify = pci_config_read_dword(dev->bus, dev->slot, dev->func, PCI_COMMAND);
+    console_puts("[PCnet] PCI Command after: ");
+    console_put_hex(verify);
+    console_puts("\n");
+    
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     console_puts("[PCnet] Bus Mastering enabled\n");
 }
@@ -38,51 +48,50 @@ void pci_enable_bus_mastering(PCIDevice* dev)
 /* ============================================ */
 
 /**
- * Réinitialise la carte PCnet.
- * Une simple lecture du registre RESET effectue un reset hardware.
+ * Réinitialise la carte PCnet et active le mode DWIO (32-bit).
  */
 static void pcnet_reset(PCNetDevice* dev)
 {
-    /* Lecture du port RESET = software reset */
-    inl(dev->io_base + PCNET_RESET);
+    /* 
+     * Reset en mode WIO (16-bit).
+     * Une lecture du registre RESET déclenche un software reset.
+     */
+    inw(dev->io_base + PCNET_RESET);
     
-    /* Petite pause pour laisser le reset se faire */
-    for (volatile int i = 0; i < 10000; i++);
-    
-    /* Re-lecture pour s'assurer que le reset est terminé */
-    inl(dev->io_base + PCNET_RESET);
+    /* Pause pour laisser le reset se faire */
+    for (volatile int i = 0; i < 100000; i++);
 }
 
 uint32_t pcnet_read_csr(PCNetDevice* dev, uint32_t csr_no)
 {
-    /* Écrire le numéro du CSR dans RAP */
-    outl(dev->io_base + PCNET_RAP, csr_no);
-    /* Lire la valeur depuis RDP */
-    return inl(dev->io_base + PCNET_RDP);
+    /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
+    outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
+    /* Lire la valeur depuis RDP (16-bit WIO) */
+    return inw(dev->io_base + PCNET_RDP);
 }
 
 void pcnet_write_csr(PCNetDevice* dev, uint32_t csr_no, uint32_t value)
 {
-    /* Écrire le numéro du CSR dans RAP */
-    outl(dev->io_base + PCNET_RAP, csr_no);
-    /* Écrire la valeur dans RDP */
-    outl(dev->io_base + PCNET_RDP, value);
+    /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
+    outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
+    /* Écrire la valeur dans RDP (16-bit WIO) */
+    outw(dev->io_base + PCNET_RDP, (uint16_t)value);
 }
 
 uint32_t pcnet_read_bcr(PCNetDevice* dev, uint32_t bcr_no)
 {
-    /* Écrire le numéro du BCR dans RAP */
-    outl(dev->io_base + PCNET_RAP, bcr_no);
-    /* Lire la valeur depuis BDP */
-    return inl(dev->io_base + PCNET_BDP);
+    /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
+    outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
+    /* Lire la valeur depuis BDP (16-bit WIO) */
+    return inw(dev->io_base + PCNET_BDP);
 }
 
 void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 {
-    /* Écrire le numéro du BCR dans RAP */
-    outl(dev->io_base + PCNET_RAP, bcr_no);
-    /* Écrire la valeur dans BDP */
-    outl(dev->io_base + PCNET_BDP, value);
+    /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
+    outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
+    /* Écrire la valeur dans BDP (16-bit WIO) */
+    outw(dev->io_base + PCNET_BDP, (uint16_t)value);
 }
 
 /* ============================================ */
@@ -219,17 +228,14 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     /* Petite pause post-reset */
     for (volatile int i = 0; i < 100000; i++);
     
-    /* Étape 3: Vérifier l'état initial (CSR0) */
+    /* Étape 3: Vérifier l'état initial (CSR0) - en mode WIO 16-bit */
     pcnet_print_status(dev);
     
-    /* Étape 4: Configurer le Software Style (32-bit) */
-    pcnet_set_software_style(dev);
-    
-    /* Étape 5: Lire l'adresse MAC */
+    /* Étape 4: Lire l'adresse MAC */
     pcnet_read_mac(dev);
     pcnet_print_mac(dev);
     
-    /* Étape 6: Allouer l'Initialization Block */
+    /* Étape 5: Allouer l'Initialization Block */
     /* 
      * L'Init Block doit être aligné sur 4 octets minimum.
      * On alloue un peu plus pour s'assurer de l'alignement.
