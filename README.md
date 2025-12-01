@@ -233,7 +233,7 @@ make run-pcap
 - [x] UDP/DHCP
 - [x] DNS Resolver (A, PTR, CNAME + cache)
 - [x] Ping with DNS support
-- [ ] Ext2 Write Support
+- [x] Ext2 Write Support
 - [ ] TCP Implementation
 - [ ] Interactive Shell
 - [ ] Process Management
