@@ -2,6 +2,7 @@
 #include "commands.h"
 #include "shell.h"
 #include "../kernel/console.h"
+#include "../kernel/process.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
 
@@ -11,6 +12,8 @@
 
 static int cmd_help(int argc, char** argv);
 static int cmd_ping(int argc, char** argv);
+static int cmd_tasks(int argc, char** argv);
+static int cmd_ps(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -32,6 +35,8 @@ static shell_command_t commands[] = {
     /* Commandes implémentées */
     { "help",    "Display available commands",              cmd_help },
     { "ping",    "Ping a host (IP or hostname)",           cmd_ping },
+    { "tasks",   "Test multitasking (launches 2 threads)",  cmd_tasks },
+    { "ps",      "List running processes",                  cmd_ps },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -309,3 +314,116 @@ static int cmd_ping(int argc, char** argv)
  *     return 0;
  * }
  */
+
+/* ========================================
+ * Fonctions de test pour le multitasking
+ * ======================================== */
+
+/* Compteurs pour les tâches de test */
+static volatile int task_a_counter = 0;
+static volatile int task_b_counter = 0;
+
+/**
+ * Délai actif (busy wait)
+ */
+static void loop_delay(void)
+{
+    for (volatile int i = 0; i < 5000000; i++);
+}
+
+/**
+ * Tâche A - Affiche 'A' périodiquement
+ */
+static void task_a(void)
+{
+    while (!should_exit()) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_putc('A');
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        task_a_counter++;
+        
+        /* Afficher le compteur tous les 10 itérations */
+        if (task_a_counter % 10 == 0) {
+            console_putc('[');
+            console_put_dec(task_a_counter);
+            console_putc(']');
+        }
+        
+        loop_delay();
+    }
+    /* Le thread se termine proprement via process_exit() */
+}
+
+/**
+ * Tâche B - Affiche 'B' périodiquement
+ */
+static void task_b(void)
+{
+    while (!should_exit()) {
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_putc('B');
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        task_b_counter++;
+        
+        /* Afficher le compteur tous les 10 itérations */
+        if (task_b_counter % 10 == 0) {
+            console_putc('[');
+            console_put_dec(task_b_counter);
+            console_putc(']');
+        }
+        
+        loop_delay();
+    }
+    /* Le thread se termine proprement via process_exit() */
+}
+
+/**
+ * Commande: tasks
+ * Lance deux threads de test pour démontrer le multitasking.
+ */
+static int cmd_tasks(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_puts("\n=== Multitasking Test ===\n");
+    console_puts("Creating two kernel threads...\n");
+    console_puts("Press Ctrl+C to stop (not implemented yet)\n\n");
+    
+    /* Réinitialiser les compteurs */
+    task_a_counter = 0;
+    task_b_counter = 0;
+    
+    /* Créer les threads */
+    process_t* thread_a = create_kernel_thread(task_a, "task_A");
+    process_t* thread_b = create_kernel_thread(task_b, "task_B");
+    
+    if (thread_a == NULL || thread_b == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("ERROR: Failed to create threads!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    console_puts("Threads created! You should see ABABAB...\n");
+    console_puts("(Green=A, Cyan=B)\n\n");
+    
+    /* Note: Le shell continue, mais les threads tourneront en arrière-plan */
+    /* grâce au scheduler appelé par le timer. */
+    
+    return 0;
+}
+
+/**
+ * Commande: ps
+ * Affiche la liste des processus.
+ */
+static int cmd_ps(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    process_list_debug();
+    
+    return 0;
+}

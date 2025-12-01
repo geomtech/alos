@@ -15,12 +15,20 @@
 #define SCANCODE_PAGE_DOWN   0x51
 #define SCANCODE_ENTER       0x1C
 #define SCANCODE_BACKSPACE   0x0E
+#define SCANCODE_LCTRL       0x1D
+#define SCANCODE_LSHIFT      0x2A
+#define SCANCODE_RSHIFT      0x36
 
 /* Codes spéciaux pour le shell (non-ASCII) */
 #define KEY_UP      0x80
 #define KEY_DOWN    0x81
 #define KEY_LEFT    0x82
 #define KEY_RIGHT   0x83
+#define KEY_CTRL_C  0x03   /* ASCII ETX (End of Text) */
+
+/* État des modificateurs */
+static volatile bool ctrl_pressed = false;
+static volatile bool shift_pressed = false;
 
 /* Buffer circulaire pour les caractères */
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
@@ -113,48 +121,80 @@ void keyboard_handler_c(void)
     /* 1. Lire le scancode */
     uint8_t scancode = inb(0x60);
 
-    /* 2. Vérifier si c'est un appui (bit 7 = 0) ou relâchement (bit 7 = 1) */
-    if (!(scancode & 0x80)) {
-        /* Make Code (touche appuyée) */
-        switch (scancode) {
-            case SCANCODE_UP_ARROW:
-                /* Flèche haut -> code spécial pour historique shell */
-                keyboard_buffer_put(KEY_UP);
+    /* 2. Gérer les modificateurs (appui et relâchement) */
+    
+    /* Relâchement de touche (bit 7 = 1) */
+    if (scancode & 0x80) {
+        uint8_t released = scancode & 0x7F;
+        switch (released) {
+            case SCANCODE_LCTRL:
+                ctrl_pressed = false;
                 break;
-                
-            case SCANCODE_DOWN_ARROW:
-                /* Flèche bas -> code spécial pour historique shell */
-                keyboard_buffer_put(KEY_DOWN);
+            case SCANCODE_LSHIFT:
+            case SCANCODE_RSHIFT:
+                shift_pressed = false;
                 break;
-                
-            case SCANCODE_LEFT_ARROW:
-                keyboard_buffer_put(KEY_LEFT);
-                break;
-                
-            case SCANCODE_RIGHT_ARROW:
-                keyboard_buffer_put(KEY_RIGHT);
-                break;
-                
-            case SCANCODE_PAGE_UP:
-                /* Page Up -> scroll console */
-                console_scroll_up();
-                break;
-                
-            case SCANCODE_PAGE_DOWN:
-                /* Page Down -> scroll console */
-                console_scroll_down();
-                break;
-                
-            default:
-                /* Touche normale */
-                if (scancode < 128) {
-                    char c = kbdus[scancode];
-                    if (c != 0) {
+        }
+        /* Acquitter et sortir */
+        outb(0x20, 0x20);
+        return;
+    }
+    
+    /* Appui de touche (bit 7 = 0) */
+    switch (scancode) {
+        case SCANCODE_LCTRL:
+            ctrl_pressed = true;
+            break;
+            
+        case SCANCODE_LSHIFT:
+        case SCANCODE_RSHIFT:
+            shift_pressed = true;
+            break;
+            
+        case SCANCODE_UP_ARROW:
+            keyboard_buffer_put(KEY_UP);
+            break;
+            
+        case SCANCODE_DOWN_ARROW:
+            keyboard_buffer_put(KEY_DOWN);
+            break;
+            
+        case SCANCODE_LEFT_ARROW:
+            keyboard_buffer_put(KEY_LEFT);
+            break;
+            
+        case SCANCODE_RIGHT_ARROW:
+            keyboard_buffer_put(KEY_RIGHT);
+            break;
+            
+        case SCANCODE_PAGE_UP:
+            console_scroll_up();
+            break;
+            
+        case SCANCODE_PAGE_DOWN:
+            console_scroll_down();
+            break;
+            
+        default:
+            /* Touche normale */
+            if (scancode < 128) {
+                char c = kbdus[scancode];
+                if (c != 0) {
+                    /* Vérifier CTRL+C */
+                    if (ctrl_pressed && (c == 'c' || c == 'C')) {
+                        /* Juste mettre CTRL+C dans le buffer - le shell gère le reste */
+                        keyboard_buffer_put(KEY_CTRL_C);
+                    }
+                    /* Gérer majuscules avec Shift */
+                    else if (shift_pressed && c >= 'a' && c <= 'z') {
+                        keyboard_buffer_put(c - 32);  /* Convertir en majuscule */
+                    }
+                    else {
                         keyboard_buffer_put(c);
                     }
                 }
-                break;
-        }
+            }
+            break;
     }
 
     /* 3. Acquitter l'interruption (EOI au PIC) */

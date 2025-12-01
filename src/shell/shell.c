@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "../kernel/console.h"
 #include "../kernel/keyboard.h"
+#include "../kernel/process.h"
 #include "../include/string.h"
 #include "../fs/vfs.h"
 
@@ -11,6 +12,7 @@
 #define KEY_DOWN    ((char)0x81)
 #define KEY_LEFT    ((char)0x82)
 #define KEY_RIGHT   ((char)0x83)
+#define KEY_CTRL_C  ((char)0x03)
 
 /* Répertoire de travail courant */
 static char cwd[SHELL_PATH_MAX] = "/";
@@ -84,6 +86,18 @@ static void shell_readline(char* buffer, size_t max_len)
         char c = keyboard_getchar();
         
         switch (c) {
+            case KEY_CTRL_C:
+                /* CTRL+C - tuer les tâches et annuler la ligne */
+                kill_all_user_tasks();
+                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                console_puts("^C");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                console_putc('\n');
+                console_refresh();
+                /* Retourner une ligne vide pour revenir au prompt */
+                buffer[0] = '\0';
+                return;
+                
             case '\n':
                 /* Enter - fin de la ligne */
                 console_putc('\n');

@@ -62,8 +62,19 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - Command history (Up/Down arrows, 16 entries)
   - Current working directory (CWD) state
   - Command parsing with argument support
-  - Built-in commands: `help`, `ping`
+  - Built-in commands: `help`, `ping`, `ps`, `tasks`
   - Extensible command system
+
+### Multitasking
+
+- **Round Robin Scheduler**
+  - Preemptive multitasking via timer interrupt
+  - Context switching (callee-saved registers)
+  - Kernel threads with dedicated 4KB stacks
+  - Circular linked list of processes
+  - Process states: READY, RUNNING, BLOCKED, TERMINATED
+  - `ps` command to list processes
+  - `tasks` command for testing (launches A/B threads)
 
 ### Kernel Logging System
 
@@ -272,14 +283,13 @@ make run-pcap
 - [x] Kernel Logging System (file-based, /system/logs)
 - [x] Interactive Shell with history
 - [x] Virtual Memory (Paging) - Identity mapping
+- [x] Multitasking (Round Robin scheduler)
+- [x] Context Switching (kernel threads)
 - [ ] User Space (Ring 3)
 - [ ] ELF Loader
 - [ ] TCP Implementation
 - [ ] Scripting files
 - [ ] Network configuration files
-- [ ] Process Management
-- [ ] Virtual Memory (Paging)
-- [ ] Multithreading
 - [ ] System Calls
 - [ ] GUI
 - [ ] OpenGL
