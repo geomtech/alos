@@ -77,7 +77,7 @@ void netdev_register(NetInterface* netif)
     
     netif_count++;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[NETIF] Registered: ");
     console_puts(netif->name);
     console_puts(" (MAC: ");
@@ -86,7 +86,7 @@ void netdev_register(NetInterface* netif)
         console_put_hex_byte(netif->mac_addr[i]);
     }
     console_puts(")\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -152,16 +152,16 @@ static void print_mac_addr(const uint8_t* mac)
 void netdev_ipconfig_display(void)
 {
     console_puts("\n");
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("===============================================\n");
     console_puts("        Network Interface Configuration\n");
     console_puts("===============================================\n\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     if (netif_list_head == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("  No network interfaces found.\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -170,76 +170,76 @@ void netdev_ipconfig_display(void)
     
     while (netif != NULL) {
         /* Nom de l'interface */
-        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
         console_puts("Interface ");
         console_put_dec(index);
         console_puts(": ");
         console_puts(netif->name);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Adresse MAC */
         console_puts("   Physical Address . . . : ");
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         print_mac_addr(netif->mac_addr);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Adresse IPv4 */
         console_puts("   IPv4 Address . . . . . : ");
         if (netif->ip_addr != 0) {
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             print_ip_u32(netif->ip_addr);
         } else {
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             console_puts("Not configured");
         }
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Masque de sous-réseau */
         console_puts("   Subnet Mask  . . . . . : ");
         if (netif->netmask != 0) {
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             print_ip_u32(netif->netmask);
         } else {
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             console_puts("Not configured");
         }
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Passerelle */
         console_puts("   Default Gateway  . . . : ");
         if (netif->gateway != 0) {
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             print_ip_u32(netif->gateway);
         } else {
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             console_puts("Not configured");
         }
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* DNS Server */
         console_puts("   DNS Server . . . . . . : ");
         if (netif->dns_server != 0) {
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             print_ip_u32(netif->dns_server);
         } else {
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             console_puts("Not configured");
         }
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* État */
         console_puts("   Status . . . . . . . . : ");
         if (netif->flags & NETIF_FLAG_UP) {
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             console_puts("UP");
         } else {
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             console_puts("DOWN");
         }
         if (netif->flags & NETIF_FLAG_RUNNING) {
@@ -252,7 +252,7 @@ void netdev_ipconfig_display(void)
             console_puts(" DHCP");
         }
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Statistiques */
         console_puts("   TX Packets . . . . . . : ");
@@ -269,9 +269,9 @@ void netdev_ipconfig_display(void)
         index++;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("===============================================\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /* ============================================ */
@@ -326,9 +326,9 @@ int netdev_init(void)
         netdevs[i].driver_data = NULL;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[NETDEV] Detecting network devices...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* === Détecter les cartes PCnet === */
     /* Vendor: AMD (0x1022), Device: PCnet-PCI II (0x2000) */
@@ -361,7 +361,7 @@ int netdev_init(void)
             
             netdev_count_val++;
             
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             console_puts("[NETDEV] Found: ");
             console_puts(dev->name);
             console_puts(" (AMD PCnet-PCI II) MAC: ");
@@ -370,7 +370,7 @@ int netdev_init(void)
                 console_put_hex_byte(dev->mac[i]);
             }
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         }
     }
     
@@ -380,15 +380,15 @@ int netdev_init(void)
     /* VirtIO: Vendor 0x1AF4, Device 0x1000 */
     
     if (netdev_count_val == 0) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[NETDEV] No network devices found!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("[NETDEV] Total devices: ");
         console_put_dec(netdev_count_val);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
     
     return netdev_count_val;

@@ -85,11 +85,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
         timer_init(TIMER_FREQUENCY);  /* 1000 Hz = 1ms par tick */
         
         /* Afficher la date/heure de boot */
-        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         console_puts("Boot time: ");
         timestamp_print_now();
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
         /* ============================================ */
         /* Initialisation du PMM                       */

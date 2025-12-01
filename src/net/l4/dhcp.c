@@ -230,9 +230,9 @@ static void dhcp_send_raw(NetInterface* netif, uint8_t* dhcp_data, int dhcp_len)
     if (netif->send != NULL) {
         netif->send(netif, packet, offset);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[DHCP] No send function on interface!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }
 
@@ -253,11 +253,11 @@ void dhcp_init(NetInterface* netif)
     
     dhcp_initialized = true;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[DHCP] Client initialized for interface: ");
     console_puts(netif->name);
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -274,9 +274,9 @@ int dhcp_discover(NetInterface* netif)
     dhcp_ctx.state = DHCP_STATE_SELECTING;
     dhcp_ctx.discover_count++;
     
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     console_puts("[DHCP] Discovering...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Construire le paquet DHCP DISCOVER */
     uint8_t dhcp_packet[576];  /* Taille minimale BOOTP */
@@ -474,9 +474,9 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
                        &subnet_mask, &router, &dns, &lease_time);
     
     if (msg_type == DHCPNAK) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[DHCP] Received NAK - configuration rejected!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         dhcp_ctx.state = DHCP_STATE_INIT;
         return;
     }
@@ -497,7 +497,7 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
     netif->gateway = router;
     netif->dns_server = dns;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[DHCP] *** BOUND ***\n");
     console_puts("       IP Address:  ");
     print_ip_u32(netif->ip_addr);
@@ -510,7 +510,7 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
     console_puts("\n       Lease Time:  ");
     console_put_dec(lease_time);
     console_puts(" seconds\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Mettre à jour les globales legacy pour compatibilité */
     ip_u32_to_bytes(netif->ip_addr, MY_IP);
@@ -573,11 +573,11 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     uint32_t dummy1, dummy2, dummy3, dummy4, dummy5;
     dhcp_parse_options(options, opt_len, &msg_type, &dummy1, &dummy2, &dummy3, &dummy4, &dummy5);
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[DHCP] Message type: ");
     console_put_dec(msg_type);
     console_puts(" (1=DISCOVER, 2=OFFER, 3=REQUEST, 5=ACK, 6=NAK)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Traiter selon l'état */
     switch (dhcp_ctx.state) {
@@ -606,11 +606,11 @@ void dhcp_release(NetInterface* netif)
         return;
     }
     
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     console_puts("[DHCP] Releasing lease for ");
     print_ip_u32(netif->ip_addr);
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Remettre l'interface à zéro */
     netif->ip_addr = 0;

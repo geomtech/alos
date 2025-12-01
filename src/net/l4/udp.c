@@ -27,11 +27,11 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < UDP_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[UDP] Packet too short: ");
         console_put_dec(len);
         console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
 
@@ -45,16 +45,16 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 
     /* Vérifier la longueur */
     if (udp_len < UDP_HEADER_SIZE || udp_len > len) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[UDP] Invalid length: ");
         console_put_dec(udp_len);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
 
     /* Log: paquet UDP reçu */
-    console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
     console_puts("[UDP] Packet received on Port ");
     console_put_dec(dest_port);
     console_puts(" from ");
@@ -62,7 +62,7 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     console_puts(":");
     console_put_dec(src_port);
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
     /* Calculer le pointeur vers le payload UDP */
     uint8_t* payload = data + UDP_HEADER_SIZE;
@@ -95,11 +95,11 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 
         default:
             /* Port non géré */
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
             console_puts("[UDP] No handler for port ");
             console_put_dec(dest_port);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             break;
     }
 }
@@ -115,11 +115,11 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     
     /* Vérifier que le paquet n'est pas trop grand */
     if (len > (int)(sizeof(buffer) - UDP_HEADER_SIZE)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[UDP] Payload too large: ");
         console_put_dec(len);
         console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
 
@@ -143,11 +143,11 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     
     /* Trouver le next hop (gateway si nécessaire) */
     if (!route_get_next_hop(dest_ip, next_hop)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[UDP] No route to ");
         print_ip(dest_ip);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -157,19 +157,19 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     /* Résoudre la MAC via ARP cache */
     if (!arp_cache_lookup(next_hop, dest_mac)) {
         /* MAC pas dans le cache, envoyer une requête ARP */
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
         console_puts("[UDP] MAC unknown for ");
         print_ip(next_hop);
         console_puts(", sending ARP request...\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         arp_send_request(netif, next_hop);
         
         /* Pour l'instant, on abandonne - dans un vrai OS, on mettrait
          * le paquet en queue et on réessaierait après la réponse ARP */
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[UDP] Packet dropped (ARP pending)\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
 
@@ -177,7 +177,7 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     ipv4_send_packet(netif, dest_mac, dest_ip, IP_PROTO_UDP, buffer, UDP_HEADER_SIZE + len);
 
     /* Log */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[UDP] Sent ");
     console_put_dec(len);
     console_puts(" bytes to ");
@@ -187,5 +187,5 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     console_puts(" from port ");
     console_put_dec(src_port);
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }

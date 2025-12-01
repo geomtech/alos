@@ -28,7 +28,7 @@ void net_init(uint8_t* mac)
     }
     
     /* Afficher l'état initial (en attente de DHCP) */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[NET] Network layer initialized\n");
     console_puts("      MAC:     ");
     for (int i = 0; i < 6; i++) {
@@ -36,7 +36,7 @@ void net_init(uint8_t* mac)
         console_put_hex_byte(MY_MAC[i]);
     }
     console_puts("\n      Status:  Waiting for DHCP or static configuration\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**

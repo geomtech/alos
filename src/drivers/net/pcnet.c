@@ -45,7 +45,7 @@ void pci_enable_bus_mastering(PCIDevice* dev)
     console_put_hex(verify);
     console_puts("\n");
     
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("[PCnet] Bus Mastering enabled\n");
 }
 
@@ -153,11 +153,11 @@ static void pcnet_receive(PCNetDevice* dev)
         
         /* Vérifier les erreurs */
         if (desc->status & 0x4000) {
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
             console_puts("[RX] Error in packet! Status: ");
             console_put_hex(desc->status);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         } else {
             /* Paquet valide - récupérer la taille */
             /* mcnt contient la taille du message (12 bits bas) */
@@ -267,9 +267,9 @@ static void pcnet_print_mac(PCNetDevice* dev)
 {
     const char hex[] = "0123456789ABCDEF";
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[PCnet] MAC Address: ");
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
     
     for (int i = 0; i < 6; i++) {
         console_putc(hex[(dev->mac_addr[i] >> 4) & 0x0F]);
@@ -279,7 +279,7 @@ static void pcnet_print_mac(PCNetDevice* dev)
         }
     }
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /* ============================================ */
@@ -293,7 +293,7 @@ static void pcnet_print_status(PCNetDevice* dev)
 {
     uint32_t csr0 = pcnet_read_csr(dev, CSR0);
     
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("[PCnet] CSR0 Status: ");
     console_put_hex(csr0);
     console_puts(" (");
@@ -347,9 +347,9 @@ static void pcnet_set_software_style(PCNetDevice* dev)
         }
         console_puts(")\n");
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] WARNING: Failed to set SWSTYLE!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }
 
@@ -377,12 +377,12 @@ static int pcnet_netif_send(NetInterface* netif, uint8_t* data, int len)
 
 PCNetDevice* pcnet_init(PCIDevice* pci_dev)
 {
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("\n=== PCnet Driver Initialization ===\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     if (pci_dev == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: No PCI device provided!\n");
         return NULL;
     }
@@ -390,7 +390,7 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     /* Allouer la structure du driver */
     PCNetDevice* dev = (PCNetDevice*)kmalloc(sizeof(PCNetDevice));
     if (dev == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: Failed to allocate driver structure!\n");
         return NULL;
     }
@@ -441,7 +441,7 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
      */
     dev->init_block = (PCNetInitBlock*)kmalloc(sizeof(PCNetInitBlock) + 16);
     if (dev->init_block == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: Failed to allocate Init Block!\n");
         kfree(dev);
         return NULL;
@@ -462,10 +462,10 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     
     /* Vérifier l'alignement */
     if ((uint32_t)(uintptr_t)dev->init_block & 0x3) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] WARNING: Init Block not 4-byte aligned!\n");
     } else {
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("[PCnet] Init Block alignment: OK (4-byte aligned)\n");
     }
     
@@ -474,7 +474,7 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     dev->tx_ring = (PCNetTxDesc*)kmalloc(sizeof(PCNetTxDesc) * PCNET_TX_BUFFERS + 16);
     
     if (dev->rx_ring == NULL || dev->tx_ring == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: Failed to allocate descriptor rings!\n");
         return NULL;
     }
@@ -503,7 +503,7 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     dev->tx_buffers = (uint8_t*)kmalloc(PCNET_BUFFER_SIZE * PCNET_TX_BUFFERS);
     
     if (dev->rx_buffers == NULL || dev->tx_buffers == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: Failed to allocate data buffers!\n");
         return NULL;
     }
@@ -610,9 +610,9 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
         netdev_register(g_pcnet_netif);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[PCnet] Driver initialized successfully!\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return dev;
 }
@@ -621,7 +621,7 @@ bool pcnet_start(PCNetDevice* dev)
 {
     if (dev == NULL) return false;
     
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("[PCnet] Starting card...\n");
     
     /* Étape 1: Écrire l'adresse de l'Init Block dans CSR1 et CSR2 */
@@ -651,7 +651,7 @@ bool pcnet_start(PCNetDevice* dev)
     }
     
     if (timeout == 0) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[PCnet] ERROR: Timeout waiting for IDON!\n");
         console_puts("[PCnet] CSR0 = ");
         console_put_hex(csr0);
@@ -659,7 +659,7 @@ bool pcnet_start(PCNetDevice* dev)
         return false;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[PCnet] IDON received! CSR0 = ");
     console_put_hex(csr0);
     console_puts("\n");
@@ -673,7 +673,7 @@ bool pcnet_start(PCNetDevice* dev)
     /* Vérifier que la carte est démarrée */
     csr0 = pcnet_read_csr(dev, CSR0);
     
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("[PCnet] After START, CSR0 = ");
     console_put_hex(csr0);
     console_puts(" (");
@@ -691,9 +691,9 @@ bool pcnet_start(PCNetDevice* dev)
         g_pcnet_netif->flags |= NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("\n*** PCnet Started! Ready to send/receive packets ***\n\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return true;
 }

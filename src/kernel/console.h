@@ -95,4 +95,19 @@ int console_get_view_line(void);
  */
 int console_get_current_line(void);
 
+/**
+ * Active ou désactive l'affichage du curseur.
+ */
+void console_show_cursor(int show);
+
+/**
+ * Met à jour la position du curseur (appelé après chaque caractère en mode édition).
+ */
+void console_update_cursor(void);
+
+/**
+ * Désactive le curseur VGA hardware.
+ */
+void console_disable_hw_cursor(void);
+
 #endif /* CONSOLE_H */

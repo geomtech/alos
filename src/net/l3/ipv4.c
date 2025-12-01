@@ -67,11 +67,11 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < IPV4_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[IPv4] Packet too short: ");
         console_put_dec(len);
         console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -87,21 +87,21 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
     
     /* Vérifier que c'est bien IPv4 */
     if (version != 4) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[IPv4] Invalid version: ");
         console_put_dec(version);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
     /* Vérifier que le header est assez grand */
     if (header_len < IPV4_HEADER_SIZE || header_len > len) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[IPv4] Invalid header length: ");
         console_put_dec(header_len);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -146,9 +146,9 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
             break;
             
         case IP_PROTO_TCP:
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
             console_puts("[IPv4] TCP packet (not implemented)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             break;
             
         case IP_PROTO_UDP:
@@ -156,11 +156,11 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
             break;
             
         default:
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
             console_puts("[IPv4] Unknown protocol: ");
             console_put_dec(ip->protocol);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             break;
     }
 }
@@ -262,7 +262,7 @@ void ipv4_send_packet(NetInterface* netif, uint8_t* dest_mac, uint8_t* dest_ip,
     
     if (sent) {
         /* Log */
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("[IPv4] Sent to ");
         print_ip(dest_ip);
         console_puts(" (Proto=");
@@ -270,10 +270,10 @@ void ipv4_send_packet(NetInterface* netif, uint8_t* dest_mac, uint8_t* dest_ip,
         console_puts(", ");
         console_put_dec(payload_len);
         console_puts(" bytes)\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[IPv4] Error: No network device!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }

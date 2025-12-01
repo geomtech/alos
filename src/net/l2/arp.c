@@ -101,13 +101,13 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
             arp_cache[i].valid = true;
             arp_cache_count++;
             
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
             console_puts("[ARP] Cache: Added ");
             print_ip(ip);
             console_puts(" -> ");
             print_mac(mac);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             return;
         }
     }
@@ -117,9 +117,9 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
     mac_copy(arp_cache[0].mac, mac);
     arp_cache[0].valid = true;
     
-    console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
     console_puts("[ARP] Cache full, replaced entry 0\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -214,15 +214,15 @@ void arp_send_request(NetInterface* netif, uint8_t* target_ip)
     }
     
     if (sent) {
-        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
         console_puts("[ARP] Request: Who has ");
         print_ip(target_ip);
         console_puts("?\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ARP] Error sending request!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }
 
@@ -323,7 +323,7 @@ void arp_send_reply(NetInterface* netif, uint8_t* target_mac, uint8_t* target_ip
     
     if (sent) {
         /* Log */
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("[ARP] Sent Reply: ");
         print_ip(my_ip);
         console_puts(" is at ");
@@ -331,11 +331,11 @@ void arp_send_reply(NetInterface* netif, uint8_t* target_mac, uint8_t* target_ip
         console_puts(" -> ");
         print_mac(target_mac);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ARP] Error: No network device!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
 }
 
@@ -348,11 +348,11 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     
     /* Vérifier la taille minimale */
     if (len < ARP_PACKET_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ARP] Packet too short: ");
         console_put_dec(len);
         console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -365,13 +365,13 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     uint16_t opcode = ntohs(arp->opcode);
     
     if (hw_type != ARP_HW_ETHERNET || proto_type != ARP_PROTO_IPV4) {
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
         console_puts("[ARP] Unsupported HW/Proto type: ");
         console_put_hex(hw_type);
         console_puts("/");
         console_put_hex(proto_type);
         console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -389,7 +389,7 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     switch (opcode) {
         case ARP_OP_REQUEST:
             /* ARP Request - quelqu'un cherche une adresse MAC */
-            console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
             console_puts("[ARP] Request: Who has ");
             print_ip(arp->dest_ip);
             console_puts("? Tell ");
@@ -397,16 +397,16 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
             console_puts(" (");
             print_mac(arp->src_mac);
             console_puts(")\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             
             /* Ajouter l'émetteur au cache ARP (on apprend de chaque request) */
             arp_cache_add(arp->src_ip, arp->src_mac);
             
             /* Vérifier si c'est pour nous */
             if (arp_ip_equals(arp->dest_ip, my_ip)) {
-                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
                 console_puts("[ARP] >>> That's us! Sending reply... <<<\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                 
                 /* Envoyer la réponse ARP via l'interface */
                 arp_send_reply(netif, arp->src_mac, arp->src_ip);
@@ -415,24 +415,24 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
             
         case ARP_OP_REPLY:
             /* ARP Reply - quelqu'un nous donne son adresse MAC */
-            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
             console_puts("[ARP] Reply: ");
             print_ip(arp->src_ip);
             console_puts(" is at ");
             print_mac(arp->src_mac);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             
             /* Ajouter au cache ARP */
             arp_cache_add(arp->src_ip, arp->src_mac);
             break;
             
         default:
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
             console_puts("[ARP] Unknown opcode: ");
             console_put_dec(opcode);
             console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             break;
     }
 }

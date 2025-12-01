@@ -78,16 +78,16 @@ void route_init(void)
     }
     route_count = 0;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[ROUTE] Initializing routing table...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Obtenir l'interface par défaut */
     netdev_t* default_iface = netdev_get_default();
     if (default_iface == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ROUTE] No network interface available!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     
@@ -96,9 +96,9 @@ void route_init(void)
      * Cela évite le problème de gateway 0.0.0.0 avant DHCP.
      */
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[ROUTE] Routing table initialized (waiting for DHCP)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -117,9 +117,9 @@ void route_update_from_netif(NetInterface* netif)
         return;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[ROUTE] Updating routes from DHCP...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Calculer l'adresse réseau à partir de l'IP et du masque */
     uint8_t network[4], netmask[4], gateway[4], no_gw[4] = {0, 0, 0, 0};
@@ -137,11 +137,11 @@ void route_update_from_netif(NetInterface* netif)
         route_add(default_net, default_mask, gateway, iface);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[ROUTE] Routes updated (");
     console_put_dec(route_count);
     console_puts(" routes)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 /**
@@ -150,9 +150,9 @@ void route_update_from_netif(NetInterface* netif)
 bool route_add(uint8_t* network, uint8_t* netmask, uint8_t* gateway, netdev_t* iface)
 {
     if (route_count >= MAX_ROUTES) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ROUTE] Table full!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return false;
     }
     
@@ -179,7 +179,7 @@ bool route_add(uint8_t* network, uint8_t* netmask, uint8_t* gateway, netdev_t* i
     route_count++;
     
     /* Log */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[ROUTE] Added: ");
     print_ip(network);
     console_puts("/");
@@ -193,7 +193,7 @@ bool route_add(uint8_t* network, uint8_t* netmask, uint8_t* gateway, netdev_t* i
     console_puts(" dev ");
     console_puts(iface->name);
     console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return true;
 }
@@ -263,11 +263,11 @@ bool route_get_next_hop(uint8_t* dest_ip, uint8_t* next_hop)
  */
 void route_print_table(void)
 {
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("\n=== Routing Table ===\n");
     console_puts("Destination      Gateway          Iface\n");
     console_puts("-----------------------------------------\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     for (int i = 0; i < MAX_ROUTES; i++) {
         if (!routes[i].active) {

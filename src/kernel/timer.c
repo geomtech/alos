@@ -124,11 +124,11 @@ void timer_init(uint32_t frequency)
     rtc_read_datetime(&boot_time);
     g_boot_timestamp = datetime_to_unix(&boot_time);
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[TIMER] PIT initialized at ");
     console_put_dec(frequency);
     console_puts(" Hz\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }
 
 uint64_t timer_get_ticks(void)

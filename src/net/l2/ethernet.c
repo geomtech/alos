@@ -13,11 +13,11 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale (header Ethernet = 14 bytes) */
     if (data == NULL || len < ETHERNET_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("[ETH] Packet too short: ");
         console_put_dec(len);
         console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return;
     }
     

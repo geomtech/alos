@@ -1,5 +1,10 @@
 /* src/console.c - Console virtuelle avec scrolling */
 #include "console.h"
+#include "../arch/x86/io.h"
+
+/* Ports VGA pour le contrôle du curseur hardware */
+#define VGA_CTRL_REG    0x3D4
+#define VGA_DATA_REG    0x3D5
 
 /* Buffer VGA physique */
 static uint16_t* const VGA_MEMORY = (uint16_t*)0xB8000;
@@ -16,6 +21,11 @@ static int view_start_line = 0;
 
 /* Couleur courante */
 static uint8_t current_color = 0x0F; /* Blanc sur noir par défaut */
+
+/* État du curseur logiciel */
+static int cursor_visible = 1;       /* Curseur visible par défaut */
+static int cursor_char_saved = 0;    /* Caractère sous le curseur sauvegardé */
+static uint16_t saved_char = 0;      /* Caractère/couleur sauvegardé */
 
 /* Génère un octet de couleur */
 static inline uint8_t make_color(uint8_t fg, uint8_t bg)
@@ -35,6 +45,11 @@ void console_init(void)
     write_line = 0;
     view_start_line = 0;
     current_color = make_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    cursor_visible = 1;
+    cursor_char_saved = 0;
+    
+    /* Désactiver le curseur VGA hardware */
+    console_disable_hw_cursor();
     
     /* Initialiser le buffer avec des espaces */
     for (int i = 0; i < CONSOLE_BUFFER_LINES * VGA_WIDTH; i++) {
@@ -70,6 +85,11 @@ void console_putc(char c)
         write_line++;
     } else if (c == '\r') {
         write_col = 0;
+    } else if (c == '\b') {
+        /* Backspace - reculer d'une position */
+        if (write_col > 0) {
+            write_col--;
+        }
     } else if (c == '\t') {
         write_col = (write_col + 8) & ~7;
     } else {
@@ -171,6 +191,9 @@ void console_scroll_down(void)
 
 void console_refresh(void)
 {
+    /* Réinitialiser l'état du curseur car on va rafraîchir tout l'écran */
+    cursor_char_saved = 0;
+    
     for (int y = 0; y < VGA_HEIGHT; y++) {
         int buffer_line = view_start_line + y;
         
@@ -185,6 +208,9 @@ void console_refresh(void)
             }
         }
     }
+    
+    /* Afficher le curseur logiciel */
+    console_update_cursor();
 }
 
 int console_get_view_line(void)
@@ -195,4 +221,55 @@ int console_get_view_line(void)
 int console_get_current_line(void)
 {
     return write_line;
+}
+
+void console_disable_hw_cursor(void)
+{
+    /* Désactiver le curseur VGA hardware en mettant le bit 5 du registre 0x0A */
+    outb(VGA_CTRL_REG, 0x0A);
+    outb(VGA_DATA_REG, 0x20);  /* Bit 5 = cursor disable */
+}
+
+void console_show_cursor(int show)
+{
+    cursor_visible = show;
+    if (!show && cursor_char_saved) {
+        /* Restaurer le caractère sous le curseur */
+        int screen_line = write_line - view_start_line;
+        if (screen_line >= 0 && screen_line < VGA_HEIGHT) {
+            int vga_index = screen_line * VGA_WIDTH + write_col;
+            VGA_MEMORY[vga_index] = saved_char;
+        }
+        cursor_char_saved = 0;
+    }
+}
+
+void console_update_cursor(void)
+{
+    if (!cursor_visible) {
+        return;
+    }
+    
+    /* Restaurer l'ancien caractère si nécessaire */
+    if (cursor_char_saved) {
+        /* On ne restaure pas ici car le caractère a déjà été écrasé par putc */
+        cursor_char_saved = 0;
+    }
+    
+    /* Calculer la position écran du curseur */
+    int screen_line = write_line - view_start_line;
+    
+    /* Vérifier que le curseur est visible à l'écran */
+    if (screen_line >= 0 && screen_line < VGA_HEIGHT && write_col < VGA_WIDTH) {
+        int vga_index = screen_line * VGA_WIDTH + write_col;
+        
+        /* Sauvegarder le caractère actuel */
+        saved_char = VGA_MEMORY[vga_index];
+        cursor_char_saved = 1;
+        
+        /* Afficher le curseur (caractère '_' ou bloc inversé) */
+        /* On utilise un bloc plein avec couleur inversée */
+        uint8_t cursor_color = ((current_color & 0x0F) << 4) | ((current_color >> 4) & 0x0F);
+        VGA_MEMORY[vga_index] = (uint16_t)' ' | ((uint16_t)cursor_color << 8);
+    }
 }

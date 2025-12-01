@@ -72,11 +72,11 @@ int command_execute(int argc, char** argv)
     }
     
     /* Commande non trouvée */
-    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     console_puts("Unknown command: ");
     console_puts(argv[0]);
     console_puts("\nType 'help' for available commands.\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return -1;
 }
@@ -94,16 +94,16 @@ static int cmd_help(int argc, char** argv)
     (void)argc;
     (void)argv;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("\nAvailable commands:\n");
     console_puts("-------------------\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     for (int i = 0; commands[i].name != NULL; i++) {
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("  ");
         console_puts(commands[i].name);
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
         /* Padding pour aligner les descriptions */
         int name_len = strlen(commands[i].name);
@@ -119,9 +119,9 @@ static int cmd_help(int argc, char** argv)
     console_puts("\n");
     
     /* Afficher les commandes à venir (TODO) */
-    console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
     console_puts("Coming soon: clear, ls, cat, cd, pwd, mkdir, touch, echo, meminfo, netinfo\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
 }
@@ -171,12 +171,12 @@ static int parse_ip(const char* str, uint8_t* ip)
 static int cmd_ping(int argc, char** argv)
 {
     if (argc < 2) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("Usage: ping <ip_address|hostname>\n");
         console_puts("Examples:\n");
         console_puts("  ping 10.0.2.2\n");
         console_puts("  ping google.com\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return -1;
     }
     
@@ -201,7 +201,7 @@ static int cmd_ping(int argc, char** argv)
  * static int cmd_clear(int argc, char** argv)
  * {
  *     // TODO: Effacer l'écran
- *     // Utiliser console_clear(VGA_COLOR_BLUE);
+ *     // Utiliser console_clear(VGA_COLOR_BLACK);
  *     return 0;
  * }
  */
