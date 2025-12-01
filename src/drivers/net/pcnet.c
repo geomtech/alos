@@ -750,9 +750,6 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     /* Déclencher l'envoi immédiat avec TDMD + garder IENA actif */
     pcnet_write_csr(dev, CSR0, CSR0_TDMD | CSR0_IENA);
     
-    /* Petit délai pour laisser la carte traiter */
-    for (volatile int i = 0; i < 10000; i++);
-    
     return true;
 }
 
