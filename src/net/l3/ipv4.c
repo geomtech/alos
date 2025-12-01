@@ -2,6 +2,7 @@
 #include "ipv4.h"
 #include "icmp.h"
 #include "../l4/udp.h"
+#include "../l4/tcp.h"
 #include "../core/net.h"
 #include "../core/netdev.h"
 #include "../l2/ethernet.h"
@@ -146,9 +147,7 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
             break;
             
         case IP_PROTO_TCP:
-            console_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-            console_puts("[IPv4] TCP packet (not implemented)\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            tcp_handle_packet(ip, payload, payload_len);
             break;
             
         case IP_PROTO_UDP:

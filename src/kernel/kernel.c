@@ -25,6 +25,7 @@
 #include "../net/l3/icmp.h"
 #include "../net/l4/dhcp.h"
 #include "../net/l4/dns.h"
+#include "../net/l4/tcp.h"
 #include "../shell/shell.h"
 #include "../include/string.h"
 #include "../mm/vmm.h"
@@ -220,6 +221,14 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                                 /* === Test DNS === */
                                 if (netif->dns_server != 0) {
                                     dns_init(netif->dns_server);
+                                }
+                                
+                                /* === Initialisation TCP === */
+                                tcp_init();
+                                
+                                /* Ouvrir le port 80 (HTTP) en écoute */
+                                if (tcp_listen(TCP_PORT_HTTP) != NULL) {
+                                    KLOG_INFO("TCP", "HTTP server listening on port 80");
                                 }
                             } else {
                                 KLOG_WARN("NET", "DHCP configuration timed out");

@@ -7,6 +7,7 @@
 #include "../kernel/elf.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
+#include "../net/core/netdev.h"
 #include "../arch/x86/usermode.h"
 
 /* ========================================
@@ -20,6 +21,7 @@ static int cmd_ps(int argc, char** argv);
 static int cmd_usermode(int argc, char** argv);
 static int cmd_exec(int argc, char** argv);
 static int cmd_elfinfo(int argc, char** argv);
+static int cmd_netinfo(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -31,7 +33,6 @@ static int cmd_elfinfo(int argc, char** argv);
 // static int cmd_touch(int argc, char** argv);
 // static int cmd_echo(int argc, char** argv);
 // static int cmd_meminfo(int argc, char** argv);
-// static int cmd_netinfo(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -46,6 +47,7 @@ static shell_command_t commands[] = {
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     { "exec",     "Execute an ELF program",                  cmd_exec },
     { "elfinfo",  "Display ELF file information",            cmd_elfinfo },
+    { "netinfo",  "Display network configuration",           cmd_netinfo },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -57,7 +59,6 @@ static shell_command_t commands[] = {
     // { "touch",   "Create an empty file",                   cmd_touch },
     // { "echo",    "Display a message",                      cmd_echo },
     // { "meminfo", "Display memory information",             cmd_meminfo },
-    // { "netinfo", "Display network configuration",          cmd_netinfo },
     
     /* Marqueur de fin */
     { NULL, NULL, NULL }
@@ -134,7 +135,7 @@ static int cmd_help(int argc, char** argv)
     
     /* Afficher les commandes à venir (TODO) */
     console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
-    console_puts("Coming soon: clear, ls, cat, cd, pwd, mkdir, touch, echo, meminfo, netinfo\n");
+    console_puts("Coming soon: clear, ls, cat, cd, pwd, mkdir, touch, echo, meminfo\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
@@ -205,6 +206,22 @@ static int cmd_ping(int argc, char** argv)
         /* C'est probablement un hostname - utiliser la résolution DNS */
         return ping(target);
     }
+}
+
+/**
+ * Commande: netinfo
+ * Affiche la configuration réseau de toutes les interfaces.
+ */
+static int cmd_netinfo(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    /* Utilise la fonction existante de netdev qui affiche 
+     * toutes les informations réseau de manière formatée */
+    netdev_ipconfig_display();
+    
+    return 0;
 }
 
 /* ========================================
@@ -306,20 +323,6 @@ static int cmd_ping(int argc, char** argv)
  *     // - kheap_get_free_size()
  *     // - kheap_get_block_count()
  *     // - kheap_get_free_block_count()
- *     return 0;
- * }
- */
-
-/*
- * static int cmd_netinfo(int argc, char** argv)
- * {
- *     // TODO: Afficher la configuration réseau
- *     // Inclure les headers réseau et afficher:
- *     // - Adresse MAC (netif->mac_addr)
- *     // - Adresse IP (netif->ip_addr)
- *     // - Masque (netif->netmask)
- *     // - Passerelle (netif->gateway)
- *     // - Serveur DNS
  *     return 0;
  * }
  */
