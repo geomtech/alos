@@ -207,6 +207,17 @@ vfs_node_t* vfs_get_root(void)
     return vfs_root;
 }
 
+vfs_mount_t* vfs_get_root_mount(void)
+{
+    /* Chercher le montage racine "/" */
+    for (int i = 0; i < VFS_MAX_MOUNTS; i++) {
+        if (mounts[i].active && mounts[i].path[0] == '/' && mounts[i].path[1] == '\0') {
+            return &mounts[i];
+        }
+    }
+    return NULL;
+}
+
 vfs_node_t* vfs_resolve_path(const char* path)
 {
     if (path == NULL || path[0] == '\0') {

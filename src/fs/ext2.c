@@ -102,6 +102,484 @@ int ext2_read_inode(ext2_fs_t* fs, uint32_t inode_num, ext2_inode_t* inode)
     return 0;
 }
 
+/* ===========================================
+ * Écriture bas niveau
+ * =========================================== */
+
+/**
+ * Écrit un bloc sur le disque.
+ */
+int ext2_write_block(ext2_fs_t* fs, uint32_t block_num, const void* buffer)
+{
+    /* Calculer le LBA de départ */
+    uint32_t sectors_per_block = fs->block_size / 512;
+    uint32_t lba = block_num * sectors_per_block;
+    
+    /* Écrire les secteurs */
+    for (uint32_t i = 0; i < sectors_per_block; i++) {
+        if (ata_write_sectors(lba + i, 1, (const uint8_t*)buffer + i * 512) != 0) {
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+/**
+ * Écrit le superblock sur le disque.
+ * Le superblock est toujours à l'offset 1024 (LBA 2).
+ */
+int ext2_write_superblock(ext2_fs_t* fs)
+{
+    /* Le superblock fait 1024 octets et commence à l'offset 1024 */
+    /* Donc il occupe les secteurs 2 et 3 (LBA) */
+    uint8_t buffer[1024];
+    memcpy(buffer, &fs->superblock, sizeof(ext2_superblock_t));
+    
+    if (ata_write_sectors(2, 2, buffer) != 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * Écrit un descripteur de groupe sur le disque.
+ */
+int ext2_write_group_desc(ext2_fs_t* fs, uint32_t group)
+{
+    if (group >= fs->num_groups) {
+        return -1;
+    }
+    
+    /* La table des descripteurs de groupe commence juste après le superblock */
+    /* Pour un block_size de 1024, c'est le bloc 2 */
+    /* Pour un block_size >= 2048, c'est le bloc 1 */
+    uint32_t gdt_block = (fs->block_size == 1024) ? 2 : 1;
+    
+    /* Calculer quel bloc de la GDT contient ce descripteur */
+    uint32_t descs_per_block = fs->block_size / sizeof(ext2_group_desc_t);
+    uint32_t gdt_block_offset = group / descs_per_block;
+    
+    /* Lire le bloc entier de la GDT */
+    uint8_t* gdt_buffer = (uint8_t*)kmalloc(fs->block_size);
+    if (gdt_buffer == NULL) {
+        return -1;
+    }
+    
+    if (ext2_read_block(fs, gdt_block + gdt_block_offset, gdt_buffer) != 0) {
+        kfree(gdt_buffer);
+        return -1;
+    }
+    
+    /* Mettre à jour le descripteur dans le buffer */
+    uint32_t offset_in_block = (group % descs_per_block) * sizeof(ext2_group_desc_t);
+    memcpy(gdt_buffer + offset_in_block, &fs->group_descs[group], sizeof(ext2_group_desc_t));
+    
+    /* Réécrire le bloc */
+    if (ext2_write_block(fs, gdt_block + gdt_block_offset, gdt_buffer) != 0) {
+        kfree(gdt_buffer);
+        return -1;
+    }
+    
+    kfree(gdt_buffer);
+    return 0;
+}
+
+/**
+ * Écrit un inode sur le disque.
+ */
+int ext2_write_inode(ext2_fs_t* fs, uint32_t inode_num, const ext2_inode_t* inode)
+{
+    if (inode_num == 0) return -1;
+    
+    /* Les inodes sont numérotés à partir de 1 */
+    inode_num--;
+    
+    /* Trouver le groupe contenant cet inode */
+    uint32_t group = inode_num / fs->inodes_per_group;
+    uint32_t index = inode_num % fs->inodes_per_group;
+    
+    /* Obtenir le bloc de la table d'inodes pour ce groupe */
+    uint32_t inode_table_block = fs->group_descs[group].bg_inode_table;
+    
+    /* Calculer l'offset de l'inode dans la table */
+    uint32_t inodes_per_block = fs->block_size / fs->inode_size;
+    uint32_t block_offset = index / inodes_per_block;
+    uint32_t inode_offset = (index % inodes_per_block) * fs->inode_size;
+    
+    /* Lire le bloc contenant l'inode */
+    uint8_t* block_buffer = (uint8_t*)kmalloc(fs->block_size);
+    if (block_buffer == NULL) return -1;
+    
+    if (ext2_read_block(fs, inode_table_block + block_offset, block_buffer) != 0) {
+        kfree(block_buffer);
+        return -1;
+    }
+    
+    /* Mettre à jour l'inode dans le buffer */
+    memcpy(block_buffer + inode_offset, inode, sizeof(ext2_inode_t));
+    
+    /* Réécrire le bloc */
+    if (ext2_write_block(fs, inode_table_block + block_offset, block_buffer) != 0) {
+        kfree(block_buffer);
+        return -1;
+    }
+    
+    kfree(block_buffer);
+    return 0;
+}
+
+/* ===========================================
+ * Gestion des Bitmaps
+ * =========================================== */
+
+/**
+ * Trouve le premier bit à 0 dans un bitmap.
+ * @param bitmap   Le bitmap à parcourir
+ * @param size     Taille du bitmap en octets
+ * @param max_bits Nombre maximum de bits à vérifier
+ * @return Index du premier bit libre, ou -1 si aucun
+ */
+static int32_t find_first_zero_bit(const uint8_t* bitmap, uint32_t size, uint32_t max_bits)
+{
+    for (uint32_t byte = 0; byte < size; byte++) {
+        if (bitmap[byte] != 0xFF) {
+            /* Il y a au moins un bit à 0 dans cet octet */
+            for (int bit = 0; bit < 8; bit++) {
+                uint32_t bit_index = byte * 8 + bit;
+                if (bit_index >= max_bits) {
+                    return -1;
+                }
+                if ((bitmap[byte] & (1 << bit)) == 0) {
+                    return (int32_t)bit_index;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+/**
+ * Met un bit à 1 dans un bitmap.
+ */
+static void set_bit(uint8_t* bitmap, uint32_t index)
+{
+    bitmap[index / 8] |= (1 << (index % 8));
+}
+
+/**
+ * Met un bit à 0 dans un bitmap.
+ */
+static void clear_bit(uint8_t* bitmap, uint32_t index)
+{
+    bitmap[index / 8] &= ~(1 << (index % 8));
+}
+
+/* ===========================================
+ * Allocation de Blocs
+ * =========================================== */
+
+/**
+ * Alloue un nouveau bloc sur le disque.
+ * 
+ * Algorithme:
+ * 1. Parcourir les groupes de blocs
+ * 2. Pour chaque groupe avec des blocs libres:
+ *    a. Lire le bitmap de blocs
+ *    b. Trouver le premier bit à 0
+ *    c. Le mettre à 1
+ *    d. Réécrire le bitmap
+ *    e. Mettre à jour les compteurs
+ * 3. Retourner le numéro du bloc alloué
+ * 
+ * @return Numéro du bloc alloué, ou -1 si le disque est plein
+ */
+int32_t ext2_alloc_block(ext2_fs_t* fs)
+{
+    /* Vérifier s'il reste des blocs libres */
+    if (fs->superblock.s_free_blocks_count == 0) {
+        return -1;
+    }
+    
+    /* Allouer un buffer pour le bitmap */
+    uint8_t* bitmap = (uint8_t*)kmalloc(fs->block_size);
+    if (bitmap == NULL) {
+        return -1;
+    }
+    
+    /* Parcourir les groupes de blocs */
+    for (uint32_t group = 0; group < fs->num_groups; group++) {
+        /* Vérifier si ce groupe a des blocs libres */
+        if (fs->group_descs[group].bg_free_blocks_count == 0) {
+            continue;
+        }
+        
+        /* Lire le bitmap de blocs de ce groupe */
+        uint32_t bitmap_block = fs->group_descs[group].bg_block_bitmap;
+        if (ext2_read_block(fs, bitmap_block, bitmap) != 0) {
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Déterminer le nombre de blocs dans ce groupe */
+        uint32_t blocks_in_group = fs->blocks_per_group;
+        /* Le dernier groupe peut avoir moins de blocs */
+        if (group == fs->num_groups - 1) {
+            uint32_t remaining = fs->superblock.s_blocks_count % fs->blocks_per_group;
+            if (remaining != 0) {
+                blocks_in_group = remaining;
+            }
+        }
+        
+        /* Trouver le premier bit libre */
+        int32_t bit_index = find_first_zero_bit(bitmap, fs->block_size, blocks_in_group);
+        if (bit_index < 0) {
+            /* Pas de bloc libre dans ce groupe (compteur désynchronisé?) */
+            continue;
+        }
+        
+        /* Marquer le bloc comme utilisé */
+        set_bit(bitmap, (uint32_t)bit_index);
+        
+        /* Réécrire le bitmap sur le disque */
+        if (ext2_write_block(fs, bitmap_block, bitmap) != 0) {
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Calculer le numéro de bloc physique */
+        uint32_t block_num = group * fs->blocks_per_group + 
+                            fs->superblock.s_first_data_block + (uint32_t)bit_index;
+        
+        /* Mettre à jour les compteurs */
+        fs->group_descs[group].bg_free_blocks_count--;
+        fs->superblock.s_free_blocks_count--;
+        
+        /* Écrire le descripteur de groupe mis à jour */
+        if (ext2_write_group_desc(fs, group) != 0) {
+            /* Rollback: remettre le bit à 0 */
+            clear_bit(bitmap, (uint32_t)bit_index);
+            ext2_write_block(fs, bitmap_block, bitmap);
+            fs->group_descs[group].bg_free_blocks_count++;
+            fs->superblock.s_free_blocks_count++;
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Écrire le superblock mis à jour */
+        if (ext2_write_superblock(fs) != 0) {
+            /* Pas de rollback complet ici, mais le FS sera juste inconsistant */
+            /* Un fsck pourrait le réparer */
+        }
+        
+        kfree(bitmap);
+        return (int32_t)block_num;
+    }
+    
+    kfree(bitmap);
+    return -1;  /* Pas de bloc libre trouvé */
+}
+
+/**
+ * Libère un bloc.
+ * 
+ * @param block_num Numéro du bloc à libérer
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_free_block(ext2_fs_t* fs, uint32_t block_num)
+{
+    /* Calculer le groupe et l'index dans le groupe */
+    uint32_t adjusted = block_num - fs->superblock.s_first_data_block;
+    uint32_t group = adjusted / fs->blocks_per_group;
+    uint32_t bit_index = adjusted % fs->blocks_per_group;
+    
+    if (group >= fs->num_groups) {
+        return -1;
+    }
+    
+    /* Lire le bitmap de blocs */
+    uint8_t* bitmap = (uint8_t*)kmalloc(fs->block_size);
+    if (bitmap == NULL) {
+        return -1;
+    }
+    
+    uint32_t bitmap_block = fs->group_descs[group].bg_block_bitmap;
+    if (ext2_read_block(fs, bitmap_block, bitmap) != 0) {
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Vérifier que le bloc était bien alloué */
+    if ((bitmap[bit_index / 8] & (1 << (bit_index % 8))) == 0) {
+        /* Le bloc n'était pas alloué - double free? */
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Marquer le bloc comme libre */
+    clear_bit(bitmap, bit_index);
+    
+    /* Réécrire le bitmap */
+    if (ext2_write_block(fs, bitmap_block, bitmap) != 0) {
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Mettre à jour les compteurs */
+    fs->group_descs[group].bg_free_blocks_count++;
+    fs->superblock.s_free_blocks_count++;
+    
+    /* Écrire les métadonnées mises à jour */
+    ext2_write_group_desc(fs, group);
+    ext2_write_superblock(fs);
+    
+    kfree(bitmap);
+    return 0;
+}
+
+/* ===========================================
+ * Allocation d'Inodes
+ * =========================================== */
+
+/**
+ * Alloue un nouvel inode.
+ * 
+ * @return Numéro de l'inode alloué (>= 1), ou -1 si plus d'inodes disponibles
+ */
+int32_t ext2_alloc_inode(ext2_fs_t* fs)
+{
+    /* Vérifier s'il reste des inodes libres */
+    if (fs->superblock.s_free_inodes_count == 0) {
+        return -1;
+    }
+    
+    /* Allouer un buffer pour le bitmap */
+    uint8_t* bitmap = (uint8_t*)kmalloc(fs->block_size);
+    if (bitmap == NULL) {
+        return -1;
+    }
+    
+    /* Parcourir les groupes */
+    for (uint32_t group = 0; group < fs->num_groups; group++) {
+        /* Vérifier si ce groupe a des inodes libres */
+        if (fs->group_descs[group].bg_free_inodes_count == 0) {
+            continue;
+        }
+        
+        /* Lire le bitmap d'inodes de ce groupe */
+        uint32_t bitmap_block = fs->group_descs[group].bg_inode_bitmap;
+        if (ext2_read_block(fs, bitmap_block, bitmap) != 0) {
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Trouver le premier bit libre */
+        int32_t bit_index = find_first_zero_bit(bitmap, fs->block_size, fs->inodes_per_group);
+        if (bit_index < 0) {
+            continue;
+        }
+        
+        /* Marquer l'inode comme utilisé */
+        set_bit(bitmap, (uint32_t)bit_index);
+        
+        /* Réécrire le bitmap sur le disque */
+        if (ext2_write_block(fs, bitmap_block, bitmap) != 0) {
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Calculer le numéro d'inode (1-indexed) */
+        uint32_t inode_num = group * fs->inodes_per_group + (uint32_t)bit_index + 1;
+        
+        /* Mettre à jour les compteurs */
+        fs->group_descs[group].bg_free_inodes_count--;
+        fs->superblock.s_free_inodes_count--;
+        
+        /* Écrire le descripteur de groupe mis à jour */
+        if (ext2_write_group_desc(fs, group) != 0) {
+            /* Rollback */
+            clear_bit(bitmap, (uint32_t)bit_index);
+            ext2_write_block(fs, bitmap_block, bitmap);
+            fs->group_descs[group].bg_free_inodes_count++;
+            fs->superblock.s_free_inodes_count++;
+            kfree(bitmap);
+            return -1;
+        }
+        
+        /* Écrire le superblock mis à jour */
+        ext2_write_superblock(fs);
+        
+        kfree(bitmap);
+        return (int32_t)inode_num;
+    }
+    
+    kfree(bitmap);
+    return -1;
+}
+
+/**
+ * Libère un inode.
+ * 
+ * @param inode_num Numéro de l'inode à libérer (1-indexed)
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_free_inode(ext2_fs_t* fs, uint32_t inode_num)
+{
+    if (inode_num == 0) {
+        return -1;
+    }
+    
+    /* Convertir en index 0-based */
+    inode_num--;
+    
+    /* Calculer le groupe et l'index dans le groupe */
+    uint32_t group = inode_num / fs->inodes_per_group;
+    uint32_t bit_index = inode_num % fs->inodes_per_group;
+    
+    if (group >= fs->num_groups) {
+        return -1;
+    }
+    
+    /* Lire le bitmap d'inodes */
+    uint8_t* bitmap = (uint8_t*)kmalloc(fs->block_size);
+    if (bitmap == NULL) {
+        return -1;
+    }
+    
+    uint32_t bitmap_block = fs->group_descs[group].bg_inode_bitmap;
+    if (ext2_read_block(fs, bitmap_block, bitmap) != 0) {
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Vérifier que l'inode était bien alloué */
+    if ((bitmap[bit_index / 8] & (1 << (bit_index % 8))) == 0) {
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Marquer l'inode comme libre */
+    clear_bit(bitmap, bit_index);
+    
+    /* Réécrire le bitmap */
+    if (ext2_write_block(fs, bitmap_block, bitmap) != 0) {
+        kfree(bitmap);
+        return -1;
+    }
+    
+    /* Mettre à jour les compteurs */
+    fs->group_descs[group].bg_free_inodes_count++;
+    fs->superblock.s_free_inodes_count++;
+    
+    /* Écrire les métadonnées mises à jour */
+    ext2_write_group_desc(fs, group);
+    ext2_write_superblock(fs);
+    
+    kfree(bitmap);
+    return 0;
+}
+
 /**
  * Lit les données d'un fichier/inode.
  * Gère les blocs directs, indirects simples, doubles et triples.
@@ -527,6 +1005,11 @@ int ext2_mount(vfs_mount_t* mount, void* device)
     /* Stocker le contexte dans le mount */
     mount->fs_specific = fs;
     
+    /* Marquer le FS comme "dirty" (non proprement démonté) */
+    /* Cela permet de détecter si le système a crashé avant un démontage propre */
+    fs->superblock.s_state = EXT2_ERROR_FS;
+    ext2_write_superblock(fs);
+    
     return 0;
 }
 
@@ -534,6 +1017,11 @@ int ext2_unmount(vfs_mount_t* mount)
 {
     if (mount->fs_specific != NULL) {
         ext2_fs_t* fs = (ext2_fs_t*)mount->fs_specific;
+        
+        /* Marquer le FS comme "clean" (proprement démonté) */
+        fs->superblock.s_state = EXT2_VALID_FS;
+        ext2_write_superblock(fs);
+        
         if (fs->group_descs != NULL) {
             kfree(fs->group_descs);
         }

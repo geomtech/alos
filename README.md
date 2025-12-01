@@ -1,4 +1,4 @@
-# ALOS - A Learning Operating System
+# ALOS - Alexy Operating System
 
 ALOS is a minimalist operating system kernel written in C and x86 Assembly, designed for learning purposes and running on QEMU. It implements core OS concepts including memory management, interrupt handling, storage, filesystem support, and a TCP/IP networking stack.
 

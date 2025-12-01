@@ -233,6 +233,11 @@ int vfs_unlink(const char* path);
 vfs_node_t* vfs_get_root(void);
 
 /**
+ * Retourne le point de montage racine.
+ */
+vfs_mount_t* vfs_get_root_mount(void);
+
+/**
  * Résout un chemin en noeud VFS.
  */
 vfs_node_t* vfs_resolve_path(const char* path);

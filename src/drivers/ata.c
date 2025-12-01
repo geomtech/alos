@@ -322,3 +322,34 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const uint8_t* buffer)
     
     return 0;
 }
+
+/**
+ * Force l'écriture du cache disque sur le média.
+ * 
+ * @return 0 si succès, -1 si erreur
+ */
+int ata_flush(void)
+{
+    if (!ata_disk_present) {
+        return -1;
+    }
+    
+    /* Attendre que le contrôleur soit prêt */
+    ata_wait_busy();
+    
+    /* Sélectionner le drive Master */
+    outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER);
+    
+    /* Envoyer la commande CACHE FLUSH */
+    outb(ATA_PRIMARY_COMMAND, ATA_CMD_CACHE_FLUSH);
+    
+    /* Attendre la fin du flush */
+    ata_wait_busy();
+    
+    /* Vérifier les erreurs */
+    if (ata_check_error()) {
+        return -1;
+    }
+    
+    return 0;
+}

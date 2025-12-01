@@ -305,6 +305,75 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                             }
                             vfs_close(test_file);
                         }
+                        
+                        /* Test: Allocation de bloc et d'inode */
+                        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                        console_puts("\n--- Ext2 Allocation Test ---\n");
+                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                        
+                        /* Récupérer le contexte ext2 depuis le mount */
+                        vfs_mount_t* root_mount = vfs_get_root_mount();
+                        if (root_mount != NULL && root_mount->fs_specific != NULL) {
+                            ext2_fs_t* ext2_ctx = (ext2_fs_t*)root_mount->fs_specific;
+                            
+                            /* Afficher les compteurs avant allocation */
+                            console_puts("Before: Free blocks=");
+                            console_put_dec(ext2_ctx->superblock.s_free_blocks_count);
+                            console_puts(", Free inodes=");
+                            console_put_dec(ext2_ctx->superblock.s_free_inodes_count);
+                            console_puts("\n");
+                            
+                            /* Allouer un bloc */
+                            int32_t new_block = ext2_alloc_block(ext2_ctx);
+                            if (new_block >= 0) {
+                                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                                console_puts("Allocated block #");
+                                console_put_dec((uint32_t)new_block);
+                                console_puts("\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            } else {
+                                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                                console_puts("Block allocation FAILED!\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            }
+                            
+                            /* Allouer un inode */
+                            int32_t new_inode = ext2_alloc_inode(ext2_ctx);
+                            if (new_inode >= 0) {
+                                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                                console_puts("Allocated inode #");
+                                console_put_dec((uint32_t)new_inode);
+                                console_puts("\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            } else {
+                                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
+                                console_puts("Inode allocation FAILED!\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            }
+                            
+                            /* Afficher les compteurs après allocation */
+                            console_puts("After:  Free blocks=");
+                            console_put_dec(ext2_ctx->superblock.s_free_blocks_count);
+                            console_puts(", Free inodes=");
+                            console_put_dec(ext2_ctx->superblock.s_free_inodes_count);
+                            console_puts("\n");
+                            
+                            /* Test de libération (optionnel - décommenter pour tester) */
+                            /*
+                            if (new_block >= 0) {
+                                ext2_free_block(ext2_ctx, (uint32_t)new_block);
+                                console_puts("Freed block #");
+                                console_put_dec((uint32_t)new_block);
+                                console_puts("\n");
+                            }
+                            if (new_inode >= 0) {
+                                ext2_free_inode(ext2_ctx, (uint32_t)new_inode);
+                                console_puts("Freed inode #");
+                                console_put_dec((uint32_t)new_inode);
+                                console_puts("\n");
+                            }
+                            */
+                        }
                     }
                 }
             }

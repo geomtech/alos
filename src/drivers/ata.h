@@ -104,6 +104,13 @@ int ata_read_sectors(uint32_t lba, uint8_t count, uint8_t* buffer);
 int ata_write_sectors(uint32_t lba, uint8_t count, const uint8_t* buffer);
 
 /**
+ * Force l'écriture du cache disque.
+ * Envoie la commande CACHE FLUSH (0xE7) au contrôleur.
+ * @return 0 si succès, -1 si erreur
+ */
+int ata_flush(void);
+
+/**
  * Vérifie si un disque est présent sur le bus Primary Master.
  * @return 1 si présent, 0 sinon
  */

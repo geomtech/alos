@@ -13,6 +13,12 @@
 #define EXT2_SUPERBLOCK_OFFSET  1024    /* Offset du superblock */
 
 /* ===========================================
+ * États du filesystem (s_state)
+ * =========================================== */
+#define EXT2_VALID_FS           1       /* FS démonté proprement */
+#define EXT2_ERROR_FS           2       /* FS contient des erreurs */
+
+/* ===========================================
  * Types de fichiers (dans i_mode)
  * =========================================== */
 #define EXT2_S_IFSOCK   0xC000  /* Socket */
@@ -183,5 +189,58 @@ int ext2_read_inode(ext2_fs_t* fs, uint32_t inode_num, ext2_inode_t* inode);
  * Lit un bloc de données.
  */
 int ext2_read_block(ext2_fs_t* fs, uint32_t block_num, void* buffer);
+
+/* ===========================================
+ * API Ext2 - Écriture bas niveau
+ * =========================================== */
+
+/**
+ * Écrit un bloc de données sur le disque.
+ */
+int ext2_write_block(ext2_fs_t* fs, uint32_t block_num, const void* buffer);
+
+/**
+ * Écrit le superblock sur le disque.
+ * Doit être appelé après toute modification du superblock.
+ */
+int ext2_write_superblock(ext2_fs_t* fs);
+
+/**
+ * Écrit un descripteur de groupe sur le disque.
+ */
+int ext2_write_group_desc(ext2_fs_t* fs, uint32_t group);
+
+/**
+ * Écrit un inode sur le disque.
+ */
+int ext2_write_inode(ext2_fs_t* fs, uint32_t inode_num, const ext2_inode_t* inode);
+
+/* ===========================================
+ * API Ext2 - Allocation
+ * =========================================== */
+
+/**
+ * Alloue un nouveau bloc.
+ * @return Numéro du bloc alloué, ou -1 si échec
+ */
+int32_t ext2_alloc_block(ext2_fs_t* fs);
+
+/**
+ * Libère un bloc.
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_free_block(ext2_fs_t* fs, uint32_t block_num);
+
+/**
+ * Alloue un nouvel inode.
+ * @return Numéro de l'inode alloué, ou -1 si échec
+ */
+int32_t ext2_alloc_inode(ext2_fs_t* fs);
+
+/**
+ * Libère un inode.
+ * @return 0 si succès, -1 si erreur
+ */
+int ext2_free_inode(ext2_fs_t* fs, uint32_t inode_num);
 
 #endif /* EXT2_H */
