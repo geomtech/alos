@@ -5,6 +5,7 @@
 #include "../mm/kheap.h"
 #include "../mm/vmm.h"
 #include "../include/string.h"
+#include "../arch/x86/tss.h"
 
 /* ========================================
  * Variables globales
@@ -238,6 +239,17 @@ void switch_to(process_t* next)
     /* Marquer le nouveau comme RUNNING */
     next->state = PROCESS_STATE_RUNNING;
     current_process = next;
+    
+    /* ========================================
+     * Mettre à jour le TSS
+     * ========================================
+     * Si le nouveau processus est interrompu en Ring 3, le CPU
+     * utilisera esp0 du TSS comme stack kernel pour sauvegarder
+     * le contexte.
+     */
+    if (next->esp0 != 0) {
+        tss_set_kernel_stack(next->esp0);
+    }
     
     /* Changer de Page Directory si nécessaire */
     /* (Pour l'instant tous les threads kernel partagent le même) */

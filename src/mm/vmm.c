@@ -220,6 +220,37 @@ bool vmm_is_mapped(uint32_t virt)
     return vmm_get_physical(virt) != 0 || virt == 0;  /* 0 est mappé mais retourne 0 */
 }
 
+void vmm_set_user_accessible(uint32_t start, uint32_t size)
+{
+    start = PAGE_ALIGN_DOWN(start);
+    uint32_t end = PAGE_ALIGN_UP(start + size);
+    
+    KLOG_INFO("VMM", "Setting user access for range:");
+    KLOG_INFO_HEX("VMM", "  Start: ", start);
+    KLOG_INFO_HEX("VMM", "  End:   ", end);
+    
+    for (uint32_t addr = start; addr < end; addr += PAGE_SIZE) {
+        uint32_t dir_index = PAGE_DIR_INDEX(addr);
+        uint32_t table_index = PAGE_TABLE_INDEX(addr);
+        
+        /* Vérifier que la Page Table existe */
+        if (page_tables[dir_index] == NULL) {
+            continue;
+        }
+        
+        /* Ajouter le flag USER à la page */
+        page_tables[dir_index][table_index] |= PAGE_USER;
+        
+        /* Ajouter aussi le flag USER au Page Directory entry */
+        kernel_page_directory[dir_index] |= PAGE_USER;
+        
+        /* Invalider le TLB */
+        vmm_invlpg(addr);
+    }
+    
+    KLOG_INFO("VMM", "User access granted");
+}
+
 void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr)
 {
     console_set_color(VGA_COLOR_RED, VGA_COLOR_BLACK);

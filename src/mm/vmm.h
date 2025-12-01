@@ -129,4 +129,13 @@ bool vmm_is_mapped(uint32_t virt);
  */
 void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr);
 
+/**
+ * Rend une plage d'adresses accessible en User Mode (Ring 3).
+ * Ajoute le flag PAGE_USER aux pages concernées.
+ * 
+ * @param start  Adresse de début (sera alignée)
+ * @param size   Taille en octets
+ */
+void vmm_set_user_accessible(uint32_t start, uint32_t size);
+
 #endif /* VMM_H */

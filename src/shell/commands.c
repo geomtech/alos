@@ -2,9 +2,11 @@
 #include "commands.h"
 #include "shell.h"
 #include "../kernel/console.h"
+#include "../kernel/keyboard.h"
 #include "../kernel/process.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
+#include "../arch/x86/usermode.h"
 
 /* ========================================
  * Déclarations des handlers de commandes
@@ -14,6 +16,7 @@ static int cmd_help(int argc, char** argv);
 static int cmd_ping(int argc, char** argv);
 static int cmd_tasks(int argc, char** argv);
 static int cmd_ps(int argc, char** argv);
+static int cmd_usermode(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -33,10 +36,11 @@ static int cmd_ps(int argc, char** argv);
 
 static shell_command_t commands[] = {
     /* Commandes implémentées */
-    { "help",    "Display available commands",              cmd_help },
-    { "ping",    "Ping a host (IP or hostname)",           cmd_ping },
-    { "tasks",   "Test multitasking (launches 2 threads)",  cmd_tasks },
-    { "ps",      "List running processes",                  cmd_ps },
+    { "help",     "Display available commands",              cmd_help },
+    { "ping",     "Ping a host (IP or hostname)",           cmd_ping },
+    { "tasks",    "Test multitasking (launches 2 threads)",  cmd_tasks },
+    { "ps",       "List running processes",                  cmd_ps },
+    { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -426,4 +430,48 @@ static int cmd_ps(int argc, char** argv)
     process_list_debug();
     
     return 0;
+}
+
+/**
+ * Commande: usermode
+ * Teste le passage en mode utilisateur (Ring 3).
+ * 
+ * ATTENTION: C'est un test expérimental !
+ * Une fois en Ring 3, on ne peut plus revenir (pas de syscalls encore).
+ */
+static int cmd_usermode(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("=== WARNING: User Mode Test ===\n");
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    console_puts("This will jump to Ring 3 (User Mode).\n");
+    console_puts("There's NO WAY BACK (no syscalls yet)!\n");
+    console_puts("If you see a spinner in the top-right corner,\n");
+    console_puts("it means User Mode is working!\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("Press 'y' to continue, any other key to cancel: ");
+    console_refresh();
+    
+    char c = keyboard_getchar();
+    console_putc(c);
+    console_putc('\n');
+    
+    if (c != 'y' && c != 'Y') {
+        console_puts("Cancelled.\n");
+        return 0;
+    }
+    
+    console_puts("\nJumping to User Mode...\n");
+    console_refresh();
+    
+    /* Le grand saut ! */
+    jump_to_usermode(user_mode_test);
+    
+    /* On ne devrait JAMAIS arriver ici */
+    console_puts("ERROR: Returned from User Mode!?\n");
+    return -1;
 }

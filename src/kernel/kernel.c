@@ -5,6 +5,8 @@
 #include "../arch/x86/gdt.h"
 #include "../arch/x86/idt.h"
 #include "../arch/x86/io.h"
+#include "../arch/x86/tss.h"
+#include "../arch/x86/usermode.h"
 #include "../include/multiboot.h"
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
@@ -242,6 +244,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
     console_refresh();
     
     asm volatile("sti");
+
+    /* ============================================ */
+    /* Initialiser le User Mode Support (TSS)       */
+    /* ============================================ */
+    init_usermode();
 
     /* ============================================ */
     /* Initialiser le Multitasking                  */
