@@ -66,4 +66,12 @@ typedef struct __attribute__((packed)) {
  */
 void arp_handle_packet(ethernet_header_t* eth, uint8_t* packet_data, int len);
 
+/**
+ * Envoie une réponse ARP (ARP Reply).
+ * 
+ * @param target_mac MAC de la cible (celui qui a envoyé la requête)
+ * @param target_ip  IP de la cible (4 bytes)
+ */
+void arp_send_reply(uint8_t* target_mac, uint8_t* target_ip);
+
 #endif /* NET_ARP_H */
