@@ -254,8 +254,26 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                             dhcp_init(netif);
                             dhcp_discover(netif);
                             
-                            /* Note: la configuration sera appliquée quand on recevra
-                             * le DHCPACK. Pour l'instant on continue en mode "stateless". */
+                            /* Attendre la configuration DHCP (polling avec timeout) */
+                            console_puts("[NET] Waiting for DHCP response...\n");
+                            for (int i = 0; i < 50 && !dhcp_is_bound(netif); i++) {
+                                /* Petite pause pour laisser les interruptions traiter les paquets */
+                                for (volatile int j = 0; j < 1000000; j++);
+                                
+                                /* Permettre les interruptions d'être traitées */
+                                asm volatile("sti");
+                                asm volatile("hlt");  /* Attend la prochaine interruption */
+                            }
+                            
+                            if (dhcp_is_bound(netif)) {
+                                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLUE);
+                                console_puts("[NET] DHCP configuration complete!\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            } else {
+                                console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLUE);
+                                console_puts("[NET] DHCP timeout - no response received\n");
+                                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+                            }
                         }
                     }
                 }

@@ -2,6 +2,7 @@
 
 extern timer_handler_c
 extern keyboard_handler_c 
+extern exception_handler_c
 
 ; --- IDT FLUSH ---
 global idt_flush
@@ -9,6 +10,76 @@ idt_flush:
     mov eax, [esp+4]  ; Récupère le pointeur vers l'IDT passé en argument
     lidt [eax]        ; Charge l'IDT
     ret
+
+; ============================================
+; EXCEPTION HANDLERS (0-31)
+; ============================================
+
+; Macro pour exceptions SANS code d'erreur
+%macro EXCEPTION_NOERRCODE 1
+global isr%1
+isr%1:
+    cli
+    push dword 0          ; Dummy error code
+    push dword %1         ; Exception number
+    jmp exception_common
+%endmacro
+
+; Macro pour exceptions AVEC code d'erreur
+%macro EXCEPTION_ERRCODE 1
+global isr%1
+isr%1:
+    cli
+    ; Le CPU a déjà pushé le code d'erreur
+    push dword %1         ; Exception number
+    jmp exception_common
+%endmacro
+
+; Exceptions sans code d'erreur
+EXCEPTION_NOERRCODE 0   ; Division by Zero
+EXCEPTION_NOERRCODE 1   ; Debug
+EXCEPTION_NOERRCODE 2   ; NMI
+EXCEPTION_NOERRCODE 3   ; Breakpoint
+EXCEPTION_NOERRCODE 4   ; Overflow
+EXCEPTION_NOERRCODE 5   ; Bound Range Exceeded
+EXCEPTION_NOERRCODE 6   ; Invalid Opcode
+EXCEPTION_NOERRCODE 7   ; Device Not Available
+EXCEPTION_ERRCODE   8   ; Double Fault (avec code d'erreur)
+EXCEPTION_NOERRCODE 9   ; Coprocessor Segment Overrun (obsolète)
+EXCEPTION_ERRCODE   10  ; Invalid TSS
+EXCEPTION_ERRCODE   11  ; Segment Not Present
+EXCEPTION_ERRCODE   12  ; Stack-Segment Fault
+EXCEPTION_ERRCODE   13  ; General Protection Fault
+EXCEPTION_ERRCODE   14  ; Page Fault
+EXCEPTION_NOERRCODE 15  ; Reserved
+EXCEPTION_NOERRCODE 16  ; x87 FPU Error
+EXCEPTION_ERRCODE   17  ; Alignment Check
+EXCEPTION_NOERRCODE 18  ; Machine Check
+EXCEPTION_NOERRCODE 19  ; SIMD Exception
+EXCEPTION_NOERRCODE 20  ; Virtualization Exception
+EXCEPTION_NOERRCODE 21  ; Reserved
+EXCEPTION_NOERRCODE 22  ; Reserved
+EXCEPTION_NOERRCODE 23  ; Reserved
+EXCEPTION_NOERRCODE 24  ; Reserved
+EXCEPTION_NOERRCODE 25  ; Reserved
+EXCEPTION_NOERRCODE 26  ; Reserved
+EXCEPTION_NOERRCODE 27  ; Reserved
+EXCEPTION_NOERRCODE 28  ; Reserved
+EXCEPTION_NOERRCODE 29  ; Reserved
+EXCEPTION_ERRCODE   30  ; Security Exception
+EXCEPTION_NOERRCODE 31  ; Reserved
+
+; Handler commun pour toutes les exceptions
+exception_common:
+    pusha                 ; Sauvegarder tous les registres
+    
+    ; Appeler le handler C avec les paramètres sur la stack
+    ; Stack: [pusha regs] [exception_num] [error_code] [eip] [cs] [eflags]
+    call exception_handler_c
+    
+    popa                  ; Restaurer les registres
+    add esp, 8            ; Nettoyer exception_num et error_code
+    iretd
 
 ; --- HANDLER TIMER (IRQ 0) ---
 global irq0_handler

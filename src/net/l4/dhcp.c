@@ -543,6 +543,7 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
 void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
 {
     if (!dhcp_initialized) {
+        console_puts("[DHCP] Not initialized, ignoring packet\n");
         return;
     }
     
@@ -552,6 +553,7 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     }
     
     if (netif == NULL || netif != dhcp_ctx.netif) {
+        console_puts("[DHCP] Wrong interface, ignoring\n");
         return;
     }
     
@@ -565,8 +567,18 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     
     dhcp_header_t* dhcp = (dhcp_header_t*)data;
     
+    /* Debug: afficher l'état actuel */
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_puts("[DHCP] Received packet, state=");
+    console_put_dec(dhcp_ctx.state);
+    console_puts(" op=");
+    console_put_dec(dhcp->op);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+    
     /* Vérifier que c'est une réponse (BOOTREPLY) */
     if (dhcp->op != DHCP_BOOTREPLY) {
+        console_puts("[DHCP] Not a BOOTREPLY, ignoring\n");
         return;
     }
     
@@ -592,9 +604,20 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
         return;
     }
     
-    /* Parser les options */
+    /* Parser les options pour identifier le type de message */
     uint8_t* options = data + DHCP_HEADER_SIZE + 4;
     int opt_len = len - DHCP_HEADER_SIZE - 4;
+    
+    /* Extraire le type de message pour debug */
+    uint8_t msg_type = 0;
+    uint32_t dummy1, dummy2, dummy3, dummy4, dummy5;
+    dhcp_parse_options(options, opt_len, &msg_type, &dummy1, &dummy2, &dummy3, &dummy4, &dummy5);
+    
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
+    console_puts("[DHCP] Message type: ");
+    console_put_dec(msg_type);
+    console_puts(" (1=DISCOVER, 2=OFFER, 3=REQUEST, 5=ACK, 6=NAK)\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
     
     /* Traiter selon l'état */
     switch (dhcp_ctx.state) {
@@ -609,6 +632,7 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
             break;
             
         default:
+            console_puts("[DHCP] Unexpected state, ignoring\n");
             break;
     }
 }

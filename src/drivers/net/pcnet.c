@@ -318,6 +318,7 @@ static void pcnet_print_status(PCNetDevice* dev)
 
 /**
  * Configure le style logiciel en mode 32-bit PCnet-PCI.
+ * Active SWSTYLE=2 (descripteurs 32-bit) et SSIZE32 (adresses 32-bit).
  */
 static void pcnet_set_software_style(PCNetDevice* dev)
 {
@@ -326,8 +327,17 @@ static void pcnet_set_software_style(PCNetDevice* dev)
     console_puts("[PCnet] BCR20 before: ");
     console_put_hex(bcr20);
     
-    /* Forcer le style PCNET-PCI 32-bit (Style 2) */
-    bcr20 = (bcr20 & ~0xFF) | SWSTYLE_PCNET_PCI;
+    /* 
+     * BCR20 bits:
+     * - Bits 0-7: SWSTYLE (Software Style)
+     *   - 0 = LANCE style (16-bit)
+     *   - 2 = PCnet-PCI II style (32-bit descriptors)
+     * - Bit 8: SSIZE32 (Software Size 32-bit)
+     *   - Permet les adresses 32-bit dans l'init block et descripteurs
+     * 
+     * On veut: SWSTYLE=2, SSIZE32=1 -> 0x0102
+     */
+    bcr20 = (bcr20 & ~0x01FF) | SWSTYLE_PCNET_PCI | (1 << 8);
     
     pcnet_write_bcr(dev, BCR20, bcr20);
     
@@ -338,7 +348,11 @@ static void pcnet_set_software_style(PCNetDevice* dev)
     console_puts("\n");
     
     if ((bcr20 & 0xFF) == SWSTYLE_PCNET_PCI) {
-        console_puts("[PCnet] Software Style set to PCNET-PCI (32-bit descriptors)\n");
+        console_puts("[PCnet] Software Style set to PCNET-PCI (32-bit descriptors");
+        if (bcr20 & 0x100) {
+            console_puts(", SSIZE32");
+        }
+        console_puts(")\n");
     } else {
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLUE);
         console_puts("[PCnet] WARNING: Failed to set SWSTYLE!\n");
@@ -510,7 +524,8 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     /* Étape 8: Initialiser les descripteurs RX */
     for (int i = 0; i < PCNET_RX_BUFFERS; i++) {
         dev->rx_ring[i].rbadr = (uint32_t)(uintptr_t)(dev->rx_buffers + i * PCNET_BUFFER_SIZE);
-        dev->rx_ring[i].bcnt = (int16_t)(-(int16_t)PCNET_BUFFER_SIZE);  /* Complément à 2 */
+        /* BCNT: bits 12-15 doivent être 1 (0xF000), bits 0-11 = complément à 2 de la taille */
+        dev->rx_ring[i].bcnt = 0xF000 | ((uint16_t)(-(int16_t)PCNET_BUFFER_SIZE) & 0x0FFF);
         dev->rx_ring[i].status = 0x8000;  /* OWN = 1 (Card owned, prêt à recevoir) */
         dev->rx_ring[i].mcnt = 0;
         dev->rx_ring[i].user = 0;
@@ -519,7 +534,7 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     /* Étape 9: Initialiser les descripteurs TX */
     for (int i = 0; i < PCNET_TX_BUFFERS; i++) {
         dev->tx_ring[i].tbadr = (uint32_t)(uintptr_t)(dev->tx_buffers + i * PCNET_BUFFER_SIZE);
-        dev->tx_ring[i].bcnt = 0;
+        dev->tx_ring[i].bcnt = 0xF000;  /* Bits 12-15 = 1, taille = 0 */
         dev->tx_ring[i].status = 0;  /* OWN = 0 (CPU owned) */
         dev->tx_ring[i].misc = 0;
         dev->tx_ring[i].user = 0;
@@ -718,15 +733,23 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     /* Configurer le descripteur */
     desc->tbadr = (uint32_t)(uintptr_t)buf;
     
-    /* BCNT: 12 bits, complément à 2, bits 15-12 doivent être 1 (0xF000) */
-    desc->bcnt = 0xF000 | ((uint16_t)(-(int16_t)len) & 0x0FFF);
-    desc->misc = 0;
+    /* 
+     * BCNT: 12 bits, complément à 2, bits 15-12 doivent être 1 (0xF000)
+     * Pour SWSTYLE 2, bcnt est dans les bits 0-15 du deuxième DWORD
+     */
+    uint16_t bcnt_val = 0xF000 | ((uint16_t)(-(int16_t)len) & 0x0FFF);
     
     /* 
      * Status: OWN=1 (card owns), STP=1 (start of packet), ENP=1 (end of packet)
-     * 0x8300 = OWN | STP | ENP
+     * OWN = bit 15, STP = bit 9, ENP = bit 8
+     * 0x8300 = 0x8000 | 0x0200 | 0x0100
      */
-    desc->status = 0x8300;
+    uint16_t status_val = 0x8300;
+    
+    /* Écrire les deux champs - l'ordre compte sur little-endian */
+    desc->bcnt = bcnt_val;
+    desc->status = status_val;
+    desc->misc = 0;
     
     /* Debug: afficher l'état du descripteur */
     console_puts("[TX] idx=");
@@ -735,7 +758,8 @@ bool pcnet_send(PCNetDevice* dev, const uint8_t* data, uint16_t len)
     console_put_hex((uint32_t)(uintptr_t)buf);
     console_puts(" len=");
     console_put_dec(len);
-    console_puts(" bcnt=");
+    console_puts("\n");
+    console_puts("     bcnt=");
     console_put_hex(desc->bcnt);
     console_puts(" status=");
     console_put_hex(desc->status);

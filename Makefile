@@ -3,7 +3,11 @@
 CC = ~/opt/cross/bin/i686-elf-gcc
 AS = nasm
 
-CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra
+# CFLAGS:
+# -mno-sse -mno-sse2 -mno-mmx : Désactive les instructions SIMD (évite Invalid Opcode)
+# -mno-red-zone : Désactive la red zone (nécessaire pour les interruptions)
+# -fno-stack-protector : Pas de protection de pile (pas de libc)
+CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra -mno-sse -mno-sse2 -mno-mmx -mno-red-zone -fno-stack-protector
 ASFLAGS = -felf32 -g
 LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 
@@ -115,6 +119,13 @@ run: alos.bin
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
 		-device pcnet,netdev=net0
 
+# Run avec debug CPU (affiche les exceptions et interrupts dans le terminal)
+run-debug: alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
+		-device pcnet,netdev=net0 \
+		-d int,cpu_reset -no-reboot
+
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
@@ -127,6 +138,20 @@ run-pcap: alos.bin
 # Prérequis: sudo ip tuntap add dev tap0 mode tap user $USER && sudo ip link set tap0 up
 run-tap: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 1024M -netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device pcnet,netdev=net0
+
+# Run avec vmnet-shared (macOS uniquement - même réseau que l'hôte)
+# Nécessite: brew install qemu (version avec vmnet support)
+# Note: Peut nécessiter sudo ou des permissions spéciales
+run-vmnet: alos.bin
+	sudo qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev vmnet-shared,id=net0 \
+		-device pcnet,netdev=net0
+
+# Run avec socket multicast (pour debug local sans réseau externe)
+run-socket: alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev socket,id=net0,mcast=230.0.0.1:1234 \
+		-device pcnet,netdev=net0
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin

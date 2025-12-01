@@ -121,22 +121,26 @@ typedef struct __attribute__((packed)) {
 
 /**
  * Receive Descriptor (32-bit Software Style 2)
+ * Note: bcnt et status forment un mot de 32 bits.
+ * Sur little-endian: bcnt est en bas, status en haut.
  */
 typedef struct __attribute__((packed)) {
     uint32_t rbadr;         /* Receive Buffer Address */
-    int16_t  bcnt;          /* Buffer Byte Count (two's complement, negative) */
-    uint16_t status;        /* Status bits */
+    uint16_t bcnt;          /* Buffer Byte Count (two's complement, bits 0-11, bits 12-15 = 1) */
+    uint16_t status;        /* Status bits (OWN=15, ERR=14, etc.) */
     uint32_t mcnt;          /* Message Byte Count (received length) */
     uint32_t user;          /* User data (unused) */
 } PCNetRxDesc;
 
 /**
  * Transmit Descriptor (32-bit Software Style 2)
+ * Note: bcnt et status forment un mot de 32 bits.
+ * Sur little-endian: bcnt est en bas, status en haut.
  */
 typedef struct __attribute__((packed)) {
     uint32_t tbadr;         /* Transmit Buffer Address */
-    int16_t  bcnt;          /* Buffer Byte Count (two's complement, negative) */
-    uint16_t status;        /* Status bits */
+    uint16_t bcnt;          /* Buffer Byte Count (two's complement, bits 0-11, bits 12-15 = 1) */
+    uint16_t status;        /* Status bits (OWN=15, STP=9, ENP=8) */
     uint32_t misc;          /* Miscellaneous (errors) */
     uint32_t user;          /* User data (unused) */
 } PCNetTxDesc;

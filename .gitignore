@@ -1,2 +1,3 @@
 /alos.bin
 *.o
+*.pcap

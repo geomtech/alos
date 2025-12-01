@@ -119,6 +119,7 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
      * - Accepter si c'est notre IP
      * - Accepter si c'est broadcast (255.255.255.255) - nécessaire pour DHCP
      * - Accepter si notre IP est 0.0.0.0 (pendant DHCP on n'a pas d'IP)
+     * - Accepter les paquets UDP port 68 (DHCP client) pendant DHCP
      */
     bool is_broadcast = (ip->dest_ip[0] == 255 && ip->dest_ip[1] == 255 &&
                          ip->dest_ip[2] == 255 && ip->dest_ip[3] == 255);
@@ -126,8 +127,20 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
                           my_ip[2] == 0 && my_ip[3] == 0);
     bool is_for_us = ip_addr_equals(ip->dest_ip, my_ip);
     
-    if (!is_for_us && !is_broadcast && !we_have_no_ip) {
-        /* Pas pour nous, ignorer silencieusement */
+    /* Pendant DHCP, accepter aussi les paquets unicast destinés à l'IP offerte */
+    bool is_dhcp_response = (ip->protocol == IP_PROTO_UDP && we_have_no_ip);
+    
+    if (!is_for_us && !is_broadcast && !we_have_no_ip && !is_dhcp_response) {
+        /* Debug: afficher les paquets rejetés */
+        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLUE);
+        console_puts("[IPv4] REJECTED: ");
+        print_ip(ip->src_ip);
+        console_puts(" -> ");
+        print_ip(ip->dest_ip);
+        console_puts(" (our IP: ");
+        print_ip(my_ip);
+        console_puts(")\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
         return;
     }
     
