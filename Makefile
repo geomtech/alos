@@ -109,12 +109,18 @@ clean:
 	rm -f alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)
+# SLIRP network: 10.0.2.0/24, gateway 10.0.2.2, DHCP range 10.0.2.15-10.0.2.31
 run: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0
+	qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
+		-device pcnet,netdev=net0
 
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0 -object filter-dump,id=dump0,netdev=net0,file=alos-network.pcap
+	qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
+		-device pcnet,netdev=net0 \
+		-object filter-dump,id=dump0,netdev=net0,file=alos-network.pcap
 	@echo "Capture sauvée dans alos-network.pcap"
 
 # Run avec TAP (paquets visibles sur l'hôte via Wireshark sur tap0)
