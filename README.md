@@ -1,6 +1,6 @@
 # ALOS - A Learning Operating System
 
-ALOS is a minimalist operating system kernel written in C and x86 Assembly, designed for learning purposes and running on QEMU. It implements core OS concepts including memory management, interrupt handling, and a TCP/IP networking stack.
+ALOS is a minimalist operating system kernel written in C and x86 Assembly, designed for learning purposes and running on QEMU. It implements core OS concepts including memory management, interrupt handling, storage, filesystem support, and a TCP/IP networking stack.
 
 > **Note:** Code comments in this project are written in **French**. The codebase serves as both a learning resource and a functional kernel.
 
@@ -24,6 +24,27 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
   - Dynamic memory allocation (`kmalloc`/`kfree`)
   - First-fit allocation algorithm
   - Block coalescing on free
+
+### Storage & Filesystems
+
+- **ATA/IDE Driver (PIO Mode)**
+  - Primary Master disk detection
+  - LBA28 addressing mode
+  - Sector read/write operations
+  - IRQ14 interrupt handling
+
+- **Virtual File System (VFS)**
+  - Abstraction layer for filesystem drivers
+  - Unified API: `vfs_open`, `vfs_read`, `vfs_close`, `vfs_readdir`
+  - Mount point management
+  - Multiple filesystem support
+
+- **Ext2 Filesystem Driver**
+  - Superblock and block group descriptor parsing
+  - Inode reading and management
+  - Directory entry traversal
+  - File content reading
+  - Support for regular files and directories
 
 ### Drivers
 
@@ -84,7 +105,12 @@ src/
 ├── kernel/            # Kernel core (main, console, keyboard)
 ├── mm/                # Memory Management (PMM, heap)
 ├── drivers/           # Hardware drivers
+│   ├── ata.c/h        # ATA/IDE disk driver
+│   ├── pci.c/h        # PCI bus driver
 │   └── net/           # Network drivers (PCnet)
+├── fs/                # Filesystems
+│   ├── vfs.c/h        # Virtual File System layer
+│   └── ext2.c/h       # Ext2 filesystem driver
 ├── net/               # Network stack
 │   ├── core/          # Network infrastructure
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
@@ -100,6 +126,7 @@ src/
 - Cross-compiler: `i686-elf-gcc` (in `~/opt/cross/bin/`)
 - Assembler: `nasm`
 - Emulator: `qemu-system-i386`
+- Disk utilities: `e2fsprogs` (for creating Ext2 disk images)
 
 ### Compilation
 
@@ -114,23 +141,85 @@ make clean
 make clean && make
 ```
 
+### Creating a Disk Image
+
+```bash
+# Create a 32MB Ext2 disk image
+dd if=/dev/zero of=disk.img bs=1M count=32
+mkfs.ext2 disk.img
+
+# Add files to the disk (using debugfs on macOS)
+echo "Hello from ALOS!" > /tmp/hello.txt
+debugfs -w disk.img -R "write /tmp/hello.txt hello.txt"
+
+# Verify contents
+debugfs disk.img -R "ls"
+```
+
 ### Running
 
 ```bash
-# Run in QEMU
+# Run in QEMU with disk
 make run
 
-# Debug mode (QEMU waits for GDB on port 1234)
-qemu-system-i386 -kernel alos.bin -s -S
+# Run with debug output (shows interrupts and exceptions)
+make run-debug
+
+# Run with network packet capture
+make run-pcap
 ```
 
-## QEMU Networking
+## QEMU Configuration
 
-When running in QEMU with user networking (SLIRP mode):
+### Storage
+- Primary Master IDE disk: `disk.img` (Ext2 formatted)
+
+### Networking (SLIRP mode)
 - Gateway: `10.0.2.2`
 - DNS Server: `10.0.2.3`
 - Default IP: `10.0.2.15`
 - Network: `10.0.2.0/24`
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Applications                         │
+├─────────────────────────────────────────────────────────┤
+│     VFS API              │         Network API          │
+│  (open, read, readdir)   │    (send, recv, socket)      │
+├──────────────────────────┼──────────────────────────────┤
+│   Ext2   │  (Future FS)  │  UDP/DHCP │ ICMP │ (TCP...)  │
+├──────────────────────────┼──────────────────────────────┤
+│      ATA Driver          │     IPv4  │  ARP  │ Ethernet │
+├──────────────────────────┼──────────────────────────────┤
+│      IDE Controller      │       PCnet Driver           │
+├──────────────────────────┴──────────────────────────────┤
+│                    PCI Bus                              │
+├─────────────────────────────────────────────────────────┤
+│              Hardware (x86)                             │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Roadmap
+
+- [x] GDT/IDT setup
+- [x] Physical Memory Manager
+- [x] Kernel Heap
+- [x] VGA Console
+- [x] PS/2 Keyboard
+- [x] PCI Enumeration
+- [x] ATA/IDE Driver (PIO)
+- [x] VFS Layer
+- [x] Ext2 Read Support
+- [x] Ethernet/ARP
+- [x] IPv4/ICMP
+- [x] UDP/DHCP
+- [ ] Ext2 Write Support
+- [ ] TCP Implementation
+- [ ] Interactive Shell
+- [ ] Process Management
+- [ ] Virtual Memory (Paging)
 
 ## License
 
