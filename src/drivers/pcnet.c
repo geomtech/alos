@@ -4,6 +4,7 @@
 #include "../kheap.h"
 #include "../console.h"
 #include "../net/utils.h"
+#include "../net/ethernet.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;
@@ -128,20 +129,6 @@ void pcnet_write_bcr(PCNetDevice* dev, uint32_t bcr_no, uint32_t value)
 /* ============================================ */
 
 /**
- * Retourne le nom de l'EtherType pour affichage.
- */
-static const char* ethertype_name(uint16_t ethertype)
-{
-    switch (ethertype) {
-        case ETHERTYPE_IPV4: return "IPv4";
-        case ETHERTYPE_ARP:  return "ARP";
-        case ETHERTYPE_IPV6: return "IPv6";
-        case ETHERTYPE_VLAN: return "VLAN";
-        default:             return "Unknown";
-    }
-}
-
-/**
  * Traite les paquets reçus.
  * Appelé depuis le handler d'interruption quand RINT est set.
  */
@@ -175,35 +162,15 @@ static void pcnet_receive(PCNetDevice* dev)
             /* Récupérer le pointeur vers les données */
             uint8_t* buffer = (uint8_t*)(uintptr_t)desc->rbadr;
             
-            /* Afficher les infos du paquet */
+            /* Log minimal de réception */
             console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLUE);
-            console_puts("[RX] Packet received! Len: ");
+            console_puts("[RX] Packet: ");
             console_put_dec(len);
-            console_puts(" bytes");
-            
-            /* Extraire et afficher l'EtherType (octets 12-13, big-endian) */
-            if (len >= 14) {
-                uint16_t ethertype = ntohs(*(uint16_t*)(buffer + 12));
-                console_puts(" | EtherType: 0x");
-                console_put_hex(ethertype);
-                console_puts(" (");
-                console_puts(ethertype_name(ethertype));
-                console_puts(")");
-                
-                /* Afficher les MACs source et destination */
-                console_puts("\n       Dst: ");
-                for (int i = 0; i < 6; i++) {
-                    if (i > 0) console_putc(':');
-                    console_put_hex_byte(buffer[i]);
-                }
-                console_puts(" Src: ");
-                for (int i = 6; i < 12; i++) {
-                    if (i > 6) console_putc(':');
-                    console_put_hex_byte(buffer[i]);
-                }
-            }
-            console_puts("\n");
+            console_puts(" bytes\n");
             console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLUE);
+            
+            /* Passer le paquet à la couche Ethernet pour traitement */
+            ethernet_handle_packet(buffer, len);
         }
         
         /* CRITIQUE: Rendre le descripteur à la carte */
