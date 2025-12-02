@@ -3,6 +3,7 @@
 #include "shell.h"
 #include "../kernel/console.h"
 #include "../kernel/keyboard.h"
+#include "../kernel/keymap.h"
 #include "../kernel/process.h"
 #include "../kernel/elf.h"
 #include "../include/string.h"
@@ -23,6 +24,7 @@ static int cmd_usermode(int argc, char** argv);
 static int cmd_exec(int argc, char** argv);
 static int cmd_elfinfo(int argc, char** argv);
 static int cmd_netinfo(int argc, char** argv);
+static int cmd_keymap(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -49,6 +51,7 @@ static shell_command_t commands[] = {
     { "exec",     "Execute an ELF program",                  cmd_exec },
     { "elfinfo",  "Display ELF file information",            cmd_elfinfo },
     { "netinfo",  "Display network configuration",           cmd_netinfo },
+    { "keymap",   "Set keyboard layout (qwerty, azerty)",    cmd_keymap },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -568,4 +571,82 @@ static int cmd_elfinfo(int argc, char** argv)
     elf_info(filename);
     
     return 0;
+}
+
+/**
+ * Commande: keymap [list|<layout>]
+ * Affiche ou change le layout clavier.
+ * 
+ * Usage:
+ *   keymap        - Affiche le layout actuel
+ *   keymap list   - Liste les layouts disponibles
+ *   keymap azerty - Change vers le layout AZERTY
+ *   keymap qwerty - Change vers le layout QWERTY
+ */
+static int cmd_keymap(int argc, char** argv)
+{
+    /* Sans argument: afficher le layout actuel */
+    if (argc < 2) {
+        const keymap_t* km = keymap_get_current();
+        console_puts("Current keyboard layout: ");
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts(km->name);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts(" (");
+        console_puts(km->description);
+        console_puts(")\n");
+        console_puts("Use 'keymap list' to see available layouts.\n");
+        return 0;
+    }
+    
+    /* "keymap list" - lister les layouts disponibles */
+    if (strcmp(argv[1], "list") == 0) {
+        int count = 0;
+        const keymap_t** keymaps = keymap_list_all(&count);
+        const keymap_t* current = keymap_get_current();
+        
+        console_puts("\nAvailable keyboard layouts:\n");
+        console_puts("---------------------------\n");
+        
+        for (int i = 0; i < count; i++) {
+            /* Marquer le layout actif avec une étoile */
+            if (keymaps[i] == current) {
+                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                console_puts("* ");
+            } else {
+                console_puts("  ");
+            }
+            
+            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+            console_puts(keymaps[i]->name);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            console_puts("\t- ");
+            console_puts(keymaps[i]->description);
+            console_puts("\n");
+        }
+        
+        console_puts("\nUse 'keymap <name>' to switch layout.\n");
+        return 0;
+    }
+    
+    /* "keymap <layout>" - changer de layout */
+    const char* layout_name = argv[1];
+    
+    if (keyboard_set_layout(layout_name)) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("Keyboard layout changed to: ");
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts(layout_name);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("\n");
+        return 0;
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Unknown layout: ");
+        console_puts(layout_name);
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("Use 'keymap list' to see available layouts.\n");
+        return -1;
+    }
 }

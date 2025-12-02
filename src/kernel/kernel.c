@@ -14,6 +14,7 @@
 #include "timer.h"
 #include "klog.h"
 #include "syscall.h"
+#include "keymap.h"
 #include "../drivers/pci.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
@@ -74,6 +75,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
     /* Initialiser la console avec scrolling */
     console_init();
     console_clear(VGA_COLOR_BLUE);
+    
+    /* Initialiser les keymaps clavier (QWERTY par défaut) */
+    keymap_init();
     
     /* Initialiser le système de logs précoce (buffer mémoire) */
     klog_early_init();

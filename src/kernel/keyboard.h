@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "keymap.h"
 
 /* Taille du buffer clavier */
 #define KEYBOARD_BUFFER_SIZE 256
@@ -39,5 +40,18 @@ char keyboard_getchar_nonblock(void);
  * Handler d'interruption clavier (appelé par l'IRQ1).
  */
 void keyboard_handler_c(void);
+
+/**
+ * Change le layout clavier actif.
+ * @param name Nom du layout ("qwerty", "azerty", etc.)
+ * @return true si le layout a été changé, false si non trouvé
+ */
+bool keyboard_set_layout(const char* name);
+
+/**
+ * Récupère le nom du layout clavier actif.
+ * @return Nom du layout actuel
+ */
+const char* keyboard_get_layout(void);
 
 #endif /* KEYBOARD_H */

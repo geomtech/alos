@@ -343,6 +343,7 @@ make run-pcap
 - [x] System Calls (POSIX/BSD-like interface)
 - [x] Simple HTTP server based on storage
 - [x] System logs
+- [x] Azerty keyboard (with keymap abstraction)
 - [ ] Scripting files
 - [ ] Network configuration files
 - [ ] Persistent history

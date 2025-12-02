@@ -5,6 +5,7 @@
 #include "../arch/x86/io.h"
 #include "console.h"
 #include "keyboard.h"
+#include "keymap.h"
 
 /* Scancodes spéciaux */
 #define SCANCODE_UP_ARROW    0x48
@@ -18,6 +19,9 @@
 #define SCANCODE_LCTRL       0x1D
 #define SCANCODE_LSHIFT      0x2A
 #define SCANCODE_RSHIFT      0x36
+#define SCANCODE_LALT        0x38
+#define SCANCODE_CAPSLOCK    0x3A
+#define SCANCODE_E0_PREFIX   0xE0  /* Préfixe pour touches étendues */
 
 /* Codes spéciaux pour le shell (non-ASCII) */
 #define KEY_UP      0x80
@@ -30,28 +34,18 @@
 /* État des modificateurs */
 static volatile bool ctrl_pressed = false;
 static volatile bool shift_pressed = false;
+static volatile bool alt_pressed = false;
+static volatile bool altgr_pressed = false;  /* Alt droit (AltGr) */
+static volatile bool capslock_active = false;
+static volatile bool e0_prefix = false;      /* Préfixe E0 reçu */
+
+/* État des dead keys (touches mortes) */
+static volatile unsigned char pending_dead_key = 0;
 
 /* Buffer circulaire pour les caractères */
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static volatile int kb_head = 0;  /* Position d'écriture */
 static volatile int kb_tail = 0;  /* Position de lecture */
-
-/* Table de correspondance Scancode Set 1 -> ASCII (Layout QWERTY US) */
-static unsigned char kbdus[128] = {
-    0,    27,   '1',  '2',  '3',  '4',  '5',  '6',  '7',  '8',   /* 0x00-0x09 */
-    '9',  '0',  '-',  '=',  '\b', '\t', 'q',  'w',  'e',  'r',   /* 0x0A-0x13 */
-    't',  'y',  'u',  'i',  'o',  'p',  '[',  ']',  '\n', 0,     /* 0x14-0x1D (0x1C = Enter, 0x1D = Ctrl) */
-    'a',  's',  'd',  'f',  'g',  'h',  'j',  'k',  'l',  ';',   /* 0x1E-0x27 */
-    '\'', '`',  0,    '\\', 'z',  'x',  'c',  'v',  'b',  'n',   /* 0x28-0x31 (0x2A = LShift) */
-    'm',  ',',  '.',  '/',  0,    '*',  0,    ' ',  0,    0,     /* 0x32-0x3B (0x38 = Alt, 0x3A = Caps) */
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x3C-0x45 (F1-F10) */
-    0,    0,    0,    0,    '-',  0,    0,    0,    '+',  0,     /* 0x46-0x4F (NumLock, etc.) */
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x50-0x59 */
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x5A-0x63 */
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x64-0x6D */
-    0,    0,    0,    0,    0,    0,    0,    0,    0,    0,     /* 0x6E-0x77 */
-    0,    0,    0,    0,    0,    0,    0,    0                   /* 0x78-0x7F */
-};
 
 /**
  * Ajoute un caractère dans le buffer circulaire.
@@ -126,27 +120,74 @@ char keyboard_getchar_nonblock(void)
 }
 
 /**
+ * Change le layout clavier actif.
+ * @param name Nom du layout ("qwerty", "azerty", etc.)
+ * @return true si le layout a été changé, false si non trouvé
+ */
+bool keyboard_set_layout(const char* name)
+{
+    const keymap_t* km = keymap_find_by_name(name);
+    if (km != NULL) {
+        keymap_set(km);
+        /* Réinitialiser les dead keys en attente */
+        pending_dead_key = 0;
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Récupère le nom du layout clavier actif.
+ * @return Nom du layout actuel
+ */
+const char* keyboard_get_layout(void)
+{
+    const keymap_t* km = keymap_get_current();
+    return km ? km->name : "unknown";
+}
+
+/**
  * Handler d'interruption clavier (IRQ1).
  * Stocke les caractères dans le buffer au lieu de les afficher.
+ * Supporte: layouts multiples (via keymap), Caps Lock, AltGr, dead keys
  */
 void keyboard_handler_c(void)
 {
     /* 1. Lire le scancode */
     uint8_t scancode = inb(0x60);
 
-    /* 2. Gérer les modificateurs (appui et relâchement) */
+    /* 2. Gérer le préfixe E0 (touches étendues: AltGr, flèches, etc.) */
+    if (scancode == SCANCODE_E0_PREFIX) {
+        e0_prefix = true;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    /* 3. Gérer les modificateurs (appui et relâchement) */
     
     /* Relâchement de touche (bit 7 = 1) */
     if (scancode & 0x80) {
         uint8_t released = scancode & 0x7F;
-        switch (released) {
-            case SCANCODE_LCTRL:
-                ctrl_pressed = false;
-                break;
-            case SCANCODE_LSHIFT:
-            case SCANCODE_RSHIFT:
-                shift_pressed = false;
-                break;
+        
+        if (e0_prefix) {
+            /* Touche étendue relâchée */
+            if (released == SCANCODE_LALT) {
+                altgr_pressed = false;  /* AltGr (Alt droit) relâché */
+            }
+            e0_prefix = false;
+        } else {
+            switch (released) {
+                case SCANCODE_LCTRL:
+                    ctrl_pressed = false;
+                    break;
+                case SCANCODE_LSHIFT:
+                case SCANCODE_RSHIFT:
+                    shift_pressed = false;
+                    break;
+                case SCANCODE_LALT:
+                    alt_pressed = false;
+                    break;
+            }
         }
         /* Acquitter et sortir */
         outb(0x20, 0x20);
@@ -154,6 +195,19 @@ void keyboard_handler_c(void)
     }
     
     /* Appui de touche (bit 7 = 0) */
+    
+    /* Gérer AltGr (Alt droit avec préfixe E0) */
+    if (e0_prefix) {
+        if (scancode == SCANCODE_LALT) {
+            altgr_pressed = true;
+            e0_prefix = false;
+            outb(0x20, 0x20);
+            return;
+        }
+        /* Autres touches étendues (flèches, etc.) */
+        e0_prefix = false;
+    }
+    
     switch (scancode) {
         case SCANCODE_LCTRL:
             ctrl_pressed = true;
@@ -162,6 +216,14 @@ void keyboard_handler_c(void)
         case SCANCODE_LSHIFT:
         case SCANCODE_RSHIFT:
             shift_pressed = true;
+            break;
+            
+        case SCANCODE_LALT:
+            alt_pressed = true;
+            break;
+            
+        case SCANCODE_CAPSLOCK:
+            capslock_active = !capslock_active;  /* Toggle Caps Lock */
             break;
             
         case SCANCODE_UP_ARROW:
@@ -189,25 +251,54 @@ void keyboard_handler_c(void)
             break;
             
         default:
-            /* Touche normale */
+            /* Touche normale - utiliser la keymap active */
             if (scancode < 128) {
-                char c = kbdus[scancode];
+                const keymap_t* km = keymap_get_current();
+                unsigned char c;
+                
+                /* Sélectionner la table selon les modificateurs */
+                if (altgr_pressed && km->altgr[scancode] != 0) {
+                    c = km->altgr[scancode];
+                } else if (shift_pressed) {
+                    c = km->shift[scancode];
+                } else {
+                    c = km->normal[scancode];
+                }
+                
                 if (c != 0) {
+                    /* Vérifier si c'est une dead key */
+                    if (c >= DEAD_KEY_CIRCUMFLEX && c <= DEAD_KEY_TILDE) {
+                        pending_dead_key = c;
+                        /* Ne pas mettre dans le buffer, attendre le prochain caractère */
+                    }
                     /* Vérifier CTRL+C */
-                    if (ctrl_pressed && (c == 'c' || c == 'C')) {
-                        /* Juste mettre CTRL+C dans le buffer - le shell gère le reste */
+                    else if (ctrl_pressed && (c == 'c' || c == 'C')) {
                         keyboard_buffer_put(KEY_CTRL_C);
                     }
                     /* Vérifier CTRL+D */
                     else if (ctrl_pressed && (c == 'd' || c == 'D')) {
-                        /* Mettre CTRL+D dans le buffer - signale EOF/arrêt */
                         keyboard_buffer_put(KEY_CTRL_D);
                     }
-                    /* Gérer majuscules avec Shift */
-                    else if (shift_pressed && c >= 'a' && c <= 'z') {
-                        keyboard_buffer_put(c - 32);  /* Convertir en majuscule */
-                    }
                     else {
+                        /* Appliquer dead key si en attente */
+                        if (pending_dead_key != 0) {
+                            c = keymap_resolve_dead_key(pending_dead_key, c);
+                            pending_dead_key = 0;
+                        }
+                        
+                        /* Gérer Caps Lock pour les lettres */
+                        if (c >= 'a' && c <= 'z') {
+                            /* Caps Lock inverse l'état shift pour les lettres */
+                            if (capslock_active != shift_pressed) {
+                                c = c - 32;  /* Convertir en majuscule */
+                            }
+                        } else if (c >= 'A' && c <= 'Z') {
+                            /* Déjà majuscule (shift pressé), Caps Lock l'inverse */
+                            if (capslock_active) {
+                                c = c + 32;  /* Convertir en minuscule */
+                            }
+                        }
+                        
                         keyboard_buffer_put(c);
                     }
                 }
