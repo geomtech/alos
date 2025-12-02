@@ -138,4 +138,60 @@ void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr);
  */
 void vmm_set_user_accessible(uint32_t start, uint32_t size);
 
+/* ========================================
+ * Fonctions multi-espaces d'adressage
+ * ======================================== */
+
+/**
+ * Crée un nouveau Page Directory pour un processus utilisateur.
+ * Copie les entrées kernel (premiers 16 Mo) depuis le kernel directory.
+ * L'espace utilisateur est vide (non mappé).
+ * 
+ * @return Pointeur vers le nouveau Page Directory, ou NULL si échec
+ */
+page_directory_t* vmm_create_directory(void);
+
+/**
+ * Libère un Page Directory et toutes ses Page Tables utilisateur.
+ * NE libère PAS les Page Tables du kernel (partagées).
+ * 
+ * @param dir  Page Directory à libérer
+ */
+void vmm_free_directory(page_directory_t* dir);
+
+/**
+ * Traduit une adresse virtuelle en adresse physique dans un répertoire spécifique.
+ * 
+ * @param dir        Page Directory dans lequel chercher
+ * @param virt_addr  Adresse virtuelle à traduire
+ * @return Adresse physique, ou 0 si non mappée
+ */
+uint32_t vmm_get_phys_addr(page_directory_t* dir, uint32_t virt_addr);
+
+/**
+ * Mappe une page dans un Page Directory spécifique (pas forcément le courant).
+ * Utilise une fenêtre temporaire pour accéder aux page tables.
+ * 
+ * @param dir    Page Directory cible
+ * @param phys   Adresse physique à mapper
+ * @param virt   Adresse virtuelle de destination
+ * @param flags  Flags de la page (PAGE_PRESENT, PAGE_RW, PAGE_USER, etc.)
+ * @return 0 si succès, -1 si échec
+ */
+int vmm_map_page_in_dir(page_directory_t* dir, uint32_t phys, uint32_t virt, uint32_t flags);
+
+/**
+ * Retourne le Page Directory du kernel (celui utilisé au boot).
+ */
+page_directory_t* vmm_get_kernel_directory(void);
+
+/**
+ * Clone un espace d'adressage (pour fork).
+ * Copie les mappings utilisateur (pas les données, juste les mappings).
+ * 
+ * @param src  Page Directory source
+ * @return Nouveau Page Directory avec les mêmes mappings, ou NULL si échec
+ */
+page_directory_t* vmm_clone_directory(page_directory_t* src);
+
 #endif /* VMM_H */
