@@ -9,6 +9,7 @@
 #include "../net/l3/icmp.h"
 #include "../net/core/netdev.h"
 #include "../arch/x86/usermode.h"
+#include "../fs/vfs.h"
 
 /* ========================================
  * Déclarations des handlers de commandes
@@ -86,7 +87,42 @@ int command_execute(int argc, char** argv)
         }
     }
     
-    /* Commande non trouvée */
+    /* Commande non trouvée - essayer d'exécuter un ELF dans /bin/ */
+    char bin_path[256];
+    
+    /* Si la commande commence par '/', c'est un chemin absolu */
+    if (argv[0][0] == '/') {
+        strncpy(bin_path, argv[0], sizeof(bin_path) - 1);
+        bin_path[sizeof(bin_path) - 1] = '\0';
+    } else {
+        /* Sinon, chercher dans /bin/ */
+        strcpy(bin_path, "/bin/");
+        strncpy(bin_path + 5, argv[0], sizeof(bin_path) - 6);
+        bin_path[sizeof(bin_path) - 1] = '\0';
+    }
+    
+    /* Vérifier si le fichier existe dans le VFS */
+    vfs_node_t* node = vfs_resolve_path(bin_path);
+    if (node != NULL && (node->type & VFS_FILE)) {
+        /* Fichier trouvé - l'exécuter */
+        console_puts("\n");
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts("=== Executing ELF Program ===");
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        int result = process_exec_and_wait(bin_path);
+        
+        if (result < 0) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Failed to execute program.\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        }
+        
+        return result;
+    }
+    
+    /* Commande vraiment non trouvée */
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     console_puts("Unknown command: ");
     console_puts(argv[0]);
