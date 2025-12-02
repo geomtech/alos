@@ -204,10 +204,12 @@ All threads completed!
 - [x] Time slice épuisé → préemption automatique
 
 ### Thread-Safety Kernel
-- [ ] Protéger `kmalloc()` avec spinlock
+- [x] Protéger `kmalloc()` avec spinlock
 - [ ] Protéger structures du scheduler
 - [ ] Protéger console/serial output
 - [ ] Atomic operations (`atomic_inc`, `atomic_dec`, `atomic_cmpxchg`)
+
+> **Note:** `kmalloc()` utilise actuellement un spinlock simple. TODO futur : utiliser `cpu_cli()`/`cpu_restore_flags()` si `kmalloc()` est appelé depuis un contexte d'interruption.
 
 ### Améliorations Scheduler
 - [ ] **Aging** - Éviter famine des threads basse priorité
