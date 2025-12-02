@@ -74,7 +74,8 @@ void init_multitasking(void)
     idle_process->esp0 = 0;
     
     /* Utiliser le Page Directory du kernel */
-    idle_process->page_directory = (uint32_t*)vmm_get_directory();
+    idle_process->page_directory = (uint32_t*)vmm_get_kernel_directory();
+    idle_process->cr3 = (uint32_t)idle_process->page_directory;  /* Adresse physique pour CR3 */
     
     /* Pas de stack allouée (on utilise la stack du kernel) */
     idle_process->stack_base = NULL;
@@ -127,7 +128,8 @@ process_t* create_kernel_thread(void (*function)(void), const char* name)
     proc->should_terminate = 0;
     
     /* Page Directory (partagé avec le kernel pour les threads kernel) */
-    proc->page_directory = (uint32_t*)vmm_get_directory();
+    proc->page_directory = (uint32_t*)vmm_get_kernel_directory();
+    proc->cr3 = (uint32_t)proc->page_directory;  /* Threads kernel partagent le même CR3 */
     
     /* Stack */
     proc->stack_base = stack;
@@ -254,14 +256,10 @@ void switch_to(process_t* next)
         tss_set_kernel_stack(next->esp0);
     }
     
-    /* Changer de Page Directory si nécessaire */
-    /* (Pour l'instant tous les threads kernel partagent le même) */
-    /* if (next->page_directory != prev->page_directory) {
-        vmm_switch_directory((page_directory_t*)next->page_directory);
-    } */
-    
-    /* Effectuer le context switch ASM */
-    switch_task(&prev->esp, next->esp);
+    /* Effectuer le context switch ASM avec changement de CR3 */
+    /* Note: Le changement de Page Directory (CR3) est fait dans switch_task */
+    /* pour garantir une transition atomique entre les espaces mémoire */
+    switch_task(&prev->esp, next->esp, next->cr3);
 }
 
 void process_exit(void)

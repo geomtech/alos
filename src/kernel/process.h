@@ -57,6 +57,7 @@ typedef struct process {
     /* ===== Context ===== */
     uint32_t esp;                   /* Stack Pointer sauvegardé */
     uint32_t esp0;                  /* Stack Pointer kernel (base) */
+    uint32_t cr3;                   /* Adresse physique du Page Directory (pour switch CR3) */
     
     /* ===== Mémoire ===== */
     uint32_t* page_directory;       /* Page Directory (pour l'instant = kernel) */
@@ -174,11 +175,16 @@ int process_exec_and_wait(const char* filename, int argc, char** argv);
  * ======================================== */
 
 /**
- * Effectue le context switch.
+ * Effectue le context switch (défini en assembleur dans switch.s).
  * 
  * @param old_esp_ptr  Pointeur où sauvegarder l'ESP actuel
  * @param new_esp      Nouvel ESP à charger
+ * @param new_cr3      Adresse physique du nouveau Page Directory
+ * 
+ * Note: Le changement de CR3 est effectué de manière atomique dans cette
+ * fonction pour garantir que le code kernel reste accessible pendant
+ * la transition entre espaces mémoire.
  */
-extern void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp);
+extern void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp, uint32_t new_cr3);
 
 #endif /* PROCESS_H */
