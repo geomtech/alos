@@ -190,11 +190,42 @@ All threads completed!
 
 ## 🔄 En Cours / À Faire
 
-### Synchronisation Avancée
-- [ ] **Mutex** - Verrouillage exclusif avec owner tracking
-- [ ] **Semaphores** - Compteurs pour ressources limitées
-- [ ] **Condition Variables** - Attente sur conditions complexes
-- [ ] **Read-Write Locks** - Lecteurs multiples, écrivain exclusif
+### ✅ Synchronisation Avancée (Implémenté!)
+- [x] **Mutex** - Verrouillage exclusif avec owner tracking et priority inheritance
+- [x] **Semaphores** - Compteurs pour ressources limitées (avec timeout)
+- [x] **Condition Variables** - Attente sur conditions complexes (POSIX-like)
+- [x] **Read-Write Locks** - Lecteurs multiples, écrivain exclusif (writer-preferring)
+
+> Tester avec la commande `synctest` dans le shell.
+
+#### API Synchronisation (`sync.h`)
+
+```c
+// === Mutex ===
+void mutex_init(mutex_t *mutex, mutex_type_t type);  // NORMAL, RECURSIVE, ERRORCHECK
+int mutex_lock(mutex_t *mutex);
+bool mutex_trylock(mutex_t *mutex);
+int mutex_unlock(mutex_t *mutex);
+
+// === Semaphore ===
+void semaphore_init(semaphore_t *sem, int32_t initial, uint32_t max);
+void sem_wait(semaphore_t *sem);       // P / down (bloque si count <= 0)
+bool sem_trywait(semaphore_t *sem);    // Non-bloquant
+int sem_post(semaphore_t *sem);        // V / up (incrémente count)
+
+// === Condition Variable ===
+void condvar_init(condvar_t *cv);
+void condvar_wait(condvar_t *cv, mutex_t *mutex);    // Release mutex + block + reacquire
+void condvar_signal(condvar_t *cv);                  // Wake one
+void condvar_broadcast(condvar_t *cv);               // Wake all
+
+// === Read-Write Lock ===
+void rwlock_init(rwlock_t *rwlock, rwlock_preference_t pref);  // PREFER_WRITER, PREFER_READER
+void rwlock_rdlock(rwlock_t *rwlock);     // Shared read lock
+void rwlock_wrlock(rwlock_t *rwlock);     // Exclusive write lock
+void rwlock_rdunlock(rwlock_t *rwlock);
+void rwlock_wrunlock(rwlock_t *rwlock);
+```
 
 ### ✅ Préemption Automatique (Implémenté!)
 - [x] IRQ Timer avec sauvegarde contexte complet (`interrupt_frame_t`)
@@ -259,11 +290,14 @@ Pour avoir plusieurs programmes ELF en parallèle en User Mode :
 |---------|-------------|
 | `src/kernel/thread.h` | Structures et API threads + `interrupt_frame_t` |
 | `src/kernel/thread.c` | Implémentation scheduler + threads + préemption |
+| `src/kernel/sync.h` | API synchronisation (mutex, semaphore, condvar, rwlock) |
+| `src/kernel/sync.c` | Implémentation des primitives de synchronisation |
+| `src/kernel/atomic.h` | Opérations atomiques (CAS, inc, dec, barriers) |
 | `src/kernel/process.c` | Gestion des processus |
 | `src/arch/x86/switch.s` | Context switch assembleur (`switch_context`) |
 | `src/arch/x86/interrupts.s` | IRQ handlers avec support préemption |
 | `src/kernel/timer.c` | Timer + `timer_handler_preempt()` |
-| `src/shell/commands.c` | Commande `threads` de test |
+| `src/shell/commands.c` | Commandes `threads` et `synctest` de test |
 
 ## Historique des Bugs Corrigés
 

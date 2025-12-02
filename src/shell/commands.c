@@ -6,6 +6,7 @@
 #include "../kernel/keymap.h"
 #include "../kernel/process.h"
 #include "../kernel/thread.h"
+#include "../kernel/sync.h"
 #include "../kernel/elf.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
@@ -45,6 +46,7 @@ static int cmd_meminfo(int argc, char** argv);
 static int cmd_rm(int argc, char** argv);
 static int cmd_rmdir(int argc, char** argv);
 static int cmd_threads(int argc, char** argv);
+static int cmd_synctest(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -56,6 +58,7 @@ static shell_command_t commands[] = {
     { "ping",     "Ping a host (IP or hostname)",           cmd_ping },
     { "tasks",    "Test multitasking (launches 2 threads)",  cmd_tasks },
     { "threads",  "Test new multithreading with priorities", cmd_threads },
+    { "synctest", "Test synchronization primitives (mutex, sem, etc.)", cmd_synctest },
     { "ps",       "List running processes",                  cmd_ps },
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     { "exec",     "Execute an ELF program",                  cmd_exec },
@@ -1494,6 +1497,327 @@ static int cmd_threads(int argc, char** argv)
     
     /* Afficher la liste des threads */
     thread_list_debug();
+    
+    return 0;
+}
+
+/* ========================================
+ * Synchronization Test Command
+ * ======================================== */
+
+/* Shared resources for sync tests */
+static mutex_t test_mutex;
+static semaphore_t test_semaphore;
+static condvar_t test_condvar;
+static rwlock_t test_rwlock;
+
+static volatile int shared_counter = 0;
+static volatile int producer_done = 0;
+static volatile int data_ready = 0;
+
+/* === Mutex Test === */
+static void mutex_test_worker(void *arg)
+{
+    int id = (int)(uintptr_t)arg;
+    
+    for (int i = 0; i < 5; i++) {
+        mutex_lock(&test_mutex);
+        
+        int old = shared_counter;
+        shared_counter++;
+        
+        /* Small delay to make race conditions visible if mutex fails */
+        for (volatile int j = 0; j < 1000; j++);
+        
+        if (shared_counter != old + 1) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("MUTEX FAIL! ");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        }
+        
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("M");
+        console_put_dec(id);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        mutex_unlock(&test_mutex);
+        thread_yield();
+    }
+    
+    thread_exit(0);
+}
+
+/* === Semaphore Test (Simple counting) === */
+#define SEM_TEST_COUNT 5
+static volatile int sem_counter = 0;
+
+static void sem_worker(void *arg)
+{
+    int id = (int)(uintptr_t)arg;
+    
+    for (int i = 0; i < SEM_TEST_COUNT; i++) {
+        sem_wait(&test_semaphore);  /* Acquire permit */
+        
+        sem_counter++;
+        
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts("S");
+        console_put_dec(id);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        /* Small work simulation */
+        for (volatile int j = 0; j < 10000; j++);
+        
+        sem_post(&test_semaphore);  /* Release permit */
+    }
+    
+    thread_exit(0);
+}
+
+/* === Condition Variable Test === */
+static void cv_waiter(void *arg)
+{
+    int id = (int)(uintptr_t)arg;
+    
+    mutex_lock(&test_mutex);
+    
+    while (!data_ready) {
+        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        console_puts("W");
+        console_put_dec(id);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        condvar_wait(&test_condvar, &test_mutex);
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("!");
+    console_put_dec(id);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    mutex_unlock(&test_mutex);
+    thread_exit(0);
+}
+
+static void cv_signaler(void *arg)
+{
+    (void)arg;
+    
+    thread_sleep_ms(200);
+    
+    mutex_lock(&test_mutex);
+    data_ready = 1;
+    mutex_unlock(&test_mutex);
+    
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("[BROADCAST]");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    condvar_broadcast(&test_condvar);
+    
+    thread_exit(0);
+}
+
+/* === Read-Write Lock Test === */
+static volatile int rwlock_shared_data = 0;
+
+static void rwlock_reader(void *arg)
+{
+    int id = (int)(uintptr_t)arg;
+    
+    for (int i = 0; i < 3; i++) {
+        rwlock_rdlock(&test_rwlock);
+        
+        int val = rwlock_shared_data;
+        (void)val;  /* Read the data */
+        
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts("R");
+        console_put_dec(id);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        /* Hold read lock briefly */
+        for (volatile int j = 0; j < 500; j++);
+        
+        rwlock_rdunlock(&test_rwlock);
+        thread_yield();
+    }
+    
+    thread_exit(0);
+}
+
+static void rwlock_writer(void *arg)
+{
+    int id = (int)(uintptr_t)arg;
+    
+    for (int i = 0; i < 2; i++) {
+        rwlock_wrlock(&test_rwlock);
+        
+        rwlock_shared_data++;
+        
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("W");
+        console_put_dec(id);
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        /* Hold write lock briefly */
+        for (volatile int j = 0; j < 1000; j++);
+        
+        rwlock_wrunlock(&test_rwlock);
+        thread_yield();
+    }
+    
+    thread_exit(0);
+}
+
+static int cmd_synctest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("=== Synchronization Primitives Test ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* ====== MUTEX TEST ====== */
+    console_puts("\n[1] MUTEX TEST - ");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("M#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(" = thread # acquired mutex\n");
+    console_puts("    Testing mutual exclusion with 3 threads...\n    ");
+    
+    mutex_init(&test_mutex, MUTEX_TYPE_NORMAL);
+    shared_counter = 0;
+    
+    thread_t *m1 = thread_create("mutex_t1", mutex_test_worker, (void*)1, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *m2 = thread_create("mutex_t2", mutex_test_worker, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *m3 = thread_create("mutex_t3", mutex_test_worker, (void*)3, 0, THREAD_PRIORITY_NORMAL);
+    
+    if (m1) thread_join(m1);
+    if (m2) thread_join(m2);
+    if (m3) thread_join(m3);
+    
+    console_puts("\n    Final counter: ");
+    console_put_dec(shared_counter);
+    console_puts(" (expected: 15)\n");
+    if (shared_counter == 15) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("    PASS!\n");
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("    FAIL!\n");
+    }
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* ====== SEMAPHORE TEST ====== */
+    console_puts("\n[2] SEMAPHORE TEST - ");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("S#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(" = worker # in critical section\n");
+    console_puts("    Testing semaphore with 2 permits, 3 workers...\n    ");
+    
+    /* Semaphore with 2 permits - only 2 threads can be in critical section */
+    semaphore_init(&test_semaphore, 2, 0);
+    sem_counter = 0;
+    
+    thread_t *sw1 = thread_create("sem_w1", sem_worker, (void*)1, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *sw2 = thread_create("sem_w2", sem_worker, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *sw3 = thread_create("sem_w3", sem_worker, (void*)3, 0, THREAD_PRIORITY_NORMAL);
+    
+    if (sw1) thread_join(sw1);
+    if (sw2) thread_join(sw2);
+    if (sw3) thread_join(sw3);
+    
+    /* 3 workers x 5 iterations = 15 */
+    console_puts("\n    Counter: ");
+    console_put_dec(sem_counter);
+    console_puts(" (expected: 15)\n");
+    if (sem_counter == 15) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("    PASS!\n");
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("    FAIL!\n");
+    }
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* ====== CONDITION VARIABLE TEST ====== */
+    console_puts("\n[3] CONDITION VARIABLE TEST - ");
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    console_puts("W#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("=waiting, ");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("!#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("=woken\n");
+    console_puts("    Testing condvar broadcast with 3 waiters...\n    ");
+    
+    mutex_init(&test_mutex, MUTEX_TYPE_NORMAL);
+    condvar_init(&test_condvar);
+    data_ready = 0;
+    
+    thread_t *w1 = thread_create("cv_w1", cv_waiter, (void*)1, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *w2 = thread_create("cv_w2", cv_waiter, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *w3 = thread_create("cv_w3", cv_waiter, (void*)3, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *sig = thread_create("cv_sig", cv_signaler, NULL, 0, THREAD_PRIORITY_HIGH);
+    
+    if (w1) thread_join(w1);
+    if (w2) thread_join(w2);
+    if (w3) thread_join(w3);
+    if (sig) thread_join(sig);
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("\n    PASS!\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* ====== READ-WRITE LOCK TEST ====== */
+    console_puts("\n[4] READ-WRITE LOCK TEST - ");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("R#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("=reader, ");
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("W#");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("=writer\n");
+    console_puts("    Testing 3 readers, 2 writers (writer-preferring)...\n    ");
+    
+    rwlock_init(&test_rwlock, RWLOCK_PREFER_WRITER);
+    rwlock_shared_data = 0;
+    
+    thread_t *r1 = thread_create("rw_r1", rwlock_reader, (void*)1, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *r2 = thread_create("rw_r2", rwlock_reader, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *r3 = thread_create("rw_r3", rwlock_reader, (void*)3, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *ww1 = thread_create("rw_w1", rwlock_writer, (void*)1, 0, THREAD_PRIORITY_NORMAL);
+    thread_t *ww2 = thread_create("rw_w2", rwlock_writer, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    
+    if (r1) thread_join(r1);
+    if (r2) thread_join(r2);
+    if (r3) thread_join(r3);
+    if (ww1) thread_join(ww1);
+    if (ww2) thread_join(ww2);
+    
+    console_puts("\n    Shared data: ");
+    console_put_dec(rwlock_shared_data);
+    console_puts(" (expected: 4 from 2 writers x 2 iterations)\n");
+    if (rwlock_shared_data == 4) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("    PASS!\n");
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("    FAIL!\n");
+    }
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* ====== SUMMARY ====== */
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("=== All Synchronization Tests Complete ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
 }
