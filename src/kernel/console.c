@@ -1,10 +1,14 @@
 /* src/console.c - Console virtuelle avec scrolling */
 #include "console.h"
+#include "thread.h"
 #include "../arch/x86/io.h"
 
 /* Ports VGA pour le contrôle du curseur hardware */
 #define VGA_CTRL_REG    0x3D4
 #define VGA_DATA_REG    0x3D5
+
+/* Spinlock pour protéger l'accès concurrent à la console */
+static spinlock_t console_lock;
 
 /* Buffer VGA physique */
 static uint16_t* const VGA_MEMORY = (uint16_t*)0xB8000;
@@ -41,6 +45,9 @@ static inline uint16_t make_vga_entry(char c, uint8_t color)
 
 void console_init(void)
 {
+    /* Initialiser le spinlock de la console */
+    spinlock_init(&console_lock);
+    
     write_col = 0;
     write_line = 0;
     view_start_line = 0;
@@ -59,6 +66,8 @@ void console_init(void)
 
 void console_clear(uint8_t bg_color)
 {
+    spinlock_lock(&console_lock);
+    
     uint8_t color = make_color(VGA_COLOR_WHITE, bg_color);
     current_color = color;
     
@@ -71,6 +80,8 @@ void console_clear(uint8_t bg_color)
     view_start_line = 0;
     
     console_refresh();
+    
+    spinlock_unlock(&console_lock);
 }
 
 void console_set_color(uint8_t fg, uint8_t bg)
@@ -128,10 +139,12 @@ void console_putc(char c)
 
 void console_puts(const char* str)
 {
+    spinlock_lock(&console_lock);
     while (*str) {
         console_putc(*str++);
     }
     console_refresh();
+    spinlock_unlock(&console_lock);
 }
 
 void console_put_hex(uint32_t value)

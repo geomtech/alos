@@ -205,11 +205,11 @@ All threads completed!
 
 ### Thread-Safety Kernel
 - [x] Protéger `kmalloc()` avec spinlock
-- [ ] Protéger structures du scheduler
-- [ ] Protéger console/serial output
-- [ ] Atomic operations (`atomic_inc`, `atomic_dec`, `atomic_cmpxchg`)
+- [x] Protéger structures du scheduler
+- [x] Protéger console/serial output
+- [x] Atomic operations (`atomic_inc`, `atomic_dec`, `atomic_cmpxchg`)
 
-> **Note:** `kmalloc()` utilise actuellement un spinlock simple. TODO futur : utiliser `cpu_cli()`/`cpu_restore_flags()` si `kmalloc()` est appelé depuis un contexte d'interruption.
+> **Note:** `kmalloc()` et la console utilisent des spinlocks simples. TODO futur : utiliser `cpu_cli()`/`cpu_restore_flags()` si appelé depuis un contexte d'interruption. L'API atomique est dans `src/kernel/atomic.h`.
 
 ### Améliorations Scheduler
 - [ ] **Aging** - Éviter famine des threads basse priorité
