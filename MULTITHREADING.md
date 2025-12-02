@@ -1,10 +1,10 @@
-Oui, le **multitasking** a été implémenté plus tôt ! Voici ce qu'on a :
+# Multithreading dans ALOS
 
-## ✅ Ce qui est fait (Multitasking Kernel - Basic)
+## ✅ Multitasking Kernel - Basic
 
 | Composant | Status | Fichier |
 |-----------|--------|---------|
-| **Scheduler Round-Robin** | ✅ | process.c |
+| **Scheduler Round-Robin** | ✅ | `process.c` |
 | **Context Switch** | ✅ | `switch.s` |
 | **Kernel Threads** | ✅ | `create_kernel_thread()` |
 | **Liste circulaire de processus** | ✅ | `process_t` avec `next/prev` |
@@ -13,22 +13,79 @@ Oui, le **multitasking** a été implémenté plus tôt ! Voici ce qu'on a :
 | **Commande `tasks`** | ✅ | Lance 2 threads de test |
 | **Commande `ps`** | ✅ | Liste les processus |
 
-## ✅ NOUVEAU - Multithreading Avancé (inspiré de alix-main)
+## ✅ Multithreading Avancé (inspiré de alix-main)
 
 | Composant | Status | Fichier |
 |-----------|--------|---------|
 | **Thread séparé de Process** | ✅ | `thread.h`, `thread.c` |
-| **Priorités de threads** | ✅ | IDLE, BACKGROUND, NORMAL, HIGH, UI |
+| **Priorités de threads** | ✅ | 5 niveaux (IDLE → UI) |
 | **Wait Queues** | ✅ | `wait_queue_t` avec `wait/wake_one/wake_all` |
 | **Spinlocks** | ✅ | `spinlock_t` avec `lock/unlock/trylock` |
 | **Scheduler par priorité** | ✅ | Run queues par niveau de priorité |
 | **Sleep Queue** | ✅ | `thread_sleep_ticks()`, `thread_sleep_ms()` |
-| **Time Slices** | ✅ | Préemption avec quota de ticks |
+| **Time Slices** | ✅ | Quota de ticks par thread |
 | **Thread Join** | ✅ | `thread_join()` pour attendre la fin |
 | **Thread Kill** | ✅ | `thread_kill()` pour tuer un thread |
 | **Commande `threads`** | ✅ | Test avec 3 threads de priorités différentes |
+| **Context Switch CR3-safe** | ✅ | Skip CR3 reload si new_cr3 == 0 |
+| **Préemption Kernel** | ✅ | IRQ Timer + `scheduler_preempt()` |
+| **Preempt disable/enable** | ✅ | Protection sections critiques |
+| **Format unifié context** | ✅ | `interrupt_frame_t` + `popa/iretd` |
 
-### Nouvelles Structures (thread.h)
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      SCHEDULER                               │
+├─────────────────────────────────────────────────────────────┤
+│  Priority Queues (Round-Robin par niveau)                   │
+│  ┌─────────┬─────────┬─────────┬─────────┬─────────┐       │
+│  │  IDLE   │BACKGRND │ NORMAL  │  HIGH   │   UI    │       │
+│  │ (0)     │  (1)    │  (2)    │  (3)    │  (4)    │       │
+│  └────┬────┴────┬────┴────┬────┴────┬────┴────┬────┘       │
+│       │         │         │         │         │             │
+│       ▼         ▼         ▼         ▼         ▼             │
+│    [T1]──►   [T2]──►   [T3]──►   [T4]──►   [T5]──►         │
+│       ◄──[T6]   ◄──[T7]   ◄──[T8]                          │
+├─────────────────────────────────────────────────────────────┤
+│  Sleep Queue: threads en attente de réveil (ticks)          │
+│  Wait Queues: threads bloqués sur conditions                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Niveaux de Priorité
+
+| Priorité | Valeur | Usage |
+|----------|--------|-------|
+| `THREAD_PRIORITY_IDLE` | 0 | Tâches de fond, économie CPU |
+| `THREAD_PRIORITY_BACKGROUND` | 1 | Travaux en arrière-plan |
+| `THREAD_PRIORITY_NORMAL` | 2 | Threads par défaut |
+| `THREAD_PRIORITY_HIGH` | 3 | Tâches importantes |
+| `THREAD_PRIORITY_UI` | 4 | Interface utilisateur, réactivité maximale |
+
+### États d'un Thread
+
+```
+                    ┌──────────┐
+         create()   │  READY   │◄────────────────┐
+                    └────┬─────┘                 │
+                         │                       │
+                    schedule()              wake/timeout
+                         │                       │
+                         ▼                       │
+                    ┌──────────┐           ┌─────┴────┐
+                    │ RUNNING  │──sleep──►│ SLEEPING │
+                    └────┬─────┘           └──────────┘
+                         │                       ▲
+                    exit()                  wait()
+                         │                       │
+                         ▼                 ┌─────┴────┐
+                    ┌──────────┐           │ BLOCKED  │
+                    │  ZOMBIE  │           └──────────┘
+                    └──────────┘
+```
+
+### Structures Clés (thread.h)
 
 ```c
 typedef enum {
@@ -48,63 +105,168 @@ typedef enum {
     THREAD_STATE_ZOMBIE
 } thread_state_t;
 
-struct wait_queue {
+typedef struct thread {
+    uint32_t tid;
+    char name[32];
+    thread_state_t state;
+    thread_priority_t priority;
+    
+    uint32_t esp;                    // Stack pointer sauvegardé
+    uint32_t *stack_base;            // Base de la stack
+    uint32_t stack_size;
+    
+    uint64_t wake_time;              // Pour sleep
+    int exit_status;
+    
+    struct process *owner;           // Process parent
+    struct thread *next_in_process;  // Liste dans le process
+    struct thread *next;             // Liste globale / wait queue
+    struct thread *prev;
+} thread_t;
+
+typedef struct wait_queue {
     thread_t *head;
     thread_t *tail;
     spinlock_t lock;
-};
+} wait_queue_t;
 ```
 
-### Nouvelles Fonctions API
+### API Threads
 
 ```c
-// Création de threads
+// === Création / Destruction ===
 thread_t *thread_create(const char *name, thread_entry_t entry, void *arg, 
                         uint32_t stack_size, thread_priority_t priority);
-
-// Contrôle
 void thread_exit(int status);
 int thread_join(thread_t *thread);
 bool thread_kill(thread_t *thread, int status);
 
-// Synchronisation
+// === Contrôle ===
+void thread_yield(void);
+void thread_sleep_ms(uint32_t ms);
+void thread_sleep_ticks(uint64_t ticks);
+
+// === Synchronisation ===
+void spinlock_init(spinlock_t *lock);
+void spinlock_lock(spinlock_t *lock);
+void spinlock_unlock(spinlock_t *lock);
+bool spinlock_trylock(spinlock_t *lock);
+
 void wait_queue_init(wait_queue_t *queue);
-void wait_queue_wait(wait_queue_t *queue, wait_queue_predicate_t predicate, void *context);
+void wait_queue_wait(wait_queue_t *queue, wait_queue_predicate_t pred, void *ctx);
 void wait_queue_wake_one(wait_queue_t *queue);
 void wait_queue_wake_all(wait_queue_t *queue);
 
-// Sleep
-void thread_sleep_ms(uint32_t ms);
-void thread_sleep_ticks(uint64_t ticks);
-void thread_yield(void);
+// === Scheduler ===
+void scheduler_init(void);
+void scheduler_schedule(void);
+void scheduler_tick(void);  // Appelé par le timer (préemption désactivée)
 ```
 
-### Comment tester
+### Comment Tester
 
-1. Compiler : `make`
-2. Lancer : `make run`
-3. Tester : tapez `threads` dans le shell
+```bash
+make run
+# Dans le shell ALOS:
+threads
+```
 
-Vous verrez :
-- **H** (rouge) = Thread haute priorité (UI)
-- **N** (vert) = Thread priorité normale
-- **L** (cyan) = Thread basse priorité (background)
+Résultat attendu :
+```
+=== New Multithreading Test ===
+Testing thread priorities:
+  H = HIGH priority (UI)
+  N = NORMAL priority
+  L = LOW (background) priority
 
-## ❌ Ce qui manque pour du vrai multithreading User Mode
+Threads created! Output: HNLHNLHNLHNLHNL...
 
-Pour avoir **plusieurs programmes ELF** qui tournent **en parallèle** en User Mode, il faudrait :
+Results:
+  High priority iterations: 5
+  Normal priority iterations: 5
+  Low priority iterations: 5
+All threads completed!
+```
 
-1. **Isolation mémoire** - Chaque processus devrait avoir son propre Page Directory
-2. **`process_execute()` non-bloquant** - Actuellement `exec` attend que le programme finisse
-3. **Scheduling User Mode** - Sauvegarder/restaurer le contexte Ring 3 lors des context switches
-4. **Fork/Spawn** - Créer des processus enfants
+## 🔄 En Cours / À Faire
 
-Actuellement :
-- `exec /bin/hello` est **bloquant** (attend que le programme finisse via `sys_exit`)
-- Les threads **kernel** peuvent tourner en parallèle
-- Les programmes **user** ne peuvent pas encore tourner en parallèle
+### Synchronisation Avancée
+- [ ] **Mutex** - Verrouillage exclusif avec owner tracking
+- [ ] **Semaphores** - Compteurs pour ressources limitées
+- [ ] **Condition Variables** - Attente sur conditions complexes
+- [ ] **Read-Write Locks** - Lecteurs multiples, écrivain exclusif
 
-## À faire (User Mode Multithreading):
-1. Modifier `process_execute()` pour créer un vrai processus dans le scheduler
-2. Adapter le context switch pour gérer Ring 0 ↔ Ring 3
-3. Permettre plusieurs programmes user simultanés
+### ✅ Préemption Automatique (Implémenté!)
+- [x] IRQ Timer avec sauvegarde contexte complet (`interrupt_frame_t`)
+- [x] `scheduler_preempt()` appelé depuis IRQ0
+- [x] `preempt_disable()` / `preempt_enable()` pour sections critiques
+- [x] Format unifié `popa + iretd` pour tous les context switches
+- [x] Time slice épuisé → préemption automatique
+
+### Thread-Safety Kernel
+- [ ] Protéger `kmalloc()` avec spinlock
+- [ ] Protéger structures du scheduler
+- [ ] Protéger console/serial output
+- [ ] Atomic operations (`atomic_inc`, `atomic_dec`, `atomic_cmpxchg`)
+
+### Améliorations Scheduler
+- [ ] **Aging** - Éviter famine des threads basse priorité
+- [ ] **Nice values** - Ajustement fin des priorités
+- [ ] **CPU time accounting** - Mesurer le temps CPU par thread
+- [ ] **Load balancing** - Pour futur SMP
+
+### Kernel Threads Utiles
+- [x] **Idle thread** - `hlt` pour économie d'énergie
+- [ ] **Reaper thread** - Nettoyage des threads zombie
+- [ ] **Worker threads** - Pool pour travaux asynchrones
+
+## ❌ User Mode Multithreading (Non implémenté)
+
+Pour avoir plusieurs programmes ELF en parallèle en User Mode :
+
+| Fonctionnalité | Status | Description |
+|----------------|--------|-------------|
+| Isolation mémoire | ❌ | Chaque process = son propre Page Directory |
+| `exec` non-bloquant | ❌ | Actuellement `exec` attend la fin du programme |
+| Context switch Ring 3 | ❌ | Sauvegarder/restaurer contexte User Mode |
+| `fork()` / `spawn()` | ❌ | Créer des processus enfants |
+| Signaux | ❌ | Communication inter-processus |
+
+### Situation Actuelle
+
+```
+┌─────────────────────────────────────────┐
+│            Kernel Mode (Ring 0)          │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐    │
+│  │ Thread1 │ │ Thread2 │ │ Thread3 │    │  ← Parallèle ✅
+│  └─────────┘ └─────────┘ └─────────┘    │
+├─────────────────────────────────────────┤
+│            User Mode (Ring 3)            │
+│  ┌──────────────────────────────────┐   │
+│  │     Programme ELF (bloquant)      │   │  ← Séquentiel ❌
+│  └──────────────────────────────────┘   │
+└─────────────────────────────────────────┘
+```
+
+- Les **threads kernel** peuvent tourner en parallèle ✅
+- Les **programmes user** sont exécutés un par un (bloquant) ❌
+
+## Fichiers Clés
+
+| Fichier | Description |
+|---------|-------------|
+| `src/kernel/thread.h` | Structures et API threads + `interrupt_frame_t` |
+| `src/kernel/thread.c` | Implémentation scheduler + threads + préemption |
+| `src/kernel/process.c` | Gestion des processus |
+| `src/arch/x86/switch.s` | Context switch assembleur (`switch_context`) |
+| `src/arch/x86/interrupts.s` | IRQ handlers avec support préemption |
+| `src/kernel/timer.c` | Timer + `timer_handler_preempt()` |
+| `src/shell/commands.c` | Commande `threads` de test |
+
+## Historique des Bugs Corrigés
+
+| Bug | Cause | Fix |
+|-----|-------|-----|
+| Triple fault sur `threads` | `switch_task` chargeait CR3=0 | Skip CR3 reload si new_cr3 == 0 |
+| Pas de thread main | Shell sans `thread_t` associé | Créer main_thread dans `scheduler_init` |
+| Format stack incompatible | `switch_task` vs `popa+iretd` | Format unifié `interrupt_frame_t` |

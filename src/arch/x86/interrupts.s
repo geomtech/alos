@@ -128,11 +128,46 @@ exception_common:
     add esp, 8            ; Nettoyer exception_num et error_code
     iretd
 
-; --- HANDLER TIMER (IRQ 0) ---
+; --- HANDLER TIMER (IRQ 0) avec support préemption ---
+; Cette version sauvegarde le contexte complet pour permettre
+; au scheduler de changer de thread depuis l'IRQ.
+;
+; Structure sur la stack après nos push:
+;   [user_ss]     <- si changement de ring (optionnel)
+;   [user_esp]    <- si changement de ring (optionnel)
+;   [eflags]      <- pushé par le CPU
+;   [cs]          <- pushé par le CPU
+;   [eip]         <- pushé par le CPU
+;   [eax]         <- pusha
+;   [ecx]
+;   [edx]
+;   [ebx]
+;   [esp_dummy]
+;   [ebp]
+;   [esi]
+;   [edi]         <- ESP pointe ici après pusha
+;
+extern timer_handler_preempt
+
 global irq0_handler
 irq0_handler:
+    ; Sauvegarder tous les registres
     pusha
-    call timer_handler_c
+    
+    ; Passer ESP (pointeur vers interrupt_frame_t) en argument
+    push esp
+    call timer_handler_preempt
+    add esp, 4
+    
+    ; Si EAX != 0, c'est le nouvel ESP (on a changé de thread)
+    test eax, eax
+    jz .no_switch
+    
+    ; Changer de stack vers le nouveau thread
+    mov esp, eax
+    
+.no_switch:
+    ; Restaurer les registres (du thread courant ou nouveau)
     popa
     iretd
 

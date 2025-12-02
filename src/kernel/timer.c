@@ -78,19 +78,34 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
  * Handler d'interruption Timer (IRQ 0)
  * =========================================== */
 
-/* Déclaration externe du scheduler tick */
+/* Déclaration externe du scheduler */
 extern void scheduler_tick(void);
+extern uint32_t scheduler_preempt(void *frame);
 
 /**
- * Cette fonction est appelée par timer_handler_c dans kernel.c
- * Mise à jour: on remplace timer_handler_c pour gérer les ticks.
+ * Ancien handler - gardé pour compatibilité
  */
 void timer_tick(void)
 {
     g_timer_ticks++;
-    
-    /* Appeler le scheduler pour la préemption */
     scheduler_tick();
+}
+
+/**
+ * Nouveau handler avec support préemption.
+ * Appelé directement depuis l'IRQ0 ASM.
+ * @param frame Pointeur vers les registres sauvegardés (interrupt_frame_t)
+ * @return Nouvel ESP si préemption, 0 sinon
+ */
+uint32_t timer_handler_preempt(void *frame)
+{
+    g_timer_ticks++;
+    
+    /* Envoyer EOI au PIC (Important: avant le scheduler!) */
+    outb(0x20, 0x20);
+    
+    /* Appeler le scheduler avec le frame d'interruption */
+    return scheduler_preempt(frame);
 }
 
 /* ===========================================

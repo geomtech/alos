@@ -260,30 +260,46 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->sched_prev = NULL;
     thread->proc_next = NULL;
     
-    /* Préparer la stack initiale pour switch_task
+    /* Préemption */
+    thread->preempt_count = 0;
+    thread->preempt_pending = false;
+    
+    /* Préparer la stack initiale au format interrupt_frame_t
+     * pour la préemption (popa + iretd).
      * 
-     * switch_task fait: pop ebp; pop edi; pop esi; pop ebx; ret
-     * task_entry_point fait: pop eax (fonction); call eax
-     * 
-     * Layout nécessaire (du bas vers le haut de la stack):
-     *   [Argument]                 <- pour la fonction (optionnel)
-     *   [Adresse de la fonction]   <- task_entry_point fait pop eax; call eax
-     *   [task_entry_point]         <- switch_task fait ret vers ici
-     *   [EBX = 0]                  <- switch_task fait pop ebx
-     *   [ESI = 0]                  <- switch_task fait pop esi
-     *   [EDI = 0]                  <- switch_task fait pop edi
-     *   [EBP = 0]                  <- switch_task fait pop ebp (ESP pointe ici)
+     * L'IRQ handler fait: popa; iretd
+     * Donc on doit préparer la stack comme si on avait été interrompu
+     * juste avant d'appeler la fonction entry.
+     *
+     * Layout (du haut vers le bas - ESP pointe vers EDI):
+     *   [EFLAGS]   <- iretd pop eflags (avec IF=1 pour activer les interrupts)
+     *   [CS]       <- iretd pop cs (segment code kernel = 0x08)
+     *   [EIP]      <- iretd pop eip (= task_entry_point_preempt)
+     *   [EAX]      <- popa (= entry address)
+     *   [ECX]      <- popa (= arg)
+     *   [EDX]      <- popa (= 0)
+     *   [EBX]      <- popa (= 0)
+     *   [ESP_dummy]<- popa ignore this
+     *   [EBP]      <- popa (= 0)
+     *   [ESI]      <- popa (= 0)
+     *   [EDI]      <- popa (= 0) <- ESP pointe ici
      */
     uint32_t *stack_top = (uint32_t *)((uint32_t)stack + stack_size);
     
-    /* L'argument sera récupéré par la fonction via EAX qui pointe vers arg */
-    *(--stack_top) = (uint32_t)arg;          /* Argument (pour plus tard si besoin) */
-    *(--stack_top) = (uint32_t)entry;        /* Adresse de la fonction - pop eax */
-    *(--stack_top) = (uint32_t)task_entry_point;  /* Adresse de retour - ret */
-    *(--stack_top) = 0;                      /* EBX - pop ebx */
-    *(--stack_top) = 0;                      /* ESI - pop esi */
-    *(--stack_top) = 0;                      /* EDI - pop edi */
-    *(--stack_top) = 0;                      /* EBP - pop ebp (ESP initial) */
+    /* Simuler ce que le CPU push lors d'une interruption */
+    *(--stack_top) = 0x202;                  /* EFLAGS: IF=1 (interrupts enabled) */
+    *(--stack_top) = 0x08;                   /* CS: kernel code segment */
+    *(--stack_top) = (uint32_t)task_entry_point;  /* EIP: point d'entrée */
+    
+    /* Simuler pusha (ordre: EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI) */
+    *(--stack_top) = (uint32_t)entry;        /* EAX = adresse de la fonction */
+    *(--stack_top) = (uint32_t)arg;          /* ECX = argument */
+    *(--stack_top) = 0;                      /* EDX */
+    *(--stack_top) = 0;                      /* EBX */
+    *(--stack_top) = 0;                      /* ESP (ignoré par popa) */
+    *(--stack_top) = 0;                      /* EBP */
+    *(--stack_top) = 0;                      /* ESI */
+    *(--stack_top) = 0;                      /* EDI */
     
     thread->esp = (uint32_t)stack_top;
     
@@ -545,6 +561,8 @@ void scheduler_init(void)
     main_thread->sched_next = NULL;
     main_thread->sched_prev = NULL;
     main_thread->proc_next = NULL;
+    main_thread->preempt_count = 0;
+    main_thread->preempt_pending = false;
     
     g_current_thread = main_thread;
     
@@ -583,15 +601,176 @@ void scheduler_tick(void)
         g_current_thread->time_slice_remaining--;
     }
     
-    /* NOTE: On ne fait PAS de préemption automatique ici car on est 
-     * dans un handler d'interruption. La préemption se fait via:
-     * - thread_yield() explicite
-     * - thread_sleep_ms() / thread_sleep_ticks()
-     * - wait_queue_wait()
-     * 
-     * Pour une vraie préemption, il faudrait modifier le handler d'IRQ
-     * pour sauvegarder/restaurer le contexte complet de façon sûre.
+    /* Marquer la préemption comme pending si time slice épuisé */
+    if (g_current_thread->time_slice_remaining == 0 && 
+        g_current_thread != g_idle_thread) {
+        g_current_thread->preempt_pending = true;
+    }
+}
+
+/* ========================================
+ * Préemption depuis IRQ (nouveau système)
+ * ======================================== */
+
+/* Fonction utilisée par scheduler_preempt pour pick sans lock (déjà pris) */
+static thread_t *scheduler_pick_next_nolock(void)
+{
+    /* Parcourir les priorités de la plus haute à la plus basse */
+    for (int pri = THREAD_PRIORITY_COUNT - 1; pri >= THREAD_PRIORITY_IDLE; pri--) {
+        if (g_run_queues[pri]) {
+            thread_t *thread = g_run_queues[pri];
+            
+            /* Retirer de la queue */
+            g_run_queues[pri] = thread->sched_next;
+            if (thread->sched_next) {
+                thread->sched_next->sched_prev = NULL;
+            }
+            thread->sched_next = NULL;
+            thread->sched_prev = NULL;
+            
+            return thread;
+        }
+    }
+    
+    /* Aucun thread prêt, retourner idle */
+    return g_idle_thread;
+}
+
+/* Ajoute un thread à la run queue sans prendre le lock */
+static void scheduler_enqueue_nolock(thread_t *thread)
+{
+    if (!thread || thread->state == THREAD_STATE_RUNNING) return;
+    
+    thread_priority_t pri = thread->priority;
+    if (pri >= THREAD_PRIORITY_COUNT) {
+        pri = THREAD_PRIORITY_NORMAL;
+    }
+    
+    thread->sched_prev = NULL;
+    thread->sched_next = g_run_queues[pri];
+    
+    if (g_run_queues[pri]) {
+        g_run_queues[pri]->sched_prev = thread;
+    }
+    g_run_queues[pri] = thread;
+    
+    if (thread->state != THREAD_STATE_RUNNING) {
+        thread->state = THREAD_STATE_READY;
+    }
+}
+
+uint32_t scheduler_preempt(interrupt_frame_t *frame)
+{
+    if (!g_scheduler_active || !g_current_thread) return 0;
+    
+    /* Réveiller les threads endormis */
+    scheduler_wake_sleeping();
+    
+    /* Décrémenter le time slice */
+    if (g_current_thread != g_idle_thread && g_current_thread->time_slice_remaining > 0) {
+        g_current_thread->time_slice_remaining--;
+    }
+    
+    /* Vérifier si on doit préempter */
+    thread_t *current = g_current_thread;
+    
+    /* Ne pas préempter si:
+     * - Préemption désactivée (section critique)
+     * - Time slice pas encore épuisé
+     * - On est déjà le thread idle
      */
+    if (current->preempt_count > 0) {
+        /* Marquer comme pending pour plus tard */
+        if (current->time_slice_remaining == 0) {
+            current->preempt_pending = true;
+        }
+        return 0;  /* Pas de préemption */
+    }
+    
+    if (current->time_slice_remaining > 0 && current != g_idle_thread) {
+        return 0;  /* Pas encore épuisé */
+    }
+    
+    /* Essayer de trouver un autre thread */
+    spinlock_lock(&g_scheduler_lock);
+    
+    thread_t *next = scheduler_pick_next_nolock();
+    
+    if (!next || next == current) {
+        /* Personne d'autre, continuer avec le même thread */
+        spinlock_unlock(&g_scheduler_lock);
+        /* Recharger le time slice si épuisé */
+        if (current->time_slice_remaining == 0) {
+            current->time_slice_remaining = THREAD_TIME_SLICE_DEFAULT;
+        }
+        return 0;
+    }
+    
+    /* On va changer de thread ! */
+    
+    /* Remettre le thread actuel dans la run queue */
+    if (current->state == THREAD_STATE_RUNNING) {
+        current->state = THREAD_STATE_READY;
+        scheduler_enqueue_nolock(current);
+    }
+    
+    /* Recharger le time slice du nouveau thread */
+    next->time_slice_remaining = THREAD_TIME_SLICE_DEFAULT;
+    next->state = THREAD_STATE_RUNNING;
+    next->preempt_pending = false;
+    g_current_thread = next;
+    
+    spinlock_unlock(&g_scheduler_lock);
+    
+    /* Mettre à jour le TSS pour le nouveau thread */
+    if (next->esp0 != 0) {
+        tss_set_kernel_stack(next->esp0);
+    }
+    
+    /* Sauvegarder l'ESP du thread préempté.
+     * Le frame pointe vers les registres sauvegardés sur la stack.
+     * On sauvegarde ce pointeur comme ESP du thread actuel.
+     */
+    current->esp = (uint32_t)frame;
+    
+    /* Retourner l'ESP du nouveau thread.
+     * Le code ASM va faire: mov esp, eax ; popa ; iretd
+     * donc on retourne l'ESP qui pointe vers un frame sauvegardé.
+     */
+    return next->esp;
+}
+
+/* ========================================
+ * Contrôle de préemption
+ * ======================================== */
+
+void preempt_disable(void)
+{
+    if (g_current_thread) {
+        g_current_thread->preempt_count++;
+    }
+}
+
+void preempt_enable(void)
+{
+    if (!g_current_thread) return;
+    
+    if (g_current_thread->preempt_count > 0) {
+        g_current_thread->preempt_count--;
+    }
+    
+    /* Si préemption réactivée et pending, scheduler maintenant */
+    if (g_current_thread->preempt_count == 0 && 
+        g_current_thread->preempt_pending) {
+        g_current_thread->preempt_pending = false;
+        scheduler_schedule();
+    }
+}
+
+bool preempt_enabled(void)
+{
+    if (!g_current_thread) return true;
+    return g_current_thread->preempt_count == 0;
 }
 
 void scheduler_wake_sleeping(void)

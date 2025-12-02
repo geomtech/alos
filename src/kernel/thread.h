@@ -18,6 +18,31 @@
 #define THREAD_TIME_SLICE_DEFAULT 10
 
 /* ========================================
+ * Interrupt Frame - Contexte CPU complet
+ * Utilisé pour la préemption depuis IRQ
+ * ======================================== */
+
+typedef struct interrupt_frame {
+    /* Registres poussés par pusha (ordre inverse) */
+    uint32_t edi;
+    uint32_t esi;
+    uint32_t ebp;
+    uint32_t esp_dummy;  /* ESP ignoré par popa */
+    uint32_t ebx;
+    uint32_t edx;
+    uint32_t ecx;
+    uint32_t eax;
+    
+    /* Poussés par le CPU lors de l'interruption */
+    uint32_t eip;
+    uint32_t cs;
+    uint32_t eflags;
+    /* Si changement de ring (Ring 3 → Ring 0) : */
+    uint32_t user_esp;
+    uint32_t user_ss;
+} __attribute__((packed)) interrupt_frame_t;
+
+/* ========================================
  * Types de priorité
  * ======================================== */
 
@@ -153,7 +178,30 @@ struct thread {
     
     /* Liste de tous les threads d'un process */
     thread_t *proc_next;            /* Prochain thread du même process */
+    
+    /* Préemption */
+    volatile uint32_t preempt_count;    /* > 0 = préemption désactivée */
+    volatile bool preempt_pending;      /* Préemption demandée mais différée */
 };
+
+/* ========================================
+ * Fonctions publiques - Préemption Control
+ * ======================================== */
+
+/**
+ * Désactive la préemption (peut être imbriqué).
+ */
+void preempt_disable(void);
+
+/**
+ * Réactive la préemption et préempte si nécessaire.
+ */
+void preempt_enable(void);
+
+/**
+ * Vérifie si la préemption est activée.
+ */
+bool preempt_enabled(void);
 
 /* ========================================
  * Fonctions publiques - Wait Queue
@@ -276,6 +324,13 @@ void scheduler_start(void);
  * Appelé par le timer IRQ pour la préemption.
  */
 void scheduler_tick(void);
+
+/**
+ * Appelé par l'IRQ timer pour préempter depuis le contexte d'interruption.
+ * @param frame Pointeur vers les registres sauvegardés sur la stack
+ * @return Nouveau ESP si préemption, 0 si pas de changement
+ */
+uint32_t scheduler_preempt(interrupt_frame_t *frame);
 
 /**
  * Force un context switch.
