@@ -163,9 +163,11 @@ int process_execute(const char* filename);
  * Charge et exécute le programme, puis retourne au shell via sys_exit.
  * 
  * @param filename  Chemin du fichier ELF à exécuter
+ * @param argc      Nombre d'arguments
+ * @param argv      Tableau d'arguments
  * @return          0 si succès, -1 si erreur (ne retourne pas normalement)
  */
-int process_exec_and_wait(const char* filename);
+int process_exec_and_wait(const char* filename, int argc, char** argv);
 
 /* ========================================
  * Fonction ASM (définie dans switch.s)

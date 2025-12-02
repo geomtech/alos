@@ -126,7 +126,8 @@ int command_execute(int argc, char** argv)
         console_puts("\n");
         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         
-        int result = process_exec_and_wait(bin_path);
+        /* Passer tous les arguments au programme */
+        int result = process_exec_and_wait(bin_path, argc, argv);
         
         if (result < 0) {
             console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
@@ -537,8 +538,9 @@ static int cmd_usermode(int argc, char** argv)
 static int cmd_exec(int argc, char** argv)
 {
     if (argc < 2) {
-        console_puts("Usage: exec <filename>\n");
+        console_puts("Usage: exec <filename> [args...]\n");
         console_puts("Example: exec /bin/hello\n");
+        console_puts("Example: exec /server.elf -p 80\n");
         return -1;
     }
     
@@ -549,8 +551,12 @@ static int cmd_exec(int argc, char** argv)
     console_puts("=== Executing ELF Program ===\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
-    /* Exécuter le programme (bloquant) */
-    int result = process_exec_and_wait(filename);
+    /* Préparer les arguments pour le programme (argv[1:]) */
+    int prog_argc = argc - 1;  /* Nombre d'arguments pour le programme */
+    char** prog_argv = &argv[1];  /* argv[0] du programme = filename */
+    
+    /* Exécuter le programme (bloquant) avec ses arguments */
+    int result = process_exec_and_wait(filename, prog_argc, prog_argv);
     
     if (result < 0) {
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);

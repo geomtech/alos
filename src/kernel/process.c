@@ -603,7 +603,7 @@ int process_execute(const char* filename)
  * Lance immédiatement un programme ELF (bloquant).
  * Charge et exécute le programme, puis retourne au shell.
  */
-int process_exec_and_wait(const char* filename)
+int process_exec_and_wait(const char* filename, int argc, char** argv)
 {
     KLOG_INFO("EXEC", "=== Execute and Wait ===");
     KLOG_INFO("EXEC", filename);
@@ -649,8 +649,59 @@ int process_exec_and_wait(const char* filename)
     /* Configurer le TSS pour le retour en mode kernel */
     /* Le TSS doit contenir l'ESP0 (kernel stack) pour les syscalls */
     
+    /* Préparer la stack utilisateur avec argc et argv */
+    /* Layout de la stack:
+     *   [argv strings...]   <- Chaînes copiées sur la stack
+     *   [argv[n] = NULL]    <- Terminateur
+     *   [argv[n-1]]         <- Pointeurs vers les chaînes
+     *   ...
+     *   [argv[0]]
+     *   [argv pointer]      <- Pointeur vers argv[0]
+     *   [argc]              <- Nombre d'arguments
+     *   <- ESP pointe ici
+     */
+    uint32_t* user_stack = (uint32_t*)(USER_STACK_TOP - 16);
+    
+    /* D'abord, copier les chaînes d'arguments sur la stack */
+    char* string_ptr = (char*)(USER_STACK_TOP - 256);  /* Réserver de l'espace pour les chaînes */
+    char* argv_ptrs[16];  /* Max 16 arguments */
+    
+    for (int i = 0; i < argc && i < 16; i++) {
+        int len = 0;
+        while (argv[i][len]) len++;
+        len++;  /* Inclure le null terminator */
+        string_ptr -= len;
+        for (int j = 0; j < len; j++) {
+            string_ptr[j] = argv[i][j];
+        }
+        argv_ptrs[i] = string_ptr;
+    }
+    
+    /* Aligner la stack sur 4 octets */
+    string_ptr = (char*)((uint32_t)string_ptr & ~3);
+    
+    /* Construire le tableau argv sur la stack */
+    uint32_t* stack_ptr = (uint32_t*)string_ptr;
+    stack_ptr--;  /* argv[argc] = NULL */
+    *stack_ptr = 0;
+    
+    for (int i = argc - 1; i >= 0; i--) {
+        stack_ptr--;
+        *stack_ptr = (uint32_t)argv_ptrs[i];
+    }
+    
+    uint32_t argv_addr = (uint32_t)stack_ptr;  /* Adresse de argv[0] */
+    
+    /* Pousser argv (pointeur vers argv[0]) */
+    stack_ptr--;
+    *stack_ptr = argv_addr;
+    
+    /* Pousser argc */
+    stack_ptr--;
+    *stack_ptr = (uint32_t)argc;
+    
     /* Sauter directement en User Mode */
-    jump_to_usermode((void*)elf_result.entry_point, (void*)(USER_STACK_TOP - 16));
+    jump_to_usermode((void*)elf_result.entry_point, (void*)stack_ptr);
     
     /* Ne devrait jamais arriver ici (sys_exit retourne au shell) */
     return 0;

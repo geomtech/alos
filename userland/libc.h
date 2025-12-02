@@ -167,28 +167,45 @@ static inline int syscall4(int num, int arg1, int arg2, int arg3, int arg4)
  * Standard Library Functions
  * ======================================== */
 
-/* Forward declaration of main */
-int main(void);
+/* Forward declaration of main - supports argc/argv */
+int main(int argc, char *argv[]);
 
 /**
  * Entry point for userland programs.
  * This is called by the kernel and calls main(), then exit().
+ * 
+ * Stack layout when _start is called:
+ *   [argc]      <- ESP points here
+ *   [argv]      <- Pointer to argv array
+ *   ...
  */
-void _start(void) __attribute__((section(".text.start")));
+void _start(void) __attribute__((section(".text.start"), naked));
 void _start(void)
 {
-    int ret = main();
-    /* Call exit syscall */
     __asm__ volatile (
-        "movl %0, %%ebx\n"
-        "movl $1, %%eax\n"  /* SYS_EXIT = 1 */
-        "int $0x80\n"
+        /* Get argc from stack */
+        "popl %%eax\n"          /* EAX = argc */
+        /* Get argv from stack */
+        "popl %%ebx\n"          /* EBX = argv */
+        
+        /* Push arguments for main(argc, argv) */
+        "pushl %%ebx\n"         /* Push argv */
+        "pushl %%eax\n"         /* Push argc */
+        
+        /* Call main */
+        "call main\n"
+        
+        /* main returned in EAX, call exit(EAX) */
+        "movl %%eax, %%ebx\n"   /* EBX = return value */
+        "movl $1, %%eax\n"      /* EAX = SYS_EXIT (1) */
+        "int $0x80\n"           /* syscall */
+        
+        /* Should never reach here */
+        "1: jmp 1b\n"
         :
-        : "r" (ret)
-        : "eax", "ebx"
+        :
+        : "eax", "ebx", "memory"
     );
-    /* Ne devrait jamais arriver */
-    while (1) {}
 }
 
 /**

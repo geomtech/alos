@@ -4,8 +4,72 @@
 static const char http_200[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n";
 static const char http_404[] = "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<h1>404 Not Found</h1>\n";
 
-int main()
+#define DEFAULT_PORT 8080
+
+/* Convert string to integer */
+static int atoi(const char *str)
 {
+    int result = 0;
+    int sign = 1;
+    
+    /* Skip whitespace */
+    while (*str == ' ' || *str == '\t')
+        str++;
+    
+    /* Handle sign */
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+    
+    /* Convert digits */
+    while (*str >= '0' && *str <= '9') {
+        result = result * 10 + (*str - '0');
+        str++;
+    }
+    
+    return sign * result;
+}
+
+/* Parse command line arguments for port */
+static int parse_port(int argc, char *argv[])
+{
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--port") == 0) {
+            if (i + 1 < argc) {
+                int port = atoi(argv[i + 1]);
+                if (port > 0 && port <= 65535) {
+                    return port;
+                } else {
+                    print("Error: Invalid port number (must be 1-65535)\n");
+                    return -1;
+                }
+            } else {
+                print("Error: -p/--port requires a port number\n");
+                return -1;
+            }
+        }
+    }
+    return DEFAULT_PORT;
+}
+
+static void print_usage(void)
+{
+    print("Usage: server [-p|--port <port>]\n");
+    print("  -p, --port <port>  Port to listen on (default: 8080)\n");
+}
+
+int main(int argc, char *argv[])
+{
+    /* Parse port from arguments */
+    int port = parse_port(argc, argv);
+    if (port < 0) {
+        print_usage();
+        return 1;
+    }
+
     print("Starting ALOS Web Server...\n");
     print("Press CTRL+D to stop the server.\n\n");
 
@@ -20,10 +84,10 @@ int main()
     print_num(server_fd);
     print("\n");
 
-    /* 2. Bind sur le port 8080 */
+    /* 2. Bind sur le port spécifié */
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(8080);
+    addr.sin_port = htons(port);
     addr.sin_addr = INADDR_ANY;
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
@@ -31,7 +95,9 @@ int main()
         print("Error: bind() failed\n");
         return 1;
     }
-    print("Bound to port 8080\n");
+    print("Bound to port ");
+    print_num(port);
+    print("\n");
 
     /* 3. Listen */
     if (listen(server_fd, 5) < 0)
@@ -39,7 +105,9 @@ int main()
         print("Error: listen() failed\n");
         return 1;
     }
-    print("Listening on port 8080...\n");
+    print("Listening on port ");
+    print_num(port);
+    print("...\n");
 
     /* Boucle principale du serveur */
     while (1)
