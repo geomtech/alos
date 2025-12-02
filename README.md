@@ -341,13 +341,13 @@ make run-pcap
 - [x] System Calls (POSIX/BSD-like interface)
 - [ ] Scripting files
 - [ ] Network configuration files
+- [ ] Persistent history
 - [ ] GUI
 - [ ] OpenGL
 - [ ] SSL
 - [ ] SSH
-- [ ] Telnet
-- [ ] RTC Real-Time Clock
-- [ ] PIT Programmable Interval Timer
+- [x] RTC Real-Time Clock
+- [x] PIT Programmable Interval Timer
 - [ ] UTF-8 string and console
 
 ## License
