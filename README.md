@@ -344,10 +344,9 @@ make run-pcap
 - [x] Simple HTTP server based on storage
 - [x] System logs
 - [x] Azerty keyboard (with keymap abstraction)
-- [ ] Scripting files
-- [ ] Network configuration files
-- [ ] Persistent history
-- [ ] Azerty keyboard
+- [x] Scripting files (`/config/startup.sh`)
+- [x] Network configuration files (`/config/network.conf`)
+- [x] Persistent history (`/config/history`)
 - [ ] GUI + Mouse
 - [ ] OpenGL
 - [ ] SSL

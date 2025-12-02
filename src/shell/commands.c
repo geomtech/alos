@@ -11,6 +11,7 @@
 #include "../net/core/netdev.h"
 #include "../arch/x86/usermode.h"
 #include "../fs/vfs.h"
+#include "../config/config.h"
 
 /* ========================================
  * Déclarations des handlers de commandes
@@ -25,6 +26,9 @@ static int cmd_exec(int argc, char** argv);
 static int cmd_elfinfo(int argc, char** argv);
 static int cmd_netinfo(int argc, char** argv);
 static int cmd_keymap(int argc, char** argv);
+static int cmd_script(int argc, char** argv);
+static int cmd_netconf(int argc, char** argv);
+static int cmd_savehist(int argc, char** argv);
 
 /* TODO: Implémenter ces commandes */
 // static int cmd_clear(int argc, char** argv);
@@ -52,6 +56,9 @@ static shell_command_t commands[] = {
     { "elfinfo",  "Display ELF file information",            cmd_elfinfo },
     { "netinfo",  "Display network configuration",           cmd_netinfo },
     { "keymap",   "Set keyboard layout (qwerty, azerty)",    cmd_keymap },
+    { "script",   "Run a script file (/config/startup.sh)",  cmd_script },
+    { "netconf",  "Configure network interface (eth0, etc.)", cmd_netconf },
+    { "savehist", "Save command history to disk",            cmd_savehist },
     
     /* TODO: Commandes à implémenter */
     // { "clear",   "Clear the screen",                       cmd_clear },
@@ -649,4 +656,217 @@ static int cmd_keymap(int argc, char** argv)
         console_puts("Use 'keymap list' to see available layouts.\n");
         return -1;
     }
+}
+
+/**
+ * Commande: script [path]
+ * Exécute un fichier script contenant des commandes shell.
+ * 
+ * Usage:
+ *   script                 - Exécute /config/startup.sh
+ *   script /config/test.sh - Exécute le script spécifié
+ */
+static int cmd_script(int argc, char** argv)
+{
+    const char* path = CONFIG_STARTUP_SCRIPT;
+    
+    if (argc >= 2) {
+        path = argv[1];
+    }
+    
+    console_puts("\n");
+    int result = config_run_script(path);
+    
+    if (result != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Failed to run script: ");
+        console_puts(path);
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * Commande: netconf [dhcp|static IP NETMASK GATEWAY DNS]
+ * Configure les paramètres réseau.
+ * 
+ * Usage:
+ *   netconf              - Affiche la configuration actuelle
+ *   netconf dhcp         - Active DHCP
+ *   netconf static 10.0.2.15 255.255.255.0 10.0.2.2 10.0.2.3
+ */
+static int cmd_netconf(int argc, char** argv)
+{
+    network_config_t config;
+    const char* iface = NULL;
+    
+    /* Sans argument: afficher l'aide */
+    if (argc < 2) {
+        console_puts("\nUsage: netconf <interface> [options]\n");
+        console_puts("\nOptions:\n");
+        console_puts("  netconf eth0                - Show eth0 configuration\n");
+        console_puts("  netconf eth0 dhcp           - Configure eth0 for DHCP\n");
+        console_puts("  netconf eth0 static <ip> <netmask> <gateway> <dns>\n");
+        console_puts("\nExamples:\n");
+        console_puts("  netconf eth0 dhcp\n");
+        console_puts("  netconf eth0 static 192.168.1.100 255.255.255.0 192.168.1.1 8.8.8.8\n");
+        return 0;
+    }
+    
+    /* Premier argument = nom de l'interface */
+    iface = argv[1];
+    
+    /* Vérifier que l'interface existe */
+    NetInterface* netif = netif_get_by_name(iface);
+    if (netif == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Interface not found: ");
+        console_puts(iface);
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("Use 'netinfo' to list available interfaces.\n");
+        return -1;
+    }
+    
+    /* "netconf eth0" - afficher la configuration de l'interface */
+    if (argc == 2) {
+        if (config_load_network_iface(iface, &config) == 0) {
+            console_puts("\nConfiguration for ");
+            console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+            console_puts(iface);
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            console_puts(":\n");
+            console_puts("----------------------------------\n");
+            
+            if (config.use_dhcp) {
+                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                console_puts("  Mode: DHCP (automatic)\n");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            } else {
+                console_puts("  Mode: Static IP\n");
+                char ip_str[16];
+                
+                console_puts("  IP:      ");
+                config_ip_to_string(config.ip_addr, ip_str);
+                console_puts(ip_str);
+                console_puts("\n");
+                
+                console_puts("  Netmask: ");
+                config_ip_to_string(config.netmask, ip_str);
+                console_puts(ip_str);
+                console_puts("\n");
+                
+                console_puts("  Gateway: ");
+                config_ip_to_string(config.gateway, ip_str);
+                console_puts(ip_str);
+                console_puts("\n");
+                
+                console_puts("  DNS:     ");
+                config_ip_to_string(config.dns_server, ip_str);
+                console_puts(ip_str);
+                console_puts("\n");
+            }
+        } else {
+            console_puts("\nNo configuration file for ");
+            console_puts(iface);
+            console_puts(".\nUsing DHCP by default.\n");
+        }
+        return 0;
+    }
+    
+    /* "netconf eth0 dhcp" - activer DHCP */
+    if (strcmp(argv[2], "dhcp") == 0) {
+        config.use_dhcp = 1;
+        memset(config.ip_addr, 0, 4);
+        memset(config.netmask, 0, 4);
+        memset(config.gateway, 0, 4);
+        memset(config.dns_server, 0, 4);
+        
+        if (config_save_network_iface(iface, &config) == 0) {
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+            console_puts(iface);
+            console_puts(" configured for DHCP.\n");
+            console_puts("Reboot to apply changes.\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return 0;
+        } else {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Failed to save configuration for ");
+            console_puts(iface);
+            console_puts(".\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+    }
+    
+    /* "netconf eth0 static IP NETMASK GATEWAY DNS" */
+    if (strcmp(argv[2], "static") == 0) {
+        if (argc < 7) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Usage: netconf ");
+            console_puts(iface);
+            console_puts(" static <ip> <netmask> <gateway> <dns>\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        config.use_dhcp = 0;
+        
+        if (config_parse_ip(argv[3], config.ip_addr) != 0 ||
+            config_parse_ip(argv[4], config.netmask) != 0 ||
+            config_parse_ip(argv[5], config.gateway) != 0 ||
+            config_parse_ip(argv[6], config.dns_server) != 0) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Invalid IP address format.\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+        
+        if (config_save_network_iface(iface, &config) == 0) {
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+            console_puts("Static IP configuration saved for ");
+            console_puts(iface);
+            console_puts(".\n");
+            console_puts("Reboot to apply changes.\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return 0;
+        } else {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Failed to save configuration for ");
+            console_puts(iface);
+            console_puts(".\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("Unknown option: ");
+    console_puts(argv[2]);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return -1;
+}
+
+/**
+ * Commande: savehist
+ * Sauvegarde manuellement l'historique des commandes dans /config/history.
+ */
+static int cmd_savehist(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    shell_save_history();
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("Command history saved to ");
+    console_puts(CONFIG_HISTORY_FILE);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    return 0;
 }

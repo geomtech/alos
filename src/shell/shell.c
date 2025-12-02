@@ -6,6 +6,7 @@
 #include "../kernel/process.h"
 #include "../include/string.h"
 #include "../fs/vfs.h"
+#include "../config/config.h"
 
 /* Codes spéciaux clavier (définis dans keyboard.c) - castés en char pour éviter les warnings */
 #define KEY_UP      ((char)0x80)
@@ -136,31 +137,23 @@ static void shell_readline(char* buffer, size_t max_len)
                     history_nav++;
                     const char* hist = history_get(history_nav);
                     if (hist) {
-                        /* Effacer la ligne actuelle */
+                        /* Effacer la ligne actuelle: retour au début */
                         while (pos > 0) {
                             console_putc('\b');
                             pos--;
                         }
-                        while (len > 0) {
-                            console_putc(' ');
-                            len--;
-                        }
-                        while (len < strlen(buffer)) {
-                            console_putc('\b');
-                        }
-                        /* Reculer au début */
-                        for (size_t i = 0; i < strlen(buffer); i++) {
-                            console_putc('\b');
-                        }
-                        for (size_t i = 0; i < strlen(buffer); i++) {
+                        /* Effacer avec des espaces */
+                        for (size_t i = 0; i < len; i++) {
                             console_putc(' ');
                         }
-                        for (size_t i = 0; i < strlen(buffer); i++) {
+                        /* Retour au début */
+                        for (size_t i = 0; i < len; i++) {
                             console_putc('\b');
                         }
                         
                         /* Copier et afficher la commande historique */
-                        strcpy(buffer, hist);
+                        strncpy(buffer, hist, max_len - 1);
+                        buffer[max_len - 1] = '\0';
                         len = strlen(buffer);
                         pos = len;
                         console_puts(buffer);
@@ -172,14 +165,17 @@ static void shell_readline(char* buffer, size_t max_len)
             case KEY_DOWN:
                 /* Flèche bas - commande suivante */
                 if (history_nav >= 0) {
-                    /* Effacer la ligne actuelle */
-                    for (size_t i = 0; i < strlen(buffer); i++) {
+                    /* Effacer la ligne actuelle: retour au début */
+                    while (pos > 0) {
                         console_putc('\b');
+                        pos--;
                     }
-                    for (size_t i = 0; i < strlen(buffer); i++) {
+                    /* Effacer avec des espaces */
+                    for (size_t i = 0; i < len; i++) {
                         console_putc(' ');
                     }
-                    for (size_t i = 0; i < strlen(buffer); i++) {
+                    /* Retour au début */
+                    for (size_t i = 0; i < len; i++) {
                         console_putc('\b');
                     }
                     
@@ -187,7 +183,8 @@ static void shell_readline(char* buffer, size_t max_len)
                     if (history_nav >= 0) {
                         const char* hist = history_get(history_nav);
                         if (hist) {
-                            strcpy(buffer, hist);
+                            strncpy(buffer, hist, max_len - 1);
+                            buffer[max_len - 1] = '\0';
                             len = strlen(buffer);
                             pos = len;
                             console_puts(buffer);
@@ -341,8 +338,31 @@ void shell_init(void)
     history_index = 0;
     history_nav = -1;
     
+    /* Charger l'historique persistant depuis /config/history */
+    int loaded = config_load_history(history, SHELL_HISTORY_SIZE, SHELL_LINE_MAX);
+    if (loaded > 0) {
+        history_count = loaded;
+        history_index = loaded % SHELL_HISTORY_SIZE;
+        console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
+        console_puts("[Shell] Loaded ");
+        console_put_dec(loaded);
+        console_puts(" history entries\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    
     /* Initialiser les commandes */
     commands_init();
+}
+
+void shell_save_history(void)
+{
+    /* Calculer l'index de départ pour l'historique circulaire */
+    int start_index = 0;
+    if (history_count >= SHELL_HISTORY_SIZE) {
+        start_index = history_index;  /* Buffer plein, commencer à l'index courant */
+    }
+    
+    config_save_history(history, history_count, start_index, SHELL_LINE_MAX);
 }
 
 void shell_run(void)
@@ -370,7 +390,8 @@ void shell_run(void)
         
         /* Ajouter à l'historique */
         history_add(line);
-        
+        shell_save_history();  /* Sauvegarde immédiate pour persistance */
+
         /* Parser la ligne */
         int argc = shell_parse(line, argv, SHELL_ARGS_MAX);
         

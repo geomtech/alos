@@ -49,4 +49,10 @@ int shell_set_cwd(const char* path);
  */
 int shell_resolve_path(const char* path, char* result, size_t size);
 
+/**
+ * Sauvegarde l'historique des commandes dans /config/history.
+ * Appelé périodiquement ou avant l'arrêt du shell.
+ */
+void shell_save_history(void);
+
 #endif /* SHELL_H */

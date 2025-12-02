@@ -67,8 +67,12 @@ LIB_OBJ = src/lib/string.o
 SHELL_SRC = src/shell/shell.c src/shell/commands.c
 SHELL_OBJ = src/shell/shell.o src/shell/commands.o
 
+# Configuration
+CONFIG_SRC = src/config/config.c
+CONFIG_OBJ = src/config/config.o
+
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ)
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -132,12 +136,16 @@ src/lib/%.o: src/lib/%.c
 src/shell/%.o: src/shell/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# Configuration
+src/config/%.o: src/config/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage
 clean:
 	rm -f src/arch/x86/*.o src/kernel/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
-	rm -f src/fs/*.o src/lib/*.o src/shell/*.o
+	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o
 	rm -f alos.bin
 
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)

@@ -31,6 +31,7 @@
 #include "../include/string.h"
 #include "../mm/vmm.h"
 #include "process.h"
+#include "../config/config.h"
 
 /* Variables globales pour les infos Multiboot */
 static multiboot_info_t *g_mboot_info = NULL;
@@ -176,6 +177,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                     /* Crée /system/logs/kernel.log et vide le buffer précoce */
                     klog_init();
                     klog_flush();
+                    
+                    /* Initialiser le système de configuration */
+                    config_init();
                 }
             }
             
@@ -192,6 +196,19 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                 /* Initialiser la table de routage */
                 route_init();
                 
+                /* Charger la configuration réseau depuis /config/network.conf */
+                network_config_t net_config;
+                int use_dhcp = 1;  /* Par défaut: DHCP */
+                
+                if (config_load_network(&net_config) == 0) {
+                    use_dhcp = net_config.use_dhcp;
+                    if (!use_dhcp) {
+                        /* Appliquer la configuration statique */
+                        config_apply_network(&net_config);
+                        KLOG_INFO("NET", "Loaded static IP from /config/network.conf");
+                    }
+                }
+                
                 /* Démarrer la carte PCnet si c'est le driver utilisé */
                 netdev_t* dev = netdev_get_default();
                 if (dev != NULL && dev->type == NETDEV_TYPE_PCNET) {
@@ -199,43 +216,47 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                     if (pcnet_start(pcnet_dev)) {
                         KLOG_INFO("NET", "Network stack ready!");
                         
-                        /* === Configuration IP via DHCP === */
                         NetInterface* netif = netif_get_default();
                         if (netif != NULL) {
-                            KLOG_INFO("NET", "Starting DHCP configuration...");
-                            
-                            /* Initialiser et démarrer DHCP */
-                            dhcp_init(netif);
-                            dhcp_discover(netif);
-                            
-                            /* Attendre la configuration DHCP (polling avec timeout) */
-                            KLOG_INFO("NET", "Waiting for DHCP response...");
-                            for (int i = 0; i < 50 && !dhcp_is_bound(netif); i++) {
-                                /* Petite pause pour laisser les interruptions traiter les paquets */
-                                for (volatile int j = 0; j < 1000000; j++);
+                            if (use_dhcp) {
+                                /* === Configuration IP via DHCP === */
+                                KLOG_INFO("NET", "Starting DHCP configuration...");
                                 
-                                /* Permettre les interruptions d'être traitées */
-                                asm volatile("sti");
-                                asm volatile("hlt");  /* Attend la prochaine interruption */
-                            }
-                            
-                            if (dhcp_is_bound(netif)) {
-                                KLOG_INFO("NET", "DHCP configuration complete!");
+                                /* Initialiser et démarrer DHCP */
+                                dhcp_init(netif);
+                                dhcp_discover(netif);
                                 
-                                /* === Test DNS === */
-                                if (netif->dns_server != 0) {
-                                    dns_init(netif->dns_server);
+                                /* Attendre la configuration DHCP (polling avec timeout) */
+                                KLOG_INFO("NET", "Waiting for DHCP response...");
+                                for (int i = 0; i < 50 && !dhcp_is_bound(netif); i++) {
+                                    /* Petite pause pour laisser les interruptions traiter les paquets */
+                                    for (volatile int j = 0; j < 1000000; j++);
+                                    
+                                    /* Permettre les interruptions d'être traitées */
+                                    asm volatile("sti");
+                                    asm volatile("hlt");  /* Attend la prochaine interruption */
                                 }
                                 
-                                /* === Initialisation TCP === */
-                                tcp_init();
-                                
-                                /* Ouvrir le port 80 (HTTP) en écoute */
-                                if (tcp_listen(TCP_PORT_HTTP) != NULL) {
-                                    KLOG_INFO("TCP", "HTTP server listening on port 80");
+                                if (dhcp_is_bound(netif)) {
+                                    KLOG_INFO("NET", "DHCP configuration complete!");
+                                } else {
+                                    KLOG_WARN("NET", "DHCP configuration timed out");
                                 }
                             } else {
-                                KLOG_WARN("NET", "DHCP configuration timed out");
+                                KLOG_INFO("NET", "Using static IP configuration");
+                            }
+                            
+                            /* === Initialisation DNS === */
+                            if (netif->dns_server != 0) {
+                                dns_init(netif->dns_server);
+                            }
+                            
+                            /* === Initialisation TCP === */
+                            tcp_init();
+                            
+                            /* Ouvrir le port 80 (HTTP) en écoute */
+                            if (tcp_listen(TCP_PORT_HTTP) != NULL) {
+                                KLOG_INFO("TCP", "HTTP server listening on port 80");
                             }
                         }
                     }
@@ -272,6 +293,12 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
     
     /* Lancer le shell interactif */
     shell_init();
+    
+    /* Exécuter le script de démarrage si présent */
+    if (config_run_startup_script() == 0) {
+        console_puts("\n");  /* Ligne vide après le script */
+    }
+    
     shell_run();
     
     /* Ne devrait jamais arriver */
