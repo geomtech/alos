@@ -323,6 +323,8 @@ make run-pcap
 - [x] ATA/IDE Driver (PIO)
 - [x] VFS Layer
 - [x] Ext2 Read Support
+- [x] RTC Real-Time Clock
+- [x] PIT Programmable Interval Timer
 - [x] Ethernet/ARP
 - [x] IPv4/ICMP
 - [x] UDP/DHCP
@@ -339,15 +341,16 @@ make run-pcap
 - [x] ELF Loader (32-bit executables)
 - [x] TCP Implementation (full state machine)
 - [x] System Calls (POSIX/BSD-like interface)
+- [x] Simple HTTP server based on storage
+- [x] System logs
 - [ ] Scripting files
 - [ ] Network configuration files
 - [ ] Persistent history
-- [ ] GUI
+- [ ] Azerty keyboard
+- [ ] GUI + Mouse
 - [ ] OpenGL
 - [ ] SSL
 - [ ] SSH
-- [x] RTC Real-Time Clock
-- [x] PIT Programmable Interval Timer
 - [ ] UTF-8 string and console
 
 ## License

@@ -29,6 +29,13 @@ bool keyboard_has_char(void);
 void keyboard_clear_buffer(void);
 
 /**
+ * Lit un caractère du buffer clavier (non-bloquant).
+ * 
+ * @return Le caractère lu, ou 0 si aucun caractère disponible
+ */
+char keyboard_getchar_nonblock(void);
+
+/**
  * Handler d'interruption clavier (appelé par l'IRQ1).
  */
 void keyboard_handler_c(void);

@@ -3,6 +3,7 @@
 #include "console.h"
 #include "process.h"
 #include "klog.h"
+#include "keyboard.h"
 #include "../arch/x86/idt.h"
 #include "../arch/x86/io.h"
 #include "../shell/shell.h"
@@ -26,6 +27,7 @@ static int fd_table_initialized = 0;
 /* Socket serveur global pour contourner le bug fd_table */
 static tcp_socket_t* g_server_socket = NULL;
 static int g_server_fd = -1;
+static int g_server_closing = 0;  /* Flag pour fermeture demandée par CTRL+D */
 
 /**
  * Initialise la table des file descriptors.
@@ -291,6 +293,16 @@ static int sys_getpid(void)
     return -1;
 }
 
+/**
+ * SYS_KBHIT (100) - Lire un caractère du clavier (non-bloquant)
+ * 
+ * @return Le caractère lu, ou 0 si aucun caractère disponible
+ */
+static int sys_kbhit(void)
+{
+    return (int)keyboard_getchar_nonblock();
+}
+
 /* ========================================
  * Socket Syscalls
  * ======================================== */
@@ -345,6 +357,7 @@ static int sys_socket(int domain, int type, int protocol)
     /* Sauvegarder globalement pour contourner le bug fd_table */
     g_server_socket = sock;
     g_server_fd = fd;
+    g_server_closing = 0;  /* Reset du flag de fermeture */
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[SYSCALL] socket: created fd ");
@@ -485,12 +498,21 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
         return -1;
     }
     
-    /* Vérifier que le socket est en écoute ou en cours de connexion */
+    /* Debug: afficher l'état actuel */
+    console_puts("[SYSCALL] accept: socket state = ");
+    console_puts(tcp_state_name(sock->state));
+    console_puts("\n");
+    
+    /* Si le socket n'est pas en LISTEN, le remettre en LISTEN */
     if (sock->state != TCP_STATE_LISTEN && 
         sock->state != TCP_STATE_SYN_RCVD &&
         sock->state != TCP_STATE_ESTABLISHED) {
-        /* Attendre silencieusement */
-        return -1;
+        console_puts("[SYSCALL] accept: resetting socket to LISTEN\n");
+        sock->state = TCP_STATE_LISTEN;
+        sock->remote_port = 0;
+        sock->seq = 0;
+        sock->ack = 0;
+        for (int i = 0; i < 4; i++) sock->remote_ip[i] = 0;
     }
     
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
@@ -507,6 +529,14 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
         if (sock->state == TCP_STATE_CLOSED) {
             console_puts("[SYSCALL] accept: socket closed\n");
             return -1;
+        }
+        
+        /* Vérifier si CTRL+D a été pressé (permet d'interrompre accept) */
+        char key = keyboard_getchar_nonblock();
+        if (key == 0x04) {  /* CTRL+D = EOT */
+            console_puts("[SYSCALL] accept: interrupted by CTRL+D\n");
+            g_server_closing = 1;  /* Marquer que le serveur veut se fermer */
+            return -2;  /* Code spécial pour interruption utilisateur */
         }
         
         /* Activer les interruptions pour permettre au réseau de fonctionner */
@@ -625,9 +655,25 @@ static int sys_close(int fd)
     KLOG_INFO("SYSCALL", "sys_close called");
     KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
     
-    /* Si c'est le socket serveur global, le fermer (remet en LISTEN) */
+    /* Si c'est le socket serveur global */
     if (fd == g_server_fd && g_server_socket != NULL) {
-        tcp_close(g_server_socket);
+        /* Si on a demandé la fermeture du serveur (CTRL+D), libérer complètement */
+        if (g_server_closing) {
+            /* Libérer complètement le socket pour permettre un nouveau bind */
+            g_server_socket->in_use = 0;
+            g_server_socket->local_port = 0;
+            g_server_socket->state = TCP_STATE_CLOSED;
+            g_server_socket = NULL;
+            g_server_fd = -1;
+            g_server_closing = 0;
+            /* Libérer le FD */
+            fd_free(fd);
+            console_puts("[SYSCALL] close: server socket fully closed\n");
+        } else {
+            /* Fermeture normale d'une connexion client - remettre en LISTEN */
+            tcp_close(g_server_socket);
+            console_puts("[SYSCALL] close: connection closed, socket back to LISTEN\n");
+        }
         return 0;
     }
     
@@ -721,6 +767,10 @@ void syscall_dispatcher(syscall_regs_t* regs)
             
         case SYS_CLOSE:
             result = sys_close((int)regs->ebx);
+            break;
+            
+        case SYS_KBHIT:
+            result = sys_kbhit();
             break;
             
         default:

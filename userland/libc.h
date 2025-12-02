@@ -21,6 +21,7 @@
 #define SYS_RECV        45
 #define SYS_BIND        49
 #define SYS_LISTEN      50
+#define SYS_KBHIT       100
 
 /* ========================================
  * Socket Definitions (BSD-like)
@@ -238,6 +239,23 @@ static inline int open(const char* path, int flags)
 static inline int getpid(void)
 {
     return syscall3(SYS_GETPID, 0, 0, 0);
+}
+
+/**
+ * Read a character from keyboard (non-blocking)
+ * 
+ * @return The character read, or 0 if no character available
+ * 
+ * Example:
+ *   int c = kbhit();
+ *   if (c == 0x04) { // CTRL+D
+ *       print("Exiting...\\n");
+ *       exit(0);
+ *   }
+ */
+static inline int kbhit(void)
+{
+    return syscall3(SYS_KBHIT, 0, 0, 0);
 }
 
 /* ========================================

@@ -7,6 +7,7 @@ static const char http_404[] = "HTTP/1.1 404 Not Found\r\nContent-Type: text/htm
 int main()
 {
     print("Starting ALOS Web Server...\n");
+    print("Press CTRL+D to stop the server.\n\n");
 
     /* 1. Créer le socket */
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -43,9 +44,19 @@ int main()
     /* Boucle principale du serveur */
     while (1)
     {
-        /* 4. Accepter un client (Bloquant) */
-        print("Waiting for connection...\n");
+        /* 4. Accepter un client (Bloquant, mais interruptible par CTRL+D) */
+        print("Waiting for connection... (CTRL+D to stop)\n");
         int client_fd = accept(server_fd, NULL, NULL);
+        
+        /* Vérifier si interrompu par CTRL+D (-2 = interruption utilisateur) */
+        if (client_fd == -2)
+        {
+            print("\nServer interrupted by user.\n");
+            close(server_fd);
+            print("Server stopped.\n");
+            return 0;
+        }
+        
         if (client_fd < 0)
         {
             print("Error: accept() failed\n");

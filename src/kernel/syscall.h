@@ -22,6 +22,7 @@
 #define SYS_SEND        44      /* Envoyer des données */
 #define SYS_RECV        45      /* Recevoir des données */
 #define SYS_CLOSE       6       /* Fermer un file descriptor */
+#define SYS_KBHIT       100     /* Vérifier si une touche est disponible (non-bloquant) */
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS    256

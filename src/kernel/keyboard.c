@@ -25,6 +25,7 @@
 #define KEY_LEFT    0x82
 #define KEY_RIGHT   0x83
 #define KEY_CTRL_C  0x03   /* ASCII ETX (End of Text) */
+#define KEY_CTRL_D  0x04   /* ASCII EOT (End of Transmission) */
 
 /* État des modificateurs */
 static volatile bool ctrl_pressed = false;
@@ -113,6 +114,18 @@ char keyboard_getchar(void)
 }
 
 /**
+ * Lit un caractère du buffer (non-bloquant).
+ * @return Le caractère lu, ou 0 si aucun caractère disponible
+ */
+char keyboard_getchar_nonblock(void)
+{
+    if (keyboard_has_char()) {
+        return keyboard_buffer_get();
+    }
+    return 0;
+}
+
+/**
  * Handler d'interruption clavier (IRQ1).
  * Stocke les caractères dans le buffer au lieu de les afficher.
  */
@@ -184,6 +197,11 @@ void keyboard_handler_c(void)
                     if (ctrl_pressed && (c == 'c' || c == 'C')) {
                         /* Juste mettre CTRL+C dans le buffer - le shell gère le reste */
                         keyboard_buffer_put(KEY_CTRL_C);
+                    }
+                    /* Vérifier CTRL+D */
+                    else if (ctrl_pressed && (c == 'd' || c == 'D')) {
+                        /* Mettre CTRL+D dans le buffer - signale EOF/arrêt */
+                        keyboard_buffer_put(KEY_CTRL_D);
                     }
                     /* Gérer majuscules avec Shift */
                     else if (shift_pressed && c >= 'a' && c <= 'z') {
