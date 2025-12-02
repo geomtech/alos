@@ -78,6 +78,9 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
  * Handler d'interruption Timer (IRQ 0)
  * =========================================== */
 
+/* Déclaration externe du scheduler tick */
+extern void scheduler_tick(void);
+
 /**
  * Cette fonction est appelée par timer_handler_c dans kernel.c
  * Mise à jour: on remplace timer_handler_c pour gérer les ticks.
@@ -85,6 +88,9 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
 void timer_tick(void)
 {
     g_timer_ticks++;
+    
+    /* Appeler le scheduler pour la préemption */
+    scheduler_tick();
 }
 
 /* ===========================================

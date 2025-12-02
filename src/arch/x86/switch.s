@@ -60,6 +60,10 @@ switch_task:
     
     ; ===== Changer de Page Directory (CR3) si nécessaire =====
     
+    ; Si new_cr3 == 0, ne pas changer CR3 (threads kernel partagent le même espace)
+    test edx, edx
+    jz .skip_cr3_switch     ; Si new_cr3 == 0, ne pas changer
+    
     ; Vérifier si new_cr3 est différent de l'actuel
     ; (Optimisation: éviter flush TLB si même espace mémoire)
     mov eax, cr3
@@ -114,9 +118,15 @@ task_entry_point:
     
     ; Récupérer l'adresse de la fonction
     pop eax                 ; EAX = adresse de la fonction
+                            ; [ESP] = argument maintenant
     
     ; Appeler la fonction du thread
+    ; L'argument est déjà sur la pile à [ESP], call va push EIP
+    ; donc l'argument sera à [ESP+4] - convention cdecl OK
     call eax
+    
+    ; Nettoyer l'argument de la pile (convention cdecl: caller cleans up)
+    add esp, 4
     
     ; Si la fonction retourne, terminer proprement le thread
     call process_exit

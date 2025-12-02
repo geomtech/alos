@@ -1,7 +1,9 @@
 /* src/kernel/process.c - Process/Thread Management Implementation */
 #include "process.h"
+#include "thread.h"
 #include "console.h"
 #include "klog.h"
+#include "timer.h"
 #include "../mm/kheap.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
@@ -56,6 +58,9 @@ void init_multitasking(void)
 {
     KLOG_INFO("TASK", "=== Initializing Multitasking ===");
     
+    /* Initialiser le scheduler de threads */
+    scheduler_init();
+    
     /* Créer le processus idle (représente le kernel actuel) */
     idle_process = (process_t*)kmalloc(sizeof(process_t));
     if (idle_process == NULL) {
@@ -68,6 +73,7 @@ void init_multitasking(void)
     safe_strcpy(idle_process->name, "kernel_idle", sizeof(idle_process->name));
     idle_process->state = PROCESS_STATE_RUNNING;
     idle_process->should_terminate = 0;
+    idle_process->exit_status = 0;
     
     /* L'ESP sera sauvegardé lors du premier switch */
     idle_process->esp = 0;
@@ -81,6 +87,20 @@ void init_multitasking(void)
     idle_process->stack_base = NULL;
     idle_process->stack_size = 0;
     
+    /* Threads */
+    idle_process->main_thread = NULL;
+    idle_process->thread_list = NULL;
+    idle_process->thread_count = 0;
+    
+    /* Wait queue pour process_join */
+    wait_queue_init(&idle_process->wait_queue);
+    
+    /* Hiérarchie */
+    idle_process->parent = NULL;
+    idle_process->first_child = NULL;
+    idle_process->sibling_next = NULL;
+    idle_process->sibling_prev = NULL;
+    
     /* Liste circulaire : pointe vers lui-même */
     idle_process->next = idle_process;
     idle_process->prev = idle_process;
@@ -91,6 +111,9 @@ void init_multitasking(void)
     
     /* Activer le multitasking */
     multitasking_enabled = 1;
+    
+    /* Démarrer le scheduler */
+    scheduler_start();
     
     KLOG_INFO("TASK", "Multitasking initialized");
     KLOG_INFO_DEC("TASK", "Idle process PID: ", idle_process->pid);
@@ -703,4 +726,212 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     
     /* Ne devrait jamais arriver ici (sys_exit retourne au shell) */
     return 0;
+}
+
+/* ========================================
+ * Nouvelles fonctions Multithreading
+ * ======================================== */
+
+process_t* process_create_kernel(const char* name, thread_entry_t entry, void* arg,
+                                 uint32_t stack_size)
+{
+    if (!multitasking_enabled || !entry) {
+        return NULL;
+    }
+    
+    KLOG_INFO("PROC", "Creating kernel process:");
+    KLOG_INFO("PROC", name ? name : "<unnamed>");
+    
+    /* Allouer la structure du processus */
+    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
+    if (!proc) {
+        KLOG_ERROR("PROC", "Failed to allocate process structure");
+        return NULL;
+    }
+    
+    /* Initialiser */
+    proc->pid = next_pid++;
+    safe_strcpy(proc->name, name ? name : "", sizeof(proc->name));
+    proc->state = PROCESS_STATE_READY;
+    proc->should_terminate = 0;
+    proc->exit_status = 0;
+    
+    proc->page_directory = (uint32_t*)vmm_get_kernel_directory();
+    proc->cr3 = (uint32_t)proc->page_directory;
+    
+    proc->stack_base = NULL;
+    proc->stack_size = 0;
+    proc->esp = 0;
+    proc->esp0 = 0;
+    
+    proc->thread_count = 0;
+    proc->thread_list = NULL;
+    
+    wait_queue_init(&proc->wait_queue);
+    
+    proc->parent = current_process;
+    proc->first_child = NULL;
+    proc->sibling_next = NULL;
+    proc->sibling_prev = NULL;
+    
+    /* Créer le thread principal */
+    thread_t* main_thread = thread_create_in_process(proc, name, entry, arg, 
+                                                      stack_size, THREAD_PRIORITY_NORMAL);
+    if (!main_thread) {
+        KLOG_ERROR("PROC", "Failed to create main thread");
+        kfree(proc);
+        return NULL;
+    }
+    
+    proc->main_thread = main_thread;
+    proc->thread_list = main_thread;
+    proc->thread_count = 1;
+    
+    /* Ajouter à la liste des processus */
+    asm volatile("cli");
+    
+    proc->next = current_process->next;
+    proc->prev = current_process;
+    current_process->next->prev = proc;
+    current_process->next = proc;
+    
+    /* Ajouter comme enfant du processus courant */
+    if (current_process) {
+        proc->sibling_next = current_process->first_child;
+        if (current_process->first_child) {
+            current_process->first_child->sibling_prev = proc;
+        }
+        current_process->first_child = proc;
+    }
+    
+    asm volatile("sti");
+    
+    KLOG_INFO_DEC("PROC", "Created process PID: ", proc->pid);
+    
+    return proc;
+}
+
+void process_sleep_ms(uint32_t ms)
+{
+    thread_sleep_ms(ms);
+}
+
+void process_yield(void)
+{
+    thread_yield();
+}
+
+static bool process_waiting_still_running(void* context)
+{
+    process_t* proc = (process_t*)context;
+    return proc->state == PROCESS_STATE_ZOMBIE || proc->state == PROCESS_STATE_TERMINATED;
+}
+
+int process_join(process_t* proc)
+{
+    if (!proc) return -1;
+    
+    /* Attendre que le processus se termine */
+    wait_queue_wait(&proc->wait_queue, process_waiting_still_running, proc);
+    
+    return proc->exit_status;
+}
+
+void process_kill(process_t* proc)
+{
+    if (!proc || proc == idle_process) return;
+    
+    asm volatile("cli");
+    
+    proc->should_terminate = 1;
+    proc->state = PROCESS_STATE_TERMINATED;
+    
+    /* Tuer tous les threads */
+    thread_t* thread = proc->thread_list;
+    while (thread) {
+        thread_kill(thread, -1);
+        thread = thread->proc_next;
+    }
+    
+    /* Réveiller tous les processus en attente */
+    wait_queue_wake_all(&proc->wait_queue);
+    
+    asm volatile("sti");
+}
+
+void process_kill_tree(process_t* proc)
+{
+    if (!proc) return;
+    
+    /* Tuer tous les enfants récursivement */
+    process_t* child = proc->first_child;
+    while (child) {
+        process_t* next = child->sibling_next;
+        process_kill_tree(child);
+        child = next;
+    }
+    
+    /* Tuer le processus lui-même */
+    process_kill(proc);
+}
+
+process_t* process_current(void)
+{
+    return current_process;
+}
+
+bool process_is_zombie(process_t* proc)
+{
+    return proc && proc->state == PROCESS_STATE_ZOMBIE;
+}
+
+const char* process_state_name(process_state_t state)
+{
+    switch (state) {
+        case PROCESS_STATE_READY:      return "READY";
+        case PROCESS_STATE_RUNNING:    return "RUNNING";
+        case PROCESS_STATE_BLOCKED:    return "BLOCKED";
+        case PROCESS_STATE_ZOMBIE:     return "ZOMBIE";
+        case PROCESS_STATE_TERMINATED: return "TERMINATED";
+        default:                       return "UNKNOWN";
+    }
+}
+
+size_t process_snapshot(process_info_t* buffer, size_t capacity)
+{
+    if (!buffer || capacity == 0) return 0;
+    
+    size_t count = 0;
+    
+    asm volatile("cli");
+    
+    process_t* proc = process_list;
+    if (proc) {
+        do {
+            if (count >= capacity) break;
+            
+            buffer[count].pid = proc->pid;
+            buffer[count].state = proc->state;
+            buffer[count].name = proc->name;
+            buffer[count].is_current = (proc == current_process);
+            buffer[count].time_slice_remaining = 0;
+            
+            /* Récupérer les infos du thread principal */
+            if (proc->main_thread) {
+                buffer[count].thread_state = proc->main_thread->state;
+                buffer[count].thread_name = proc->main_thread->name;
+                buffer[count].time_slice_remaining = proc->main_thread->time_slice_remaining;
+            } else {
+                buffer[count].thread_state = THREAD_STATE_READY;
+                buffer[count].thread_name = "";
+            }
+            
+            count++;
+            proc = proc->next;
+        } while (proc != process_list);
+    }
+    
+    asm volatile("sti");
+    
+    return count;
 }

@@ -5,6 +5,7 @@
 #include "../kernel/keyboard.h"
 #include "../kernel/keymap.h"
 #include "../kernel/process.h"
+#include "../kernel/thread.h"
 #include "../kernel/elf.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
@@ -43,6 +44,7 @@ static int cmd_echo(int argc, char** argv);
 static int cmd_meminfo(int argc, char** argv);
 static int cmd_rm(int argc, char** argv);
 static int cmd_rmdir(int argc, char** argv);
+static int cmd_threads(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -53,6 +55,7 @@ static shell_command_t commands[] = {
     { "help",     "Display available commands",              cmd_help },
     { "ping",     "Ping a host (IP or hostname)",           cmd_ping },
     { "tasks",    "Test multitasking (launches 2 threads)",  cmd_tasks },
+    { "threads",  "Test new multithreading with priorities", cmd_threads },
     { "ps",       "List running processes",                  cmd_ps },
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     { "exec",     "Execute an ELF program",                  cmd_exec },
@@ -1372,6 +1375,125 @@ static int cmd_rmdir(int argc, char** argv)
         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return 1;
     }
+    
+    return 0;
+}
+
+/* ========================================
+ * Commande: threads
+ * Teste le nouveau système de multithreading avec priorités
+ * ======================================== */
+
+/* Variables pour les threads de test */
+static volatile int thread_high_counter = 0;
+static volatile int thread_normal_counter = 0;
+static volatile int thread_low_counter = 0;
+
+static void high_priority_task(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 20; i++) {
+        if (thread_should_exit()) break;
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("H");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        thread_high_counter++;
+        thread_sleep_ms(50);  /* Courte pause */
+    }
+    thread_exit(0);
+}
+
+static void normal_priority_task(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 30; i++) {
+        if (thread_should_exit()) break;
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("N");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        thread_normal_counter++;
+        thread_sleep_ms(100);
+    }
+    thread_exit(0);
+}
+
+static void low_priority_task(void *arg)
+{
+    (void)arg;
+    for (int i = 0; i < 40; i++) {
+        if (thread_should_exit()) break;
+        console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+        console_puts("L");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        thread_low_counter++;
+        thread_sleep_ms(150);
+    }
+    thread_exit(0);
+}
+
+static int cmd_threads(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_puts("\n=== New Multithreading Test ===\n");
+    console_puts("Testing thread priorities:\n");
+    console_puts("  ");
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("H");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(" = HIGH priority (UI)\n");
+    console_puts("  ");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("N");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(" = NORMAL priority\n");
+    console_puts("  ");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("L");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(" = LOW (background) priority\n\n");
+    
+    /* Réinitialiser les compteurs */
+    thread_high_counter = 0;
+    thread_normal_counter = 0;
+    thread_low_counter = 0;
+    
+    /* Créer les threads avec différentes priorités */
+    thread_t *high = thread_create("thread_high", high_priority_task, NULL,
+                                   0, THREAD_PRIORITY_UI);
+    thread_t *normal = thread_create("thread_normal", normal_priority_task, NULL,
+                                     0, THREAD_PRIORITY_NORMAL);
+    thread_t *low = thread_create("thread_low", low_priority_task, NULL,
+                                  0, THREAD_PRIORITY_BACKGROUND);
+    
+    if (!high || !normal || !low) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("ERROR: Failed to create threads!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    console_puts("Threads created! Output: ");
+    
+    /* Attendre quelques secondes pour voir le résultat */
+    for (int i = 0; i < 50; i++) {
+        thread_sleep_ms(100);
+    }
+    
+    console_puts("\n\n=== Results ===\n");
+    console_puts("High priority iterations:   ");
+    console_put_dec(thread_high_counter);
+    console_puts("\n");
+    console_puts("Normal priority iterations: ");
+    console_put_dec(thread_normal_counter);
+    console_puts("\n");
+    console_puts("Low priority iterations:    ");
+    console_put_dec(thread_low_counter);
+    console_puts("\n");
+    
+    /* Afficher la liste des threads */
+    thread_list_debug();
     
     return 0;
 }
