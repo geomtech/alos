@@ -12,6 +12,7 @@
 #include "../arch/x86/usermode.h"
 #include "../fs/vfs.h"
 #include "../config/config.h"
+#include "../mm/kheap.h"
 
 /* ========================================
  * Déclarations des handlers de commandes
@@ -30,16 +31,16 @@ static int cmd_script(int argc, char** argv);
 static int cmd_netconf(int argc, char** argv);
 static int cmd_savehist(int argc, char** argv);
 
-/* TODO: Implémenter ces commandes */
-// static int cmd_clear(int argc, char** argv);
-// static int cmd_ls(int argc, char** argv);
-// static int cmd_cat(int argc, char** argv);
-// static int cmd_cd(int argc, char** argv);
-// static int cmd_pwd(int argc, char** argv);
-// static int cmd_mkdir(int argc, char** argv);
-// static int cmd_touch(int argc, char** argv);
-// static int cmd_echo(int argc, char** argv);
-// static int cmd_meminfo(int argc, char** argv);
+/* Nouvelles commandes filesystem et système */
+static int cmd_clear(int argc, char** argv);
+static int cmd_ls(int argc, char** argv);
+static int cmd_cat(int argc, char** argv);
+static int cmd_cd(int argc, char** argv);
+static int cmd_pwd(int argc, char** argv);
+static int cmd_mkdir(int argc, char** argv);
+static int cmd_touch(int argc, char** argv);
+static int cmd_echo(int argc, char** argv);
+static int cmd_meminfo(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -60,16 +61,16 @@ static shell_command_t commands[] = {
     { "netconf",  "Configure network interface (eth0, etc.)", cmd_netconf },
     { "savehist", "Save command history to disk",            cmd_savehist },
     
-    /* TODO: Commandes à implémenter */
-    // { "clear",   "Clear the screen",                       cmd_clear },
-    // { "ls",      "List directory contents",                cmd_ls },
-    // { "cat",     "Display file contents",                  cmd_cat },
-    // { "cd",      "Change directory",                       cmd_cd },
-    // { "pwd",     "Print working directory",                cmd_pwd },
-    // { "mkdir",   "Create a directory",                     cmd_mkdir },
-    // { "touch",   "Create an empty file",                   cmd_touch },
-    // { "echo",    "Display a message",                      cmd_echo },
-    // { "meminfo", "Display memory information",             cmd_meminfo },
+    /* Commandes filesystem et système */
+    { "clear",   "Clear the screen",                        cmd_clear },
+    { "ls",      "List directory contents",                 cmd_ls },
+    { "cat",     "Display file contents",                   cmd_cat },
+    { "cd",      "Change directory",                        cmd_cd },
+    { "pwd",     "Print working directory",                 cmd_pwd },
+    { "mkdir",   "Create a directory",                      cmd_mkdir },
+    { "touch",   "Create an empty file",                    cmd_touch },
+    { "echo",    "Display a message",                       cmd_echo },
+    { "meminfo", "Display memory information",              cmd_meminfo },
     
     /* Marqueur de fin */
     { NULL, NULL, NULL }
@@ -178,11 +179,6 @@ static int cmd_help(int argc, char** argv)
     }
     
     console_puts("\n");
-    
-    /* Afficher les commandes à venir (TODO) */
-    console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
-    console_puts("Coming soon: clear, ls, cat, cd, pwd, mkdir, touch, echo, meminfo\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
 }
@@ -866,6 +862,401 @@ static int cmd_savehist(int argc, char** argv)
     console_puts("Command history saved to ");
     console_puts(CONFIG_HISTORY_FILE);
     console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    return 0;
+}
+
+/* ========================================
+ * Commandes Filesystem et Système
+ * ======================================== */
+
+/**
+ * Commande: clear
+ * Efface l'écran.
+ */
+static int cmd_clear(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_clear(VGA_COLOR_BLACK);
+    return 0;
+}
+
+/**
+ * Commande: pwd
+ * Affiche le répertoire courant.
+ */
+static int cmd_pwd(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    const char* cwd = shell_get_cwd();
+    console_puts(cwd);
+    console_puts("\n");
+    
+    return 0;
+}
+
+/**
+ * Commande: cd [path]
+ * Change le répertoire courant.
+ */
+static int cmd_cd(int argc, char** argv)
+{
+    const char* path = "/";  /* Par défaut, aller à la racine */
+    
+    if (argc >= 2) {
+        path = argv[1];
+    }
+    
+    if (shell_set_cwd(path) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("cd: ");
+        console_puts(path);
+        console_puts(": No such directory\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * Commande: ls [path]
+ * Liste le contenu d'un répertoire.
+ */
+static int cmd_ls(int argc, char** argv)
+{
+    char path[SHELL_PATH_MAX];
+    
+    if (argc >= 2) {
+        /* Utiliser le chemin fourni */
+        if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("ls: ");
+            console_puts(argv[1]);
+            console_puts(": Invalid path\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+    } else {
+        /* Utiliser le répertoire courant */
+        strncpy(path, shell_get_cwd(), sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
+    }
+    
+    /* Ouvrir le répertoire */
+    vfs_node_t* dir = vfs_resolve_path(path);
+    if (dir == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("ls: ");
+        console_puts(path);
+        console_puts(": No such file or directory\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (!(dir->type & VFS_DIRECTORY)) {
+        /* C'est un fichier, afficher juste son nom */
+        console_puts(path);
+        console_puts("\n");
+        return 0;
+    }
+    
+    /* Parcourir le répertoire */
+    uint32_t index = 0;
+    vfs_dirent_t* entry;
+    int count = 0;
+    
+    console_puts("\n");
+    
+    while ((entry = vfs_readdir(dir, index)) != NULL) {
+        /* Type indicator */
+        vfs_node_t* child = vfs_finddir(dir, entry->name);
+        
+        if (child != NULL && (child->type & VFS_DIRECTORY)) {
+            console_set_color(VGA_COLOR_LIGHT_BLUE, VGA_COLOR_BLACK);
+            console_puts("[DIR]  ");
+        } else {
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            console_puts("[FILE] ");
+        }
+        
+        /* Taille (alignée sur 8 caractères) */
+        if (child != NULL && !(child->type & VFS_DIRECTORY)) {
+            char size_buf[12];
+            int size = (int)child->size;
+            int i = 0;
+            
+            if (size == 0) {
+                size_buf[i++] = '0';
+            } else {
+                char tmp[12];
+                int j = 0;
+                while (size > 0) {
+                    tmp[j++] = '0' + (size % 10);
+                    size /= 10;
+                }
+                while (j > 0) {
+                    size_buf[i++] = tmp[--j];
+                }
+            }
+            size_buf[i] = '\0';
+            
+            /* Padding */
+            int pad = 8 - i;
+            while (pad-- > 0) console_putc(' ');
+            console_puts(size_buf);
+        } else {
+            console_puts("       -");
+        }
+        
+        console_puts("  ");
+        
+        /* Nom */
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts(entry->name);
+        console_puts("\n");
+        
+        index++;
+        count++;
+    }
+    
+    console_puts("\nTotal: ");
+    console_put_dec(count);
+    console_puts(" items\n");
+    
+    return 0;
+}
+
+/**
+ * Commande: cat <file>
+ * Affiche le contenu d'un fichier.
+ */
+static int cmd_cat(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_puts("Usage: cat <filename>\n");
+        return -1;
+    }
+    
+    char path[SHELL_PATH_MAX];
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("cat: ");
+        console_puts(argv[1]);
+        console_puts(": Invalid path\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    vfs_node_t* file = vfs_open(path, VFS_O_RDONLY);
+    if (file == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("cat: ");
+        console_puts(path);
+        console_puts(": No such file\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (file->type & VFS_DIRECTORY) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("cat: ");
+        console_puts(path);
+        console_puts(": Is a directory\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        vfs_close(file);
+        return -1;
+    }
+    
+    /* Lire et afficher le contenu */
+    uint8_t buf[513];
+    uint32_t offset = 0;
+    int bytes_read;
+    
+    console_puts("\n");
+    
+    while ((bytes_read = vfs_read(file, offset, 512, buf)) > 0) {
+        buf[bytes_read] = '\0';
+        console_puts((char*)buf);
+        offset += bytes_read;
+    }
+    
+    console_puts("\n");
+    vfs_close(file);
+    
+    return 0;
+}
+
+/**
+ * Commande: mkdir <path>
+ * Crée un répertoire.
+ */
+static int cmd_mkdir(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_puts("Usage: mkdir <dirname>\n");
+        return -1;
+    }
+    
+    char path[SHELL_PATH_MAX];
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("mkdir: ");
+        console_puts(argv[1]);
+        console_puts(": Invalid path\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    if (vfs_mkdir(path) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("mkdir: cannot create directory '");
+        console_puts(path);
+        console_puts("'\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("Directory created: ");
+    console_puts(path);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    return 0;
+}
+
+/**
+ * Commande: touch <file>
+ * Crée un fichier vide.
+ */
+static int cmd_touch(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_puts("Usage: touch <filename>\n");
+        return -1;
+    }
+    
+    char path[SHELL_PATH_MAX];
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("touch: ");
+        console_puts(argv[1]);
+        console_puts(": Invalid path\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    /* Vérifier si le fichier existe déjà */
+    vfs_node_t* existing = vfs_resolve_path(path);
+    if (existing != NULL) {
+        /* Le fichier existe déjà - juste retourner succès (comme touch Unix) */
+        return 0;
+    }
+    
+    if (vfs_create(path) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("touch: cannot create file '");
+        console_puts(path);
+        console_puts("'\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * Commande: echo [args...]
+ * Affiche les arguments.
+ */
+static int cmd_echo(int argc, char** argv)
+{
+    for (int i = 1; i < argc; i++) {
+        console_puts(argv[i]);
+        if (i < argc - 1) {
+            console_putc(' ');
+        }
+    }
+    console_puts("\n");
+    
+    return 0;
+}
+
+/**
+ * Commande: meminfo
+ * Affiche les informations mémoire.
+ */
+static int cmd_meminfo(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    size_t total = kheap_get_total_size();
+    size_t free_mem = kheap_get_free_size();
+    size_t used = total - free_mem;
+    size_t blocks = kheap_get_block_count();
+    size_t free_blocks = kheap_get_free_block_count();
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("============================================\n");
+    console_puts("         ALOS Memory Information           \n");
+    console_puts("============================================\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Heap total */
+    console_puts("  Heap Total Size:    ");
+    console_put_dec((int)(total / 1024));
+    console_puts(" KB (");
+    console_put_dec((int)total);
+    console_puts(" bytes)\n");
+    
+    /* Heap libre */
+    console_puts("  Heap Free Size:     ");
+    console_put_dec((int)(free_mem / 1024));
+    console_puts(" KB (");
+    console_put_dec((int)free_mem);
+    console_puts(" bytes)\n");
+    
+    /* Heap utilisé */
+    console_puts("  Heap Used Size:     ");
+    console_put_dec((int)(used / 1024));
+    console_puts(" KB (");
+    console_put_dec((int)used);
+    console_puts(" bytes)\n");
+    
+    console_puts("\n");
+    
+    /* Statistiques des blocs */
+    console_puts("  Total Blocks:       ");
+    console_put_dec((int)blocks);
+    console_puts("\n");
+    
+    console_puts("  Free Blocks:        ");
+    console_put_dec((int)free_blocks);
+    console_puts("\n");
+    
+    console_puts("  Used Blocks:        ");
+    console_put_dec((int)(blocks - free_blocks));
+    console_puts("\n");
+    
+    /* Pourcentage d'utilisation */
+    console_puts("\n");
+    if (total > 0) {
+        int percent_used = (int)((used * 100) / total);
+        console_puts("  Memory Usage:       ");
+        console_put_dec(percent_used);
+        console_puts("%\n");
+    }
+    
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("\n============================================\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;

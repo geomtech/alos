@@ -14,6 +14,14 @@
 #define SYS_OPEN        5       /* Ouvrir un fichier */
 #define SYS_GETPID      20      /* Obtenir le PID du processus courant */
 
+/* Filesystem syscalls */
+#define SYS_CLOSE       6       /* Fermer un file descriptor */
+#define SYS_CHDIR       12      /* Changer de répertoire */
+#define SYS_MKDIR       39      /* Créer un répertoire */
+#define SYS_READDIR     89      /* Lire une entrée de répertoire */
+#define SYS_GETCWD      183     /* Obtenir le répertoire courant */
+#define SYS_CREATE      85      /* Créer un fichier */
+
 /* Socket syscalls (BSD-like numbers) */
 #define SYS_SOCKET      41      /* Créer un socket */
 #define SYS_BIND        49      /* Lier un socket à une adresse */
@@ -21,8 +29,11 @@
 #define SYS_ACCEPT      43      /* Accepter une connexion */
 #define SYS_SEND        44      /* Envoyer des données */
 #define SYS_RECV        45      /* Recevoir des données */
-#define SYS_CLOSE       6       /* Fermer un file descriptor */
+
+/* System syscalls */
 #define SYS_KBHIT       100     /* Vérifier si une touche est disponible (non-bloquant) */
+#define SYS_CLEAR       101     /* Effacer l'écran */
+#define SYS_MEMINFO     102     /* Obtenir les infos mémoire */
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS    256

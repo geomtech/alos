@@ -14,14 +14,21 @@
 #define SYS_WRITE       4
 #define SYS_OPEN        5
 #define SYS_CLOSE       6
+#define SYS_CHDIR       12
 #define SYS_GETPID      20
+#define SYS_MKDIR       39
 #define SYS_SOCKET      41
 #define SYS_ACCEPT      43
 #define SYS_SEND        44
 #define SYS_RECV        45
 #define SYS_BIND        49
 #define SYS_LISTEN      50
+#define SYS_CREATE      85
+#define SYS_READDIR     89
 #define SYS_KBHIT       100
+#define SYS_CLEAR       101
+#define SYS_MEMINFO     102
+#define SYS_GETCWD      183
 
 /* ========================================
  * Socket Definitions (BSD-like)
@@ -427,6 +434,168 @@ static inline void print_num(int n)
     out[i] = '\0';
     
     print(out);
+}
+
+/* ========================================
+ * Filesystem Functions
+ * ======================================== */
+
+/**
+ * Directory entry structure (must match kernel's userspace_dirent_t)
+ */
+typedef struct {
+    char name[256];
+    uint32_t type;
+    uint32_t size;
+} dirent_t;
+
+/* File types */
+#define DT_FILE     0x01
+#define DT_DIR      0x02
+
+/**
+ * Get current working directory
+ * 
+ * @param buf   Buffer to store the path
+ * @param size  Size of the buffer
+ * @return 0 on success, -1 on error
+ */
+static inline int getcwd(char* buf, size_t size)
+{
+    return syscall3(SYS_GETCWD, (int)buf, (int)size, 0);
+}
+
+/**
+ * Change current working directory
+ * 
+ * @param path  Path to the new directory
+ * @return 0 on success, -1 on error
+ */
+static inline int chdir(const char* path)
+{
+    return syscall3(SYS_CHDIR, (int)path, 0, 0);
+}
+
+/**
+ * Read a directory entry
+ * 
+ * @param path   Path to the directory
+ * @param index  Index of the entry (0, 1, 2, ...)
+ * @param entry  Output structure
+ * @return 0 on success, 1 if end of directory, -1 on error
+ */
+static inline int readdir(const char* path, int index, dirent_t* entry)
+{
+    return syscall3(SYS_READDIR, (int)path, index, (int)entry);
+}
+
+/**
+ * Create a directory
+ * 
+ * @param path  Path to the directory to create
+ * @return 0 on success, -1 on error
+ */
+static inline int mkdir(const char* path)
+{
+    return syscall3(SYS_MKDIR, (int)path, 0, 0);
+}
+
+/**
+ * Create a file
+ * 
+ * @param path  Path to the file to create
+ * @return 0 on success, -1 on error
+ */
+static inline int creat(const char* path)
+{
+    return syscall3(SYS_CREATE, (int)path, 0, 0);
+}
+
+/* ========================================
+ * System Functions
+ * ======================================== */
+
+/**
+ * Clear the screen
+ */
+static inline int clear_screen(void)
+{
+    return syscall3(SYS_CLEAR, 0, 0, 0);
+}
+
+/**
+ * Memory info structure
+ */
+typedef struct {
+    uint32_t total_size;
+    uint32_t free_size;
+    uint32_t block_count;
+    uint32_t free_block_count;
+} meminfo_t;
+
+/**
+ * Get memory information
+ * 
+ * @param info  Output structure
+ * @return 0 on success, -1 on error
+ */
+static inline int meminfo(meminfo_t* info)
+{
+    return syscall3(SYS_MEMINFO, (int)info, 0, 0);
+}
+
+/* ========================================
+ * Additional String Utilities
+ * ======================================== */
+
+/**
+ * Compare two strings
+ * 
+ * @return 0 if equal, non-zero otherwise
+ */
+static inline int strcmp(const char* s1, const char* s2)
+{
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
+/**
+ * Copy a string
+ */
+static inline char* strcpy(char* dest, const char* src)
+{
+    char* d = dest;
+    while ((*d++ = *src++) != '\0');
+    return dest;
+}
+
+/**
+ * Copy n characters of a string
+ */
+static inline char* strncpy(char* dest, const char* src, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n && src[i] != '\0'; i++) {
+        dest[i] = src[i];
+    }
+    for (; i < n; i++) {
+        dest[i] = '\0';
+    }
+    return dest;
+}
+
+/**
+ * Concatenate strings
+ */
+static inline char* strcat(char* dest, const char* src)
+{
+    char* d = dest;
+    while (*d) d++;
+    while ((*d++ = *src++) != '\0');
+    return dest;
 }
 
 #endif /* USERLAND_LIBC_H */

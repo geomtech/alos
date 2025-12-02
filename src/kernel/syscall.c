@@ -11,6 +11,7 @@
 #include "../fs/vfs.h"
 #include "../net/l4/tcp.h"
 #include "../net/core/net.h"
+#include "../mm/kheap.h"
 
 /* Macro pour activer/désactiver les interruptions */
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
@@ -301,6 +302,230 @@ static int sys_getpid(void)
 static int sys_kbhit(void)
 {
     return (int)keyboard_getchar_nonblock();
+}
+
+/* ========================================
+ * Filesystem Syscalls
+ * ======================================== */
+
+/* Répertoire courant global (pour V1, simplifié) */
+static char current_working_dir[VFS_MAX_PATH] = "/";
+
+/**
+ * SYS_GETCWD (183) - Obtenir le répertoire courant
+ * 
+ * @param buf   Buffer pour stocker le chemin
+ * @param size  Taille du buffer
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_getcwd(char* buf, uint32_t size)
+{
+    if (buf == NULL || size == 0) {
+        return -1;
+    }
+    
+    uint32_t len = 0;
+    while (current_working_dir[len] != '\0' && len < VFS_MAX_PATH) {
+        len++;
+    }
+    
+    if (len >= size) {
+        return -1;  /* Buffer trop petit */
+    }
+    
+    for (uint32_t i = 0; i <= len; i++) {
+        buf[i] = current_working_dir[i];
+    }
+    
+    return 0;
+}
+
+/**
+ * SYS_CHDIR (12) - Changer de répertoire courant
+ * 
+ * @param path  Nouveau chemin (absolu ou relatif)
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_chdir(const char* path)
+{
+    if (path == NULL) {
+        return -1;
+    }
+    
+    char new_path[VFS_MAX_PATH];
+    
+    /* Construire le chemin absolu */
+    if (path[0] == '/') {
+        /* Chemin absolu */
+        uint32_t i = 0;
+        while (path[i] != '\0' && i < VFS_MAX_PATH - 1) {
+            new_path[i] = path[i];
+            i++;
+        }
+        new_path[i] = '\0';
+    } else {
+        /* Chemin relatif */
+        uint32_t cwd_len = 0;
+        while (current_working_dir[cwd_len] != '\0') cwd_len++;
+        
+        uint32_t i = 0;
+        /* Copier le cwd */
+        for (; i < cwd_len && i < VFS_MAX_PATH - 1; i++) {
+            new_path[i] = current_working_dir[i];
+        }
+        /* Ajouter / si nécessaire */
+        if (i > 0 && new_path[i-1] != '/' && i < VFS_MAX_PATH - 1) {
+            new_path[i++] = '/';
+        }
+        /* Ajouter le chemin relatif */
+        uint32_t j = 0;
+        while (path[j] != '\0' && i < VFS_MAX_PATH - 1) {
+            new_path[i++] = path[j++];
+        }
+        new_path[i] = '\0';
+    }
+    
+    /* Vérifier que le répertoire existe */
+    vfs_node_t* node = vfs_resolve_path(new_path);
+    if (node == NULL) {
+        return -1;
+    }
+    
+    if (!(node->type & VFS_DIRECTORY)) {
+        return -1;  /* Ce n'est pas un répertoire */
+    }
+    
+    /* Mettre à jour le cwd */
+    uint32_t i = 0;
+    while (new_path[i] != '\0' && i < VFS_MAX_PATH - 1) {
+        current_working_dir[i] = new_path[i];
+        i++;
+    }
+    current_working_dir[i] = '\0';
+    
+    return 0;
+}
+
+/**
+ * Structure pour READDIR userspace
+ */
+typedef struct {
+    char name[256];
+    uint32_t type;
+    uint32_t size;
+} userspace_dirent_t;
+
+/**
+ * SYS_READDIR (89) - Lire une entrée de répertoire
+ * 
+ * @param path   Chemin du répertoire
+ * @param index  Index de l'entrée
+ * @param entry  Structure de sortie userspace
+ * @return 0 si succès, 1 si fin de répertoire, -1 si erreur
+ */
+static int sys_readdir(const char* path, uint32_t index, userspace_dirent_t* entry)
+{
+    if (path == NULL || entry == NULL) {
+        return -1;
+    }
+    
+    vfs_node_t* dir = vfs_resolve_path(path);
+    if (dir == NULL) {
+        return -1;
+    }
+    
+    if (!(dir->type & VFS_DIRECTORY)) {
+        return -1;
+    }
+    
+    vfs_dirent_t* dirent = vfs_readdir(dir, index);
+    if (dirent == NULL) {
+        return 1;  /* Fin du répertoire */
+    }
+    
+    /* Copier les infos */
+    uint32_t i = 0;
+    while (dirent->name[i] != '\0' && i < 255) {
+        entry->name[i] = dirent->name[i];
+        i++;
+    }
+    entry->name[i] = '\0';
+    entry->type = dirent->type;
+    
+    /* Obtenir la taille du fichier */
+    vfs_node_t* file_node = vfs_finddir(dir, dirent->name);
+    entry->size = (file_node != NULL) ? file_node->size : 0;
+    
+    return 0;
+}
+
+/**
+ * SYS_MKDIR (39) - Créer un répertoire
+ * 
+ * @param path  Chemin du répertoire à créer
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_mkdir(const char* path)
+{
+    if (path == NULL) {
+        return -1;
+    }
+    
+    return vfs_mkdir(path);
+}
+
+/**
+ * SYS_CREATE (85) - Créer un fichier
+ * 
+ * @param path  Chemin du fichier à créer
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_create(const char* path)
+{
+    if (path == NULL) {
+        return -1;
+    }
+    
+    return vfs_create(path);
+}
+
+/**
+ * SYS_CLEAR (101) - Effacer l'écran
+ */
+static int sys_clear(void)
+{
+    console_clear(VGA_COLOR_BLACK);
+    return 0;
+}
+
+/**
+ * Structure pour les infos mémoire
+ */
+typedef struct {
+    uint32_t total_size;
+    uint32_t free_size;
+    uint32_t block_count;
+    uint32_t free_block_count;
+} meminfo_t;
+
+/**
+ * SYS_MEMINFO (102) - Obtenir les informations mémoire
+ * 
+ * @param info  Structure de sortie
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_meminfo(meminfo_t* info)
+{
+    if (info == NULL) {
+        return -1;
+    }
+    
+    info->total_size = (uint32_t)kheap_get_total_size();
+    info->free_size = (uint32_t)kheap_get_free_size();
+    info->block_count = (uint32_t)kheap_get_block_count();
+    info->free_block_count = (uint32_t)kheap_get_free_block_count();
+    
+    return 0;
 }
 
 /* ========================================
@@ -771,6 +996,36 @@ void syscall_dispatcher(syscall_regs_t* regs)
             
         case SYS_KBHIT:
             result = sys_kbhit();
+            break;
+        
+        /* Filesystem syscalls */
+        case SYS_GETCWD:
+            result = sys_getcwd((char*)regs->ebx, regs->ecx);
+            break;
+            
+        case SYS_CHDIR:
+            result = sys_chdir((const char*)regs->ebx);
+            break;
+            
+        case SYS_READDIR:
+            result = sys_readdir((const char*)regs->ebx, regs->ecx, (userspace_dirent_t*)regs->edx);
+            break;
+            
+        case SYS_MKDIR:
+            result = sys_mkdir((const char*)regs->ebx);
+            break;
+            
+        case SYS_CREATE:
+            result = sys_create((const char*)regs->ebx);
+            break;
+        
+        /* System syscalls */
+        case SYS_CLEAR:
+            result = sys_clear();
+            break;
+            
+        case SYS_MEMINFO:
+            result = sys_meminfo((meminfo_t*)regs->ebx);
             break;
             
         default:

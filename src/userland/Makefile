@@ -9,7 +9,8 @@ LD = i686-elf-ld
 # -nostdlib : pas de bibliothèques standard
 # -fno-builtin : pas de fonctions builtin
 # -m32 : forcer 32 bits
-CFLAGS = -ffreestanding -nostdlib -fno-builtin -m32 -O0 -g -Wall
+# -I../../userland : pour inclure libc.h
+CFLAGS = -ffreestanding -nostdlib -fno-builtin -m32 -O0 -g -Wall -I../../userland
 
 # Adresse de base des programmes utilisateur
 # Le kernel charge les programmes à partir de 0x400000

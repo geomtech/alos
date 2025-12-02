@@ -296,34 +296,101 @@ int shell_resolve_path(const char* path, char* result, size_t size)
         return -1;
     }
     
+    char temp[SHELL_PATH_MAX];
+    
     /* Chemin absolu */
     if (path[0] == '/') {
-        strncpy(result, path, size - 1);
-        result[size - 1] = '\0';
+        strncpy(temp, path, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
     } else {
         /* Chemin relatif - concaténer avec cwd */
         size_t cwd_len = strlen(cwd);
         
         /* Copier le cwd */
-        strncpy(result, cwd, size - 1);
+        strncpy(temp, cwd, sizeof(temp) - 1);
+        temp[sizeof(temp) - 1] = '\0';
         
         /* Ajouter un '/' si nécessaire */
-        if (cwd_len > 0 && cwd[cwd_len - 1] != '/' && cwd_len < size - 1) {
-            result[cwd_len] = '/';
-            result[cwd_len + 1] = '\0';
-            cwd_len++;
+        if (cwd_len > 0 && cwd[cwd_len - 1] != '/' && cwd_len < sizeof(temp) - 1) {
+            temp[cwd_len] = '/';
+            temp[cwd_len + 1] = '\0';
         }
         
         /* Ajouter le chemin relatif */
+        size_t temp_len = strlen(temp);
         size_t path_len = strlen(path);
-        if (cwd_len + path_len < size) {
-            strcat(result, path);
+        if (temp_len + path_len < sizeof(temp)) {
+            strcat(temp, path);
         } else {
             return -1;  /* Chemin trop long */
         }
     }
     
-    /* TODO: Normaliser le chemin (résoudre . et ..) */
+    /* Normaliser le chemin (résoudre . et ..) */
+    char* components[64];  /* Max 64 niveaux de profondeur */
+    int depth = 0;
+    
+    /* Tokenizer le chemin */
+    char* p = temp;
+    while (*p == '/') p++;  /* Sauter les / initiaux */
+    
+    while (*p != '\0') {
+        /* Début du composant */
+        char* start = p;
+        
+        /* Trouver la fin du composant */
+        while (*p != '/' && *p != '\0') p++;
+        
+        /* Calculer la longueur */
+        size_t comp_len = p - start;
+        
+        /* Terminer temporairement le composant */
+        char saved = *p;
+        *p = '\0';
+        
+        if (comp_len == 0 || (comp_len == 1 && start[0] == '.')) {
+            /* Composant vide ou "." - ignorer */
+        } else if (comp_len == 2 && start[0] == '.' && start[1] == '.') {
+            /* ".." - remonter d'un niveau */
+            if (depth > 0) {
+                depth--;
+            }
+        } else {
+            /* Composant normal - ajouter */
+            if (depth < 64) {
+                components[depth++] = start;
+            }
+        }
+        
+        /* Restaurer et avancer */
+        *p = saved;
+        while (*p == '/') p++;
+    }
+    
+    /* Reconstruire le chemin normalisé */
+    if (depth == 0) {
+        /* Racine */
+        if (size >= 2) {
+            result[0] = '/';
+            result[1] = '\0';
+        } else {
+            return -1;
+        }
+    } else {
+        size_t pos = 0;
+        for (int i = 0; i < depth; i++) {
+            /* Ajouter / */
+            if (pos < size - 1) {
+                result[pos++] = '/';
+            }
+            /* Ajouter le composant */
+            const char* comp = components[i];
+            while (*comp != '\0' && pos < size - 1) {
+                result[pos++] = *comp++;
+            }
+        }
+        result[pos] = '\0';
+    }
     
     return 0;
 }
