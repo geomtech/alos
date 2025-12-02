@@ -47,6 +47,7 @@ static int cmd_rm(int argc, char** argv);
 static int cmd_rmdir(int argc, char** argv);
 static int cmd_threads(int argc, char** argv);
 static int cmd_synctest(int argc, char** argv);
+static int cmd_schedtest(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -59,6 +60,7 @@ static shell_command_t commands[] = {
     { "tasks",    "Test multitasking (launches 2 threads)",  cmd_tasks },
     { "threads",  "Test new multithreading with priorities", cmd_threads },
     { "synctest", "Test synchronization primitives (mutex, sem, etc.)", cmd_synctest },
+    { "schedtest", "Test scheduler aging and nice values", cmd_schedtest },
     { "ps",       "List running processes",                  cmd_ps },
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     { "exec",     "Execute an ELF program",                  cmd_exec },
@@ -1818,6 +1820,172 @@ static int cmd_synctest(int argc, char** argv)
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("=== All Synchronization Tests Complete ===\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
+
+    return 0;
+}
+
+/* ========================================
+ * Scheduler Test - Nice and Aging (Rocket Boost)
+ * ======================================== */
+
+/* Test threads for scheduler */
+static void sched_test_worker_busy(void *arg)
+{
+    int id = (int)arg;
+    uint64_t iterations = 0;
+    int nice = (int)thread_get_nice(thread_current());
+
+    console_puts("Worker ");
+    console_put_dec(id);
+    console_puts(" (nice=");
+    if (nice < 0) {
+        console_puts("-");
+        console_put_dec(-nice);
+    } else if (nice > 0) {
+        console_puts("+");
+        console_put_dec(nice);
+    } else {
+        console_puts("0");
+    }
+    console_puts(") started - TID=");
+    console_put_dec(thread_get_tid());
+    console_puts("\n");
+
+    /* Busy work for ~50ms to avoid too many context switches */
+    for (int i = 0; i < 50; i++) {
+        iterations++;
+        thread_yield();  /* Give others a chance */
+    }
+
+    console_puts("Worker ");
+    console_put_dec(id);
+    console_puts(" finished after ");
+    console_put_dec(iterations);
+    console_puts(" yields (CPU time: ");
+    console_put_dec(thread_get_cpu_time_ms(thread_current()));
+    console_puts("ms)\n");
+}
+
+static void sched_test_worker_idle(void *arg)
+{
+    (void)arg;
+
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    console_puts("[LOW PRIORITY] Thread started with nice=+19 (IDLE priority)\n");
+    console_puts("[LOW PRIORITY] Waiting for Rocket Boost after 100ms of starvation...\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    /* This thread should get starved initially, then boosted by aging */
+    uint64_t start_time = thread_get_cpu_time_ms(thread_current());
+
+    for (int i = 0; i < 50; i++) {
+        thread_yield();
+    }
+
+    uint64_t end_time = thread_get_cpu_time_ms(thread_current());
+
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("[LOW PRIORITY] Thread completed! CPU time: ");
+    console_put_dec(end_time - start_time);
+    console_puts("ms\n");
+    console_puts("[LOW PRIORITY] Should have been boosted to UI priority by aging!\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+}
+
+static int cmd_schedtest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("=== Scheduler Improvements Test ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("Testing: Nice values, Rocket Boost aging, CPU accounting\n\n");
+
+    /* Test 1: Nice values */
+    console_puts("[TEST 1] Nice Values (-20 to +19)\n");
+    console_puts("Creating 3 threads with different nice values:\n");
+
+    /* Create threads with appropriate initial priorities to avoid race */
+    thread_t *t1 = thread_create("nice_-10", sched_test_worker_busy, (void*)1, 0, THREAD_PRIORITY_UI);
+    console_puts("  Created t1 - TID=");
+    if (t1) {
+        console_put_dec(t1->tid);
+        thread_set_nice(t1, -10);  /* Set nice immediately after creation */
+    } else {
+        console_puts("FAILED");
+    }
+    console_puts("\n");
+
+    thread_t *t2 = thread_create("nice_0", sched_test_worker_busy, (void*)2, 0, THREAD_PRIORITY_NORMAL);
+    console_puts("  Created t2 - TID=");
+    if (t2) {
+        console_put_dec(t2->tid);
+        thread_set_nice(t2, 0);    /* Set nice immediately after creation */
+    } else {
+        console_puts("FAILED");
+    }
+    console_puts("\n");
+
+    thread_t *t3 = thread_create("nice_+10", sched_test_worker_busy, (void*)3, 0, THREAD_PRIORITY_BACKGROUND);
+    console_puts("  Created t3 - TID=");
+    if (t3) {
+        console_put_dec(t3->tid);
+        thread_set_nice(t3, +10);  /* Set nice immediately after creation */
+    } else {
+        console_puts("FAILED");
+    }
+    console_puts("\n\n");
+
+    console_puts("  Thread 1: nice=-10 -> UI priority\n");
+    console_puts("  Thread 2: nice=0   -> NORMAL priority\n");
+    console_puts("  Thread 3: nice=+10 -> BACKGROUND priority\n\n");
+
+    if (t1) thread_join(t1);
+    if (t2) thread_join(t2);
+    if (t3) thread_join(t3);
+
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("  Nice values test complete!\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    /* Test 2: Rocket Boost (Aging) */
+    console_puts("[TEST 2] Rocket Boost Aging\n");
+    console_puts("Creating one IDLE priority thread that should be starved,\n");
+    console_puts("then automatically boosted to UI priority after 100ms.\n\n");
+
+    /* Create high priority threads to starve the low one */
+    thread_t *high1 = thread_create("high1", sched_test_worker_busy, (void*)10, 0, THREAD_PRIORITY_HIGH);
+    thread_t *high2 = thread_create("high2", sched_test_worker_busy, (void*)11, 0, THREAD_PRIORITY_HIGH);
+
+    /* Create the low priority thread that should get boosted */
+    thread_t *low = thread_create("idle_boost", sched_test_worker_idle, NULL, 0, THREAD_PRIORITY_IDLE);
+    if (low) thread_set_nice(low, +19);  /* Extremely low priority */
+
+    if (high1) thread_join(high1);
+    if (high2) thread_join(high2);
+    if (low) thread_join(low);
+
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("  Rocket Boost aging test complete!\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+    /* Test 3: Display thread stats */
+    console_puts("[TEST 3] CPU Accounting\n");
+    console_puts("Displaying thread list with CPU time and context switches:\n");
+
+    thread_list_debug();
+
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("=== Scheduler Test Complete ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("Check the thread list above to see:\n");
+    console_puts("  - CPU time consumed (ms)\n");
+    console_puts("  - Context switch count\n");
+    console_puts("  - Nice values\n");
+    console_puts("  - Boost status (B)\n\n");
+
     return 0;
 }

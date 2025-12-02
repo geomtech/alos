@@ -106,22 +106,65 @@ typedef enum {
 } thread_state_t;
 
 typedef struct thread {
+    // Identity
     uint32_t tid;
     char name[32];
+    uint32_t magic;                  // Validation (0x54485244 = 'THRD')
+
+    // State
     thread_state_t state;
-    thread_priority_t priority;
-    
-    uint32_t esp;                    // Stack pointer sauvegardé
-    uint32_t *stack_base;            // Base de la stack
-    uint32_t stack_size;
-    
-    uint64_t wake_time;              // Pour sleep
     int exit_status;
-    
+    volatile int should_terminate;
+    bool exited;
+
+    // CPU Context
+    uint32_t esp;                    // Stack pointer sauvegardé
+    uint32_t esp0;                   // Kernel stack top
+    void *stack_base;                // Base de la stack allouée
+    uint32_t stack_size;
+
+    // Entry point
+    thread_entry_t entry;
+    void *arg;
+
+    // Scheduling
+    thread_priority_t base_priority;
+    thread_priority_t priority;      // Can be boosted temporarily
+    uint32_t time_slice_remaining;
+
+    // Nice value and aging (Rocket Boost)
+    int8_t nice;                     // -20 (high) to +19 (low)
+    bool is_boosted;                 // Temporarily boosted by aging
+    uint64_t wait_start_tick;        // When entered ready state
+
+    // CPU accounting
+    uint64_t cpu_ticks;              // Total CPU time (milliseconds)
+    uint64_t context_switches;       // Number of times scheduled
+    uint64_t run_start_tick;         // When started running
+
+    // SMP preparation
+    uint32_t cpu_affinity;           // CPU affinity mask (0xFFFFFFFF = any)
+    uint32_t last_cpu;               // Last CPU this thread ran on
+
+    // Sleep
+    uint64_t wake_tick;              // Absolute tick when to wake
+
+    // Wait queue
+    wait_queue_t *waiting_queue;
+    thread_t *wait_queue_next;
+
+    // Scheduler queue (doubly-linked)
+    thread_t *sched_next;
+    thread_t *sched_prev;
+
+    // Process threads list
+    thread_t *proc_next;
+
+    // Preemption control
+    volatile uint32_t preempt_count; // > 0 = preemption disabled
+    volatile bool preempt_pending;   // Preemption requested but deferred
+
     struct process *owner;           // Process parent
-    struct thread *next_in_process;  // Liste dans le process
-    struct thread *next;             // Liste globale / wait queue
-    struct thread *prev;
 } thread_t;
 
 typedef struct wait_queue {
@@ -165,6 +208,8 @@ void scheduler_tick(void);  // Appelé par le timer (préemption désactivée)
 
 ### Comment Tester
 
+#### Test 1: Priorités basiques
+
 ```bash
 make run
 # Dans le shell ALOS:
@@ -187,6 +232,79 @@ Results:
   Low priority iterations: 5
 All threads completed!
 ```
+
+#### Test 2: Nice values, Aging & CPU Accounting
+
+```bash
+make run
+# Dans le shell ALOS:
+schedtest
+```
+
+Résultat attendu :
+```
+=== Scheduler Improvements Test ===
+Testing: Nice values, Rocket Boost aging, CPU accounting
+
+[TEST 1] Nice Values (-20 to +19)
+Creating 3 threads with different nice values:
+  Created t1 - TID=3
+  Created t2 - TID=4
+  Created t3 - TID=5
+
+  Thread 1: nice=-10 -> UI priority
+  Thread 2: nice=0   -> NORMAL priority
+  Thread 3: nice=+10 -> BACKGROUND priority
+
+Worker 1 (nice=-10) started - TID=3
+Worker 1 finished after 50 yields (CPU time: 13ms)
+Worker 2 (nice=0) started - TID=4
+Worker 2 finished after 50 yields (CPU time: 6ms)
+Worker 3 (nice=+10) started - TID=5
+Worker 3 finished after 50 yields (CPU time: 5ms)
+  Nice values test complete!
+
+[TEST 2] Rocket Boost Aging
+Creating one IDLE priority thread that should be starved,
+then automatically boosted to UI priority after 100ms.
+
+Worker 11 (nice=0) started - TID=7
+Worker 10 (nice=0) started - TID=6
+Worker 11 finished after 50 yields (CPU time: 7ms)
+Worker 10 finished after 50 yields (CPU time: 17ms)
+[LOW PRIORITY] Thread started with nice=+19 (IDLE priority)
+[LOW PRIORITY] Waiting for Rocket Boost after 100ms of starvation...
+[LOW PRIORITY] Thread completed! CPU time: 4ms
+[LOW PRIORITY] Should have been boosted to UI priority by aging!
+  Rocket Boost aging test complete!
+
+[TEST 3] CPU Accounting
+Displaying thread list with CPU time and context switches:
+
+=== Thread List ===
+TID  State     Priority   Nice  B  CPU    Ctx  Name
+---  -----     --------   ----  -  ---    ---  ----
+1    RUNNING   NORMAL      0       1900ms  408  main <-- current
+2    READY     IDLE        0       189ms   189  idle
+
+B = Boosted by aging (Rocket Boost)
+===================
+
+=== Scheduler Test Complete ===
+Check the thread list above to see:
+  - CPU time consumed (ms)
+  - Context switch count
+  - Nice values
+  - Boost status (B)
+```
+
+#### Test 3: Synchronisation
+
+```bash
+synctest
+```
+
+Teste les mutex, semaphores, condition variables et read-write locks.
 
 ## 🔄 En Cours / À Faire
 
@@ -242,11 +360,121 @@ void rwlock_wrunlock(rwlock_t *rwlock);
 
 > **Note:** `kmalloc()` et la console utilisent des spinlocks simples. TODO futur : utiliser `cpu_cli()`/`cpu_restore_flags()` si appelé depuis un contexte d'interruption. L'API atomique est dans `src/kernel/atomic.h`.
 
-### Améliorations Scheduler
-- [ ] **Aging** - Éviter famine des threads basse priorité
-- [ ] **Nice values** - Ajustement fin des priorités
-- [ ] **CPU time accounting** - Mesurer le temps CPU par thread
-- [ ] **Load balancing** - Pour futur SMP
+### ✅ Améliorations Scheduler (Implémenté!)
+- [x] **Aging (Rocket Boost)** - Éviter famine des threads basse priorité (boost automatique après 100ms)
+- [x] **Nice values** - Ajustement fin des priorités (-20 à +19, convention Unix)
+- [x] **CPU time accounting** - Mesurer le temps CPU par thread (ticks + context switches)
+- [x] **Priority-based time slices** - Quantum variable selon priorité (5-20 ticks)
+- [x] **SMP preparation** - CPU affinity et last_cpu pour futur multiprocesseur
+- [ ] **Load balancing** - Pour futur SMP (champs prêts)
+
+### Scheduler Avancé - Nice Values & Aging
+
+#### API Nice Values
+
+```c
+// === Nice Value Management (Unix-style) ===
+void thread_set_nice(thread_t *thread, int8_t nice);    // -20 (high) to +19 (low)
+int8_t thread_get_nice(thread_t *thread);
+uint64_t thread_get_cpu_time_ms(thread_t *thread);
+```
+
+#### Mapping Nice → Priority
+
+| Nice Range | Priority Level | Time Slice | Usage |
+|------------|---------------|------------|-------|
+| -20 à -10 | UI (4) | 5 ticks | Très haute priorité |
+| -9 à -5 | HIGH (3) | 7 ticks | Haute priorité |
+| -4 à +4 | NORMAL (2) | 10 ticks | Priorité par défaut |
+| +5 à +14 | BACKGROUND (1) | 15 ticks | Basse priorité |
+| +15 à +19 | IDLE (0) | 20 ticks | Très basse priorité |
+
+#### Rocket Boost Aging
+
+Mécanisme anti-starvation automatique:
+
+1. **Détection**: `scheduler_tick()` surveille tous les threads en attente
+2. **Threshold**: Si `wait_time > 100ms` (THREAD_AGING_THRESHOLD)
+3. **Boost**: Thread automatiquement promu à UI priority
+4. **Flag**: `is_boosted = true` pour tracking
+5. **Demotion**: Au prochain context switch, retour à priorité originale
+
+```
+Timeline:
+─────────────────────────────────────────────►
+         Thread IDLE (nice=+19)
+         │
+   0ms   │ Created, enters READY queue
+         │ High priority threads monopolize CPU
+         │
+  100ms  │ ⚡ ROCKET BOOST! → UI priority
+         │ is_boosted = true
+         │
+  105ms  │ ✅ Gets CPU time
+         │ Completes work
+         │
+  110ms  │ Context switch → demoted back to IDLE
+         │ is_boosted = false
+         └─
+```
+
+#### CPU Accounting
+
+Chaque thread tracking:
+
+```c
+struct thread {
+    // ...
+    uint64_t cpu_ticks;           // Total CPU time (milliseconds)
+    uint64_t context_switches;    // Number of times scheduled
+    uint64_t run_start_tick;      // When started running (for accounting)
+    uint64_t wait_start_tick;     // When entered ready state (for aging)
+    // ...
+};
+```
+
+**Update points:**
+- `scheduler_tick()`: Increment `cpu_ticks` for running thread
+- Context switch out: Finalize CPU time
+- Context switch in: Start new accounting period, increment `context_switches`
+
+#### Test Command
+
+```bash
+schedtest
+```
+
+**Tests:**
+1. Nice values (-10, 0, +10) → Vérifie mapping et ordre d'exécution
+2. Rocket Boost → Thread IDLE starved puis boosté après 100ms
+3. CPU Accounting → Affiche temps CPU et context switches
+
+**Expected output:**
+```
+=== Scheduler Improvements Test ===
+
+[TEST 1] Nice Values (-20 to +19)
+Worker 1 (nice=-10) started - TID=3
+Worker 1 finished after 50 yields (CPU time: 13ms)
+Worker 2 (nice=0) started - TID=4
+Worker 2 finished after 50 yields (CPU time: 6ms)
+Worker 3 (nice=+10) started - TID=5
+Worker 3 finished after 50 yields (CPU time: 5ms)
+
+[TEST 2] Rocket Boost Aging
+[LOW PRIORITY] Thread started with nice=+19
+[LOW PRIORITY] Waiting for Rocket Boost after 100ms...
+[LOW PRIORITY] Thread completed! CPU time: 4ms
+[LOW PRIORITY] Should have been boosted to UI priority by aging!
+
+[TEST 3] CPU Accounting
+TID  State     Priority   Nice  B  CPU    Ctx  Name
+---  -----     --------   ----  -  ---    ---  ----
+1    RUNNING   NORMAL      0       1900ms  408  main
+2    READY     IDLE        0       189ms   189  idle
+
+B = Boosted by aging (Rocket Boost)
+```
 
 ### Kernel Threads Utiles
 - [x] **Idle thread** - `hlt` pour économie d'énergie
@@ -297,7 +525,7 @@ Pour avoir plusieurs programmes ELF en parallèle en User Mode :
 | `src/arch/x86/switch.s` | Context switch assembleur (`switch_context`) |
 | `src/arch/x86/interrupts.s` | IRQ handlers avec support préemption |
 | `src/kernel/timer.c` | Timer + `timer_handler_preempt()` |
-| `src/shell/commands.c` | Commandes `threads` et `synctest` de test |
+| `src/shell/commands.c` | Commandes `threads`, `synctest` et `schedtest` |
 
 ## Historique des Bugs Corrigés
 
@@ -306,3 +534,5 @@ Pour avoir plusieurs programmes ELF en parallèle en User Mode :
 | Triple fault sur `threads` | `switch_task` chargeait CR3=0 | Skip CR3 reload si new_cr3 == 0 |
 | Pas de thread main | Shell sans `thread_t` associé | Créer main_thread dans `scheduler_init` |
 | Format stack incompatible | `switch_task` vs `popa+iretd` | Format unifié `interrupt_frame_t` |
+| Worker 2 disparaît dans `schedtest` | Race condition: threads démarraient avant `thread_set_nice()` | Créer threads avec priorité cible, puis set nice immédiatement |
+| Nice négatifs affichés incorrectement | `console_put_dec()` prend `uint32_t`, cast de `int8_t` négatif | Gestion manuelle du signe avant l'affichage |

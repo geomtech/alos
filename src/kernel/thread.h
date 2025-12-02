@@ -17,6 +17,14 @@
 /* Time slice par défaut (en ticks) */
 #define THREAD_TIME_SLICE_DEFAULT 10
 
+/* Nice values - Unix convention */
+#define THREAD_NICE_MIN         -20     /* Highest priority */
+#define THREAD_NICE_MAX         19      /* Lowest priority */
+#define THREAD_NICE_DEFAULT     0       /* Normal priority */
+
+/* Aging threshold for Rocket Boost (in ticks) */
+#define THREAD_AGING_THRESHOLD  100     /* 100ms before boost */
+
 /* ========================================
  * Interrupt Frame - Contexte CPU complet
  * Utilisé pour la préemption depuis IRQ
@@ -164,7 +172,21 @@ struct thread {
     thread_priority_t base_priority;    /* Priorité de base */
     thread_priority_t priority;         /* Priorité actuelle (peut être boostée) */
     uint32_t time_slice_remaining;      /* Ticks restants avant préemption */
-    
+
+    /* Nice value and aging (Rocket Boost) */
+    int8_t nice;                        /* Nice value: -20 (high) to +19 (low) */
+    bool is_boosted;                    /* Thread is temporarily boosted by aging */
+    uint64_t wait_start_tick;           /* When thread entered wait/ready state */
+
+    /* CPU accounting */
+    uint64_t cpu_ticks;                 /* Total CPU time consumed (in ticks) */
+    uint64_t context_switches;          /* Number of times scheduled */
+    uint64_t run_start_tick;            /* When thread started running (for accounting) */
+
+    /* SMP preparation */
+    uint32_t cpu_affinity;              /* CPU affinity mask (0xFFFFFFFF = any CPU) */
+    uint32_t last_cpu;                  /* Last CPU this thread ran on */
+
     /* Sleep */
     uint64_t wake_tick;             /* Tick auquel réveiller le thread */
     
@@ -275,6 +297,22 @@ uint32_t thread_get_tid(void);
  * Définit la priorité d'un thread.
  */
 void thread_set_priority(thread_t *thread, thread_priority_t priority);
+
+/**
+ * Définit la nice value d'un thread (-20 à +19).
+ * Recalcule automatiquement la priorité.
+ */
+void thread_set_nice(thread_t *thread, int8_t nice);
+
+/**
+ * Retourne la nice value d'un thread.
+ */
+int8_t thread_get_nice(thread_t *thread);
+
+/**
+ * Retourne le temps CPU utilisé par un thread (en millisecondes).
+ */
+uint64_t thread_get_cpu_time_ms(thread_t *thread);
 
 /**
  * Cède le CPU au scheduler.

@@ -39,6 +39,10 @@ extern void task_entry_point(void);
  * Fonctions utilitaires internes
  * ======================================== */
 
+/* Forward declarations */
+static thread_priority_t scheduler_nice_to_priority(int8_t nice);
+static uint32_t scheduler_get_time_slice(thread_t *thread);
+
 static void safe_strcpy(char *dest, const char *src, uint32_t max_len)
 {
     uint32_t i;
@@ -250,16 +254,30 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     
     thread->base_priority = priority;
     thread->priority = priority;
-    thread->time_slice_remaining = THREAD_TIME_SLICE_DEFAULT;
-    
+    thread->time_slice_remaining = scheduler_get_time_slice(thread);
+
+    /* Nice value and aging */
+    thread->nice = THREAD_NICE_DEFAULT;
+    thread->is_boosted = false;
+    thread->wait_start_tick = timer_get_ticks();
+
+    /* CPU accounting */
+    thread->cpu_ticks = 0;
+    thread->context_switches = 0;
+    thread->run_start_tick = 0;
+
+    /* SMP preparation */
+    thread->cpu_affinity = 0xFFFFFFFF;  /* Can run on any CPU */
+    thread->last_cpu = 0;               /* Default to CPU 0 */
+
     thread->wake_tick = 0;
     thread->waiting_queue = NULL;
     thread->wait_queue_next = NULL;
-    
+
     thread->sched_next = NULL;
     thread->sched_prev = NULL;
     thread->proc_next = NULL;
-    
+
     /* Préemption */
     thread->preempt_count = 0;
     thread->preempt_pending = false;
@@ -413,21 +431,120 @@ uint32_t thread_get_tid(void)
 void thread_set_priority(thread_t *thread, thread_priority_t priority)
 {
     if (!thread || priority >= THREAD_PRIORITY_COUNT) return;
-    
+
     uint32_t flags = cpu_save_flags();
     cpu_cli();
-    
+
     thread_priority_t old_priority = thread->priority;
     thread->priority = priority;
     thread->base_priority = priority;
-    
+
     /* Si le thread est dans la run queue, le déplacer */
     if (thread->state == THREAD_STATE_READY && old_priority != priority) {
         scheduler_dequeue(thread);
         scheduler_enqueue(thread);
     }
-    
+
     cpu_restore_flags(flags);
+}
+
+/* ========================================
+ * Nice to Priority Mapping
+ * Convention Unix: nice -20 = max priority, +19 = min priority
+ * ======================================== */
+
+static thread_priority_t scheduler_nice_to_priority(int8_t nice)
+{
+    /* Clamp to valid range */
+    if (nice < THREAD_NICE_MIN) nice = THREAD_NICE_MIN;
+    if (nice > THREAD_NICE_MAX) nice = THREAD_NICE_MAX;
+
+    /* Nice to Priority mapping:
+     * [-20, -10] → UI (4)      - Highest priority
+     * [-9,  -5]  → HIGH (3)    - High priority
+     * [-4,  +4]  → NORMAL (2)  - Default
+     * [+5, +14]  → BACKGROUND (1) - Low priority
+     * [+15, +19] → IDLE (0)    - Lowest priority
+     */
+    if (nice <= -10) {
+        return THREAD_PRIORITY_UI;
+    } else if (nice <= -5) {
+        return THREAD_PRIORITY_HIGH;
+    } else if (nice <= 4) {
+        return THREAD_PRIORITY_NORMAL;
+    } else if (nice <= 14) {
+        return THREAD_PRIORITY_BACKGROUND;
+    } else {
+        return THREAD_PRIORITY_IDLE;
+    }
+}
+
+/* Time slice par priorité (en ticks)
+ * Inverse de la priorité: IDLE a plus de temps, UI a moins
+ * pour permettre plus de réactivité aux priorités hautes */
+static const uint32_t g_priority_time_slice[THREAD_PRIORITY_COUNT] = {
+    20,  /* IDLE: 20 ticks (20 ms) - long quantum */
+    15,  /* BACKGROUND: 15 ticks */
+    10,  /* NORMAL: 10 ticks (default) */
+    7,   /* HIGH: 7 ticks */
+    5    /* UI: 5 ticks - court pour réactivité */
+};
+
+static uint32_t scheduler_get_time_slice(thread_t *thread)
+{
+    if (!thread) return THREAD_TIME_SLICE_DEFAULT;
+
+    thread_priority_t pri = thread->priority;
+    if (pri >= THREAD_PRIORITY_COUNT) {
+        pri = THREAD_PRIORITY_NORMAL;
+    }
+
+    return g_priority_time_slice[pri];
+}
+
+void thread_set_nice(thread_t *thread, int8_t nice)
+{
+    if (!thread) return;
+
+    /* Clamp to valid range */
+    if (nice < THREAD_NICE_MIN) nice = THREAD_NICE_MIN;
+    if (nice > THREAD_NICE_MAX) nice = THREAD_NICE_MAX;
+
+    uint32_t flags = cpu_save_flags();
+    cpu_cli();
+
+    thread->nice = nice;
+
+    /* Only recalculate priority if not currently boosted */
+    if (!thread->is_boosted) {
+        thread_priority_t old_priority = thread->priority;
+        thread_priority_t new_priority = scheduler_nice_to_priority(nice);
+
+        thread->priority = new_priority;
+        thread->base_priority = new_priority;
+
+        /* Si le thread est dans la run queue, le déplacer */
+        if (thread->state == THREAD_STATE_READY && old_priority != new_priority) {
+            scheduler_dequeue(thread);
+            scheduler_enqueue(thread);
+        }
+    }
+
+    cpu_restore_flags(flags);
+}
+
+int8_t thread_get_nice(thread_t *thread)
+{
+    if (!thread) return THREAD_NICE_DEFAULT;
+    return thread->nice;
+}
+
+uint64_t thread_get_cpu_time_ms(thread_t *thread)
+{
+    if (!thread) return 0;
+
+    /* Timer runs at 1000 Hz, so ticks = milliseconds */
+    return thread->cpu_ticks;
 }
 
 void thread_yield(void)
@@ -554,7 +671,22 @@ void scheduler_init(void)
     main_thread->arg = NULL;
     main_thread->base_priority = THREAD_PRIORITY_NORMAL;
     main_thread->priority = THREAD_PRIORITY_NORMAL;
-    main_thread->time_slice_remaining = THREAD_TIME_SLICE_DEFAULT;
+    main_thread->time_slice_remaining = g_priority_time_slice[THREAD_PRIORITY_NORMAL];
+
+    /* Nice value and aging */
+    main_thread->nice = THREAD_NICE_DEFAULT;
+    main_thread->is_boosted = false;
+    main_thread->wait_start_tick = 0;
+
+    /* CPU accounting */
+    main_thread->cpu_ticks = 0;
+    main_thread->context_switches = 0;
+    main_thread->run_start_tick = 0;
+
+    /* SMP preparation */
+    main_thread->cpu_affinity = 0xFFFFFFFF;
+    main_thread->last_cpu = 0;
+
     main_thread->wake_tick = 0;
     main_thread->waiting_queue = NULL;
     main_thread->wait_queue_next = NULL;
@@ -592,20 +724,72 @@ void scheduler_start(void)
 void scheduler_tick(void)
 {
     if (!g_scheduler_active || !g_current_thread) return;
-    
+
+    uint64_t now = timer_get_ticks();
+
+    /* CPU accounting: increment CPU time for running thread */
+    if (g_current_thread && g_current_thread != g_idle_thread) {
+        g_current_thread->cpu_ticks++;
+    }
+
     /* Réveiller les threads endormis */
     scheduler_wake_sleeping();
-    
+
     /* Décrémenter le time slice */
     if (g_current_thread != g_idle_thread && g_current_thread->time_slice_remaining > 0) {
         g_current_thread->time_slice_remaining--;
     }
-    
+
     /* Marquer la préemption comme pending si time slice épuisé */
-    if (g_current_thread->time_slice_remaining == 0 && 
+    if (g_current_thread->time_slice_remaining == 0 &&
         g_current_thread != g_idle_thread) {
         g_current_thread->preempt_pending = true;
     }
+
+    /* Rocket Boost aging: check all run queues except UI for starvation */
+    spinlock_lock(&g_scheduler_lock);
+
+    for (int pri = THREAD_PRIORITY_IDLE; pri < THREAD_PRIORITY_UI; pri++) {
+        thread_t *thread = g_run_queues[pri];
+
+        while (thread) {
+            thread_t *next = thread->sched_next;  /* Save next before we move thread */
+
+            /* Check if thread has been waiting too long */
+            if (!thread->is_boosted &&
+                (now - thread->wait_start_tick) >= THREAD_AGING_THRESHOLD) {
+
+                /* Remove from current queue */
+                if (thread->sched_prev) {
+                    thread->sched_prev->sched_next = thread->sched_next;
+                } else {
+                    g_run_queues[pri] = thread->sched_next;
+                }
+
+                if (thread->sched_next) {
+                    thread->sched_next->sched_prev = thread->sched_prev;
+                }
+
+                /* Boost to UI priority */
+                thread->priority = THREAD_PRIORITY_UI;
+                thread->is_boosted = true;
+                thread->wait_start_tick = now;  /* Reset wait timer */
+
+                /* Insert at head of UI queue */
+                thread->sched_prev = NULL;
+                thread->sched_next = g_run_queues[THREAD_PRIORITY_UI];
+
+                if (g_run_queues[THREAD_PRIORITY_UI]) {
+                    g_run_queues[THREAD_PRIORITY_UI]->sched_prev = thread;
+                }
+                g_run_queues[THREAD_PRIORITY_UI] = thread;
+            }
+
+            thread = next;
+        }
+    }
+
+    spinlock_unlock(&g_scheduler_lock);
 }
 
 /* ========================================
@@ -707,15 +891,35 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
     }
     
     /* On va changer de thread ! */
-    
+
+    uint64_t now = timer_get_ticks();
+
+    /* CPU accounting: finalize current thread's run time */
+    if (current->run_start_tick > 0) {
+        uint64_t run_duration = now - current->run_start_tick;
+        current->cpu_ticks += run_duration;
+    }
+
+    /* Boost demotion: if current thread was boosted, demote it back */
+    if (current->is_boosted) {
+        current->is_boosted = false;
+        current->priority = scheduler_nice_to_priority(current->nice);
+        current->base_priority = current->priority;
+    }
+
     /* Remettre le thread actuel dans la run queue */
     if (current->state == THREAD_STATE_RUNNING) {
         current->state = THREAD_STATE_READY;
+        current->wait_start_tick = now;  /* Start aging timer */
         scheduler_enqueue_nolock(current);
     }
-    
-    /* Recharger le time slice du nouveau thread */
-    next->time_slice_remaining = THREAD_TIME_SLICE_DEFAULT;
+
+    /* CPU accounting: start next thread's run time */
+    next->run_start_tick = now;
+    next->context_switches++;
+
+    /* Recharger le time slice du nouveau thread (use priority-based slice) */
+    next->time_slice_remaining = scheduler_get_time_slice(next);
     next->state = THREAD_STATE_RUNNING;
     next->preempt_pending = false;
     g_current_thread = next;
@@ -911,13 +1115,33 @@ void scheduler_schedule(void)
     KLOG_INFO("SCHED", "  To:");
     KLOG_INFO("SCHED", next->name);
     KLOG_INFO_HEX("SCHED", "  New ESP: ", next->esp);
-    
+
+    uint64_t now = timer_get_ticks();
+
+    /* CPU accounting: finalize current thread's run time */
+    if (current && current->run_start_tick > 0) {
+        uint64_t run_duration = now - current->run_start_tick;
+        current->cpu_ticks += run_duration;
+    }
+
+    /* Boost demotion: if current thread was boosted, demote it back */
+    if (current && current->is_boosted) {
+        current->is_boosted = false;
+        current->priority = scheduler_nice_to_priority(current->nice);
+        current->base_priority = current->priority;
+    }
+
     /* Mettre le thread actuel dans la run queue s'il est toujours READY/RUNNING */
     if (current && (current->state == THREAD_STATE_RUNNING || current->state == THREAD_STATE_READY)) {
         current->state = THREAD_STATE_READY;
+        current->wait_start_tick = now;  /* Start aging timer */
         scheduler_enqueue(current);
     }
-    
+
+    /* CPU accounting: start next thread's run time */
+    next->run_start_tick = now;
+    next->context_switches++;
+
     /* Basculer vers le nouveau thread */
     next->state = THREAD_STATE_RUNNING;
     g_current_thread = next;
@@ -945,59 +1169,84 @@ void scheduler_schedule(void)
  * Debug
  * ======================================== */
 
+static void print_thread_info(thread_t *thread, bool is_current)
+{
+    console_put_dec(thread->tid);
+    console_puts("  ");
+
+    console_puts(thread_state_name(thread->state));
+    console_puts("  ");
+
+    console_puts(thread_priority_name(thread->priority));
+    console_puts("  ");
+
+    /* Nice value */
+    if (thread->nice < 0) {
+        console_puts("-");
+        console_put_dec(-thread->nice);
+    } else if (thread->nice > 0) {
+        console_puts("+");
+        console_put_dec(thread->nice);
+    } else {
+        console_puts(" 0");
+    }
+    console_puts("  ");
+
+    /* Boosted indicator */
+    console_puts(thread->is_boosted ? "B" : " ");
+    console_puts("  ");
+
+    /* CPU time in ms */
+    console_put_dec(thread->cpu_ticks);
+    console_puts("ms  ");
+
+    /* Context switches */
+    console_put_dec(thread->context_switches);
+    console_puts("  ");
+
+    /* Name */
+    console_puts(thread->name);
+
+    if (is_current) {
+        console_puts(" <-- current");
+    }
+
+    console_puts("\n");
+}
+
 void thread_list_debug(void)
 {
     console_puts("\n=== Thread List ===\n");
-    console_puts("TID   State     Priority   Name\n");
-    console_puts("---   -----     --------   ----\n");
-    
+    console_puts("TID  State     Priority   Nice  B  CPU    Ctx  Name\n");
+    console_puts("---  -----     --------   ----  -  ---    ---  ----\n");
+
     cpu_cli();
-    
+
     /* Afficher le thread courant */
     if (g_current_thread) {
-        console_put_dec(g_current_thread->tid);
-        console_puts("     ");
-        console_puts(thread_state_name(g_current_thread->state));
-        console_puts("   ");
-        console_puts(thread_priority_name(g_current_thread->priority));
-        console_puts("     ");
-        console_puts(g_current_thread->name);
-        console_puts(" <-- current\n");
+        print_thread_info(g_current_thread, true);
     }
-    
+
     /* Afficher les threads dans les run queues */
     for (int pri = THREAD_PRIORITY_COUNT - 1; pri >= 0; pri--) {
         thread_t *thread = g_run_queues[pri];
         while (thread) {
             if (thread != g_current_thread) {
-                console_put_dec(thread->tid);
-                console_puts("     ");
-                console_puts(thread_state_name(thread->state));
-                console_puts("   ");
-                console_puts(thread_priority_name(thread->priority));
-                console_puts("     ");
-                console_puts(thread->name);
-                console_puts("\n");
+                print_thread_info(thread, false);
             }
             thread = thread->sched_next;
         }
     }
-    
+
     /* Afficher les threads en sleep */
     thread_t *sleep = g_sleep_queue;
     while (sleep) {
-        console_put_dec(sleep->tid);
-        console_puts("     ");
-        console_puts(thread_state_name(sleep->state));
-        console_puts("   ");
-        console_puts(thread_priority_name(sleep->priority));
-        console_puts("     ");
-        console_puts(sleep->name);
-        console_puts("\n");
+        print_thread_info(sleep, false);
         sleep = sleep->sched_next;
     }
-    
+
     cpu_sti();
-    
+
+    console_puts("\nB = Boosted by aging (Rocket Boost)\n");
     console_puts("===================\n");
 }
