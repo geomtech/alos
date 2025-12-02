@@ -1,0 +1,51 @@
+Multiprocessing involves more than one CPU in a computer. There are a variety of ways that multiprocessing may be implemented in hardware.
+
+== SMP (Symmetric Multiprocessing) ==
+
+In theory [[SMP]] means that all CPUs are identical. In practice there may be minor variations between CPUs (e.g. different revisions of the same family of CPUs), but these differences can usually be ignored by operating system software. SMP is the easiest form of multiprocessing for software to support. SMP includes systems with CPUs implemented in separate chips, systems with CPUs implemented in the same chip (multi-core) and combinations (e.g. a system with 2 separate quad core chips, with a total of 8 physical CPUs).
+
+== SMT (Simultaneous Multithreading) ==
+
+Normally a CPU executes one stream of instructions, where at any time some parts of the CPU may be busy and other parts of the CPU may be idle (e.g. while doing integer instructions parts of the CPU that do floating point calculations may be unused), and where the entire CPU may be idle in some cases (e.g. when the CPU needs to wait until data arrives from RAM before it can continue). The idea behind [[SMT]] is to execute more than one stream of instructions, which increases overall performance by reducing the chance that parts of the CPU become idle.
+
+From the operating system's perspective, SMT looks a lot like SMP, except for performance characteristics. For SMT a single physical CPU executes multiple "threads" (or logical CPUs), and the performance of one thread/logical CPU is effected by work done by other threads/logical CPUs in the same physical CPU/core (as the physical CPU's resources are shared).
+
+For the 80x86 architecture, Intel was the first manufacturer to implement SMT (called "hyperthreading" by Intel). When Intel first introduced hyperthreading it got some negative publicity due to performance problems; partly caused by the way it was implemented and partly because a lot of software wasn't designed for it (single-threaded) and operating system schedulers weren't optimized for it. Intel stopped using SMT/hyper-threading for a while; but since then software has caught up and later CPUs (Atom, Core i7) show significant performance improvements from SMT (up to about 30% performance improvement on multi-threaded loads). AMD's Ryzen platform, released in 2017, introduced SMT to a non-Intel CPU for the first time.
+
+== AMP (Asymmetric Multiprocessing) ==
+
+[[AMP]] means that at least one of the CPUs are different. For example, an embedded system might have an ARM CPU and a special purpose CPU for digital signal processing. AMP is rare for desktop/server computers, however this may change in future as Intel has plans to put stream processors ("Larrabee", mainly intended as a GPGPU to be used for graphics, physics and HPC) in the same system as general purpose 80x86 CPUs (possibly even in the same multi-core chip). Possibly, at some time in the future, it may be necessary for a general purpose 80x86 operating system to have 2 schedulers - one for traditional 80x86 CPUs and another for stream processors.
+
+== NUMA (Non-Uniform Memory Access) ==
+
+For SMP the time it takes to access a resource (e.g. RAM) is the same for all CPUs. For [[NUMA]] this isn't the case, and some CPUs may be able to access a resource faster than other CPUs. The name "NUMA" is misleading as RAM is not the only resource effected - it's entirely possible for some CPUs to have faster access to other devices (e.g. hard disk, video, ethernet, etc) than other CPUs.
+
+Examples of NUMA are the AMD opteron and Intel Core i7 processors; where you might have 2 quad core CPUs and 2 sets of RAM chips, where each quad core CPU is directly connected to one set RAM chips. In this case for a CPU to access RAM that is not directly connected to it, it needs to ask the other quad core CPU to access the RAM on its behalf (which causes extra latency).
+
+For NUMA systems, resources are typically split up into "NUMA domains". For the example above, there's 2 NUMA domains, and each NUMA domain consists of a quad core CPU and a set of RAM chips. Each NUMA domain may contain none or more CPUs, none or more bytes of RAM, and none or more I/O hubs (e.g. PCI host bridges).
+
+The opposite of NUMA is UMA (Uniform Memory Access). An example of UMA is a computer with a pair of Pentium III CPUs, or a computer with one multi-core Opteron CPU.
+
+UMA could be considered a special case of NUMA where there's only one NUMA domain. This might not make too much sense at first glance, until you consider an operating system that is designed for NUMA that happens to be running on a UMA computer.
+
+An operating system may be optimized for NUMA. For example, the scheduler, memory management and device management might all be optimized to try to minimize the need for one CPU to access "distant" (slower) resources.
+
+=== ccNUMA (Cache Coherent Non-Uniform Memory Access) ===
+
+Most NUMA systems are "cache coherent", which means that things done by one CPU take into account the state of caches in other CPUs. Cache coherency makes it a lot easier to write software, as (excluding performance characteristics) it's not very different to SMP.
+
+Some (very rare) systems are not cache coherent, which can mean that software must explicitly manage caches to ensure that CPUs aren't working on stale data (data that was since been modified by other CPUs); or it can mean that CPUs have "local RAM" that only they can access, where other CPUs can't access it at all (in this case, the computer behaves a lot like separate computers connected by very fast networking).
+
+=== NUMA Ratio ===
+
+A computer's NUMA ratio is a measure of how quickly a CPU can access "close" (fast) RAM compared to how quickly a CPU can access "distant" (slower) RAM. For example, if the NUMA ratio is 2.0 then it takes twice as long for a CPU to access "distant" RAM.
+
+It's impossible to have a NUMA ratio of 1.0; as this indicates that there's no difference between "close" RAM and "distant" RAM, and therefore the system is not actually NUMA at all.
+
+For most NUMA 80x86 systems the NUMA ratio is quite low (around 1.2), and an operating system could treat these systems as UMA without severe performance problems.
+
+== Topology ==
+
+So that an operating system can make effective decisions concerning resource usage (e.g. for the purpose of improving performance; or reducing power consumption, heat and/or noise) it needs to understand the relationships between different resources. This involves mapping the topology of the computer, so that the operating system can refer to this map when making decisions.
+
+This map may include the contents of each NUMA domain (number of CPUs and their IDs, number of RAM areas and their sizes and locations in the physical address space, number of I/O hubs and their identification, etc), plus performance data (e.g. tables that can be used to determine the relative cost of accessing a specific location in RAM, a specific I/O hub and/or another CPU from any CPU; and/or information about cache sharing between CPUs).
