@@ -17,7 +17,7 @@ CFLAGS = -ffreestanding -nostdlib -fno-builtin -m32 -O0 -g -Wall -I../../userlan
 USER_BASE = 0x400000
 
 # Liste des programmes à compiler
-PROGRAMS = test.elf hello.elf server.elf
+PROGRAMS = server.elf
 
 # Cible par défaut
 all: $(PROGRAMS)
@@ -30,17 +30,8 @@ all: $(PROGRAMS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Programme de test
-test.elf: test.o
-	$(LD) -Ttext $(USER_BASE) -o $@ $< --entry _start
-
 # Nettoyer
 clean:
 	rm -f *.o *.elf
-
-# Afficher les infos sur un ELF
-info: test.elf
-	i686-elf-readelf -h test.elf
-	i686-elf-readelf -l test.elf
 
 .PHONY: all clean info
