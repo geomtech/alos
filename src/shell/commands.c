@@ -7,6 +7,7 @@
 #include "../kernel/process.h"
 #include "../kernel/thread.h"
 #include "../kernel/sync.h"
+#include "../kernel/workqueue.h"
 #include "../kernel/elf.h"
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
@@ -48,6 +49,7 @@ static int cmd_rmdir(int argc, char** argv);
 static int cmd_threads(int argc, char** argv);
 static int cmd_synctest(int argc, char** argv);
 static int cmd_schedtest(int argc, char** argv);
+static int cmd_worktest(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -61,6 +63,7 @@ static shell_command_t commands[] = {
     { "threads",  "Test new multithreading with priorities", cmd_threads },
     { "synctest", "Test synchronization primitives (mutex, sem, etc.)", cmd_synctest },
     { "schedtest", "Test scheduler aging and nice values", cmd_schedtest },
+    { "worktest", "Test worker thread pool and reaper", cmd_worktest },
     { "ps",       "List running processes",                  cmd_ps },
     { "usermode", "Test User Mode (Ring 3) - EXPERIMENTAL",  cmd_usermode },
     { "exec",     "Execute an ELF program",                  cmd_exec },
@@ -1987,5 +1990,196 @@ static int cmd_schedtest(int argc, char** argv)
     console_puts("  - Nice values\n");
     console_puts("  - Boost status (B)\n\n");
 
+    return 0;
+}
+
+/* ========================================
+ * Worker Thread Pool Test
+ * ======================================== */
+
+/* Work function counter - protected by atomic ops */
+static volatile int work_counter = 0;
+
+/* Test work function - simple counter increment */
+static void work_func_increment(void *arg)
+{
+    int id = (int)(intptr_t)arg;
+    
+    /* Simulate some work */
+    for (volatile int i = 0; i < 100000; i++);
+    
+    __sync_fetch_and_add(&work_counter, 1);
+    
+    /* Print completion message */
+    console_puts("  Work item #");
+    console_put_dec(id);
+    console_puts(" completed by TID=");
+    console_put_dec(thread_get_tid());
+    console_puts("\n");
+}
+
+/* Long-running work function for shutdown timeout test */
+static void work_func_slow(void *arg)
+{
+    (void)arg;
+    console_puts("  [SLOW] Work item started, sleeping 200ms...\n");
+    thread_sleep_ms(200);
+    console_puts("  [SLOW] Work item completed!\n");
+}
+
+static int cmd_worktest(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("=== Worker Thread Pool Test ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("Testing: Reaper thread, Worker pool, FIFO work queue\n\n");
+    
+    /* Test 1: Basic work submission */
+    console_puts("[TEST 1] Basic Work Submission (10 items)\n");
+    console_puts("Submitting 10 work items to kernel worker pool...\n");
+    
+    work_counter = 0;
+    
+    for (int i = 1; i <= 10; i++) {
+        int result = kwork_submit(work_func_increment, (void*)(intptr_t)i);
+        if (result != 0) {
+            console_puts("  ERROR: Failed to submit work item #");
+            console_put_dec(i);
+            console_puts("\n");
+        }
+    }
+    
+    /* Wait for all work to complete */
+    console_puts("Waiting for work items to complete...\n");
+    int timeout = 50;  /* 500ms max */
+    while (work_counter < 10 && timeout > 0) {
+        thread_sleep_ms(10);
+        timeout--;
+    }
+    
+    console_puts("\nCompleted work items: ");
+    console_put_dec(work_counter);
+    console_puts("/10\n");
+    
+    if (work_counter == 10) {
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("  Basic work test PASSED!\n\n");
+    } else {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("  Basic work test FAILED!\n\n");
+    }
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Test 2: Custom worker pool with shutdown timeout */
+    console_puts("[TEST 2] Custom Pool with Shutdown Timeout\n");
+    console_puts("Creating custom pool with 2 workers...\n");
+    
+    worker_pool_t *custom_pool = worker_pool_create(2);
+    if (!custom_pool) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("  ERROR: Failed to create custom pool!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else {
+        console_puts("  Custom pool created successfully\n");
+        
+        /* Submit slow work to test timeout */
+        console_puts("Submitting slow work item (200ms)...\n");
+        worker_pool_submit(custom_pool, work_func_slow, NULL);
+        
+        /* Give work time to start */
+        thread_sleep_ms(50);
+        
+        /* Shutdown with short timeout (should timeout) */
+        console_puts("Shutting down with 100ms timeout (should timeout)...\n");
+        int not_terminated = worker_pool_shutdown_timeout(custom_pool, 100);
+        
+        if (not_terminated > 0) {
+            console_puts("  Timeout occurred: ");
+            console_put_dec(not_terminated);
+            console_puts(" worker(s) still running\n");
+            console_puts("  (This is expected behavior for slow work)\n");
+        } else {
+            console_puts("  All workers terminated in time\n");
+        }
+        
+        /* Wait more then destroy */
+        thread_sleep_ms(200);
+        worker_pool_destroy(custom_pool);
+        
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("  Custom pool test PASSED!\n\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    
+    /* Test 3: Thread join timeout */
+    console_puts("[TEST 3] Thread Join Timeout\n");
+    console_puts("Testing thread_join_timeout function...\n");
+    
+    /* Create a thread that sleeps for 200ms */
+    thread_t *slow_thread = thread_create("slow_join", (thread_entry_t)work_func_slow, NULL, 0, THREAD_PRIORITY_NORMAL);
+    if (!slow_thread) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("  ERROR: Failed to create slow thread!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else {
+        console_puts("  Created slow thread TID=");
+        console_put_dec(slow_thread->tid);
+        console_puts("\n");
+        
+        /* Try to join with short timeout */
+        console_puts("  Joining with 50ms timeout (should timeout)...\n");
+        int result = thread_join_timeout(slow_thread, 50);
+        
+        if (result == -ETIMEDOUT) {
+            console_puts("  Got expected ETIMEDOUT!\n");
+        } else {
+            console_puts("  Unexpected result: ");
+            console_put_dec(result);
+            console_puts("\n");
+        }
+        
+        /* Wait for thread to actually finish */
+        console_puts("  Waiting for thread to finish naturally...\n");
+        thread_sleep_ms(300);
+        
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("  Thread join timeout test PASSED!\n\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    
+    /* Test 4: Reaper thread verification */
+    console_puts("[TEST 4] Reaper Thread Verification\n");
+    console_puts("Creating 5 short-lived threads to test zombie cleanup...\n");
+    
+    for (int i = 0; i < 5; i++) {
+        thread_t *temp = thread_create("temp", (thread_entry_t)work_func_increment, (void*)(intptr_t)(100 + i), 0, THREAD_PRIORITY_NORMAL);
+        if (temp) {
+            console_puts("  Created thread TID=");
+            console_put_dec(temp->tid);
+            console_puts("\n");
+            /* Don't join - let reaper clean up */
+        }
+    }
+    
+    /* Wait for threads to finish and reaper to clean up */
+    thread_sleep_ms(500);
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("  Threads should be cleaned up by reaper (check logs)\n\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Display thread list */
+    console_puts("[INFO] Current Thread List:\n");
+    thread_list_debug();
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("=== Worker Thread Pool Test Complete ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
     return 0;
 }

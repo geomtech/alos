@@ -4,6 +4,7 @@
 #include "console.h"
 #include "klog.h"
 #include "timer.h"
+#include "workqueue.h"
 #include "../mm/kheap.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
@@ -114,7 +115,13 @@ void init_multitasking(void)
     
     /* Démarrer le scheduler */
     scheduler_start();
-    
+
+    /* Initialize the reaper thread for zombie cleanup */
+    reaper_init();
+
+    /* Initialize the kernel worker pool */
+    workqueue_init();
+
     KLOG_INFO("TASK", "Multitasking initialized");
     KLOG_INFO_DEC("TASK", "Idle process PID: ", idle_process->pid);
 }

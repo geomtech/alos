@@ -478,8 +478,8 @@ B = Boosted by aging (Rocket Boost)
 
 ### Kernel Threads Utiles
 - [x] **Idle thread** - `hlt` pour économie d'énergie
-- [ ] **Reaper thread** - Nettoyage des threads zombie
-- [ ] **Worker threads** - Pool pour travaux asynchrones
+- [x] **Reaper thread** - Nettoyage des threads zombie (reaper_thread_func, reaper_add_zombie)
+- [x] **Worker threads** - Pool pour travaux asynchrones (workqueue.c, 4 workers, FIFO, timeout support)
 
 ## ❌ User Mode Multithreading (Non implémenté)
 

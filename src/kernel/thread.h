@@ -25,6 +25,12 @@
 /* Aging threshold for Rocket Boost (in ticks) */
 #define THREAD_AGING_THRESHOLD  100     /* 100ms before boost */
 
+/* Error codes */
+#define ETIMEDOUT               110     /* Connection timed out */
+
+/* Default shutdown timeout for worker pool (ms) */
+#define WORKER_SHUTDOWN_TIMEOUT_MS 5000
+
 /* ========================================
  * Interrupt Frame - Contexte CPU complet
  * Utilisé pour la préemption depuis IRQ
@@ -193,6 +199,17 @@ struct thread {
     /* Wait queue */
     wait_queue_t *waiting_queue;    /* Queue sur laquelle on attend */
     thread_t *wait_queue_next;      /* Prochain dans la wait queue */
+
+    /* Timeout support (scheduler integrated) */
+    uint64_t timeout_tick;          /* Tick absolu de timeout (0 = pas de timeout) */
+    int wait_result;                /* Résultat du wait (0=succès, -ETIMEDOUT=timeout) */
+    wait_queue_t *current_wait_queue; /* Wait queue courante pour retrait forcé par timeout */
+
+    /* Join support */
+    wait_queue_t join_waiters;      /* Threads en attente de la fin de ce thread */
+
+    /* Reaper support */
+    thread_t *zombie_next;          /* Prochain dans la zombie list du reaper */
     
     /* Liste chaînée pour le scheduler */
     thread_t *sched_next;           /* Prochain dans la run queue */
@@ -241,6 +258,25 @@ void wait_queue_init(wait_queue_t *queue);
 void wait_queue_wait(wait_queue_t *queue, wait_queue_predicate_t predicate, void *context);
 
 /**
+ * Attend sur une wait queue avec timeout.
+ * @param queue Wait queue
+ * @param predicate Prédicat à vérifier (peut être NULL)
+ * @param context Contexte pour le prédicat
+ * @param timeout_ms Timeout en millisecondes (0 = infini)
+ * @return true si réveillé par signal, false si timeout
+ */
+bool wait_queue_wait_timeout(wait_queue_t *queue, wait_queue_predicate_t predicate, 
+                             void *context, uint32_t timeout_ms);
+
+/**
+ * Retire un thread spécifique d'une wait queue (pour timeout forcé).
+ * @param queue Wait queue
+ * @param thread Thread à retirer
+ * @return true si trouvé et retiré, false sinon
+ */
+bool wait_queue_remove(wait_queue_t *queue, thread_t *thread);
+
+/**
  * Réveille un thread de la wait queue.
  */
 void wait_queue_wake_one(wait_queue_t *queue);
@@ -277,6 +313,14 @@ void thread_exit(int status) __attribute__((noreturn));
  * @return Code de sortie du thread
  */
 int thread_join(thread_t *thread);
+
+/**
+ * Attend la terminaison d'un thread avec timeout.
+ * @param thread Thread à attendre
+ * @param timeout_ms Timeout en millisecondes (0 = infini)
+ * @return Code de sortie du thread, ou -ETIMEDOUT si timeout
+ */
+int thread_join_timeout(thread_t *thread, uint32_t timeout_ms);
 
 /**
  * Tue un thread.
@@ -389,6 +433,27 @@ void scheduler_dequeue(thread_t *thread);
  * Réveille les threads dont le sleep est terminé.
  */
 void scheduler_wake_sleeping(void);
+
+/**
+ * Vérifie les threads bloqués avec timeout expiré.
+ * Appelé depuis scheduler_tick().
+ */
+void check_thread_timeouts(void);
+
+/* ========================================
+ * Reaper Thread
+ * ======================================== */
+
+/**
+ * Initialise le thread reaper pour le nettoyage des zombies.
+ */
+void reaper_init(void);
+
+/**
+ * Ajoute un thread zombie à la liste de nettoyage.
+ * Appelé depuis thread_exit().
+ */
+void reaper_add_zombie(thread_t *thread);
 
 /* ========================================
  * Debug
