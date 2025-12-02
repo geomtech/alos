@@ -444,9 +444,75 @@ int vfs_mkdir(const char* path)
 
 int vfs_unlink(const char* path)
 {
-    /* TODO: Implémenter suppression */
-    (void)path;
-    return -1;
+    if (path == NULL || path[0] == '\0') return -1;
+    
+    /* Ne pas permettre la suppression de la racine */
+    if (path[0] == '/' && path[1] == '\0') {
+        KLOG_ERROR("VFS", "unlink: cannot remove root");
+        return -1;
+    }
+    
+    /* Trouver le dernier / pour séparer le chemin du parent et le nom */
+    int last_slash = -1;
+    int i = 0;
+    while (path[i] != '\0') {
+        if (path[i] == '/') last_slash = i;
+        i++;
+    }
+    
+    if (last_slash < 0) {
+        KLOG_ERROR("VFS", "unlink: invalid path");
+        return -1;
+    }
+    
+    /* Extraire le nom du fichier/répertoire à supprimer */
+    const char* name = path + last_slash + 1;
+    if (name[0] == '\0') {
+        KLOG_ERROR("VFS", "unlink: no name after last /");
+        return -1;
+    }
+    
+    /* Construire le chemin du parent */
+    char parent_path[VFS_MAX_PATH];
+    if (last_slash == 0) {
+        /* Le parent est la racine */
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    } else {
+        for (i = 0; i < last_slash && i < VFS_MAX_PATH - 1; i++) {
+            parent_path[i] = path[i];
+        }
+        parent_path[i] = '\0';
+    }
+    
+    /* Résoudre le répertoire parent */
+    vfs_node_t* parent = vfs_resolve_path(parent_path);
+    if (parent == NULL) {
+        KLOG_ERROR("VFS", "unlink: parent directory not found");
+        return -1;
+    }
+    
+    /* Vérifier que c'est un répertoire */
+    if ((parent->type & VFS_DIRECTORY) == 0) {
+        KLOG_ERROR("VFS", "unlink: parent is not a directory");
+        return -1;
+    }
+    
+    /* Vérifier que le callback unlink existe */
+    if (parent->unlink == NULL) {
+        KLOG_ERROR("VFS", "unlink: operation not supported");
+        return -1;
+    }
+    
+    /* Appeler le callback unlink du filesystem */
+    return parent->unlink(parent, name);
+}
+
+int vfs_rmdir(const char* path)
+{
+    /* rmdir utilise le même mécanisme que unlink */
+    /* La vérification que c'est un répertoire vide est faite dans le FS */
+    return vfs_unlink(path);
 }
 
 /* ===========================================

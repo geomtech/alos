@@ -1065,11 +1065,15 @@ static vfs_node_t* ext2_create_node(ext2_fs_t* fs, uint32_t inode_num, const cha
     extern vfs_dirent_t* ext2_vfs_readdir(vfs_node_t* node, uint32_t index);
     extern vfs_node_t* ext2_vfs_finddir(vfs_node_t* node, const char* name);
     
+    /* Déclarer ext2_vfs_unlink */
+    extern int ext2_vfs_unlink(vfs_node_t* parent, const char* name);
+    
     if (node->type == VFS_DIRECTORY) {
         node->readdir = ext2_vfs_readdir;
         node->finddir = ext2_vfs_finddir;
         node->mkdir = ext2_vfs_mkdir;
         node->create = ext2_vfs_create;
+        node->unlink = ext2_vfs_unlink;
     }
     
     return node;
@@ -1187,6 +1191,89 @@ static uint32_t ext2_dir_entry_size(uint8_t name_len)
 {
     /* Taille = 8 octets (header) + name_len, aligné sur 4 */
     return ((8 + name_len + 3) / 4) * 4;
+}
+
+/**
+ * Supprime une entrée d'un répertoire.
+ * 
+ * @param fs         Contexte du filesystem
+ * @param dir_inode  Inode du répertoire parent
+ * @param dir_inode_num Numéro de l'inode du répertoire
+ * @param name       Nom de l'entrée à supprimer
+ * @return Numéro de l'inode supprimé si succès, -1 si erreur
+ */
+static int32_t ext2_remove_dir_entry(ext2_fs_t* fs, ext2_inode_t* dir_inode,
+                                      uint32_t dir_inode_num, const char* name)
+{
+    uint32_t name_len = strlen(name);
+    if (name_len > 255 || name_len == 0) return -1;
+    
+    /* Lire les données du répertoire */
+    if (dir_inode->i_size == 0) return -1;
+    
+    uint8_t* dir_data = (uint8_t*)kmalloc(dir_inode->i_size);
+    if (dir_data == NULL) return -1;
+    
+    if (ext2_read_inode_data(fs, dir_inode, 0, dir_inode->i_size, dir_data) < 0) {
+        kfree(dir_data);
+        return -1;
+    }
+    
+    /* Chercher l'entrée à supprimer */
+    uint32_t offset = 0;
+    ext2_dir_entry_t* prev_entry = NULL;
+    uint32_t prev_offset = 0;
+    int32_t found_inode = -1;
+    
+    while (offset < dir_inode->i_size) {
+        ext2_dir_entry_t* entry = (ext2_dir_entry_t*)(dir_data + offset);
+        
+        if (entry->rec_len == 0) break;
+        
+        /* Comparer les noms */
+        if (entry->inode != 0 && entry->name_len == name_len) {
+            int match = 1;
+            for (uint32_t i = 0; i < name_len; i++) {
+                if (entry->name[i] != name[i]) {
+                    match = 0;
+                    break;
+                }
+            }
+            
+            if (match) {
+                found_inode = (int32_t)entry->inode;
+                
+                /* Marquer l'entrée comme supprimée (inode = 0) */
+                /* Et fusionner avec l'entrée précédente si possible */
+                if (prev_entry != NULL) {
+                    /* Fusionner avec l'entrée précédente */
+                    prev_entry->rec_len += entry->rec_len;
+                } else {
+                    /* Première entrée - juste marquer l'inode comme 0 */
+                    entry->inode = 0;
+                }
+                break;
+            }
+        }
+        
+        prev_entry = entry;
+        prev_offset = offset;
+        offset += entry->rec_len;
+    }
+    
+    if (found_inode < 0) {
+        kfree(dir_data);
+        return -1;  /* Entrée non trouvée */
+    }
+    
+    /* Écrire les données mises à jour */
+    if (ext2_write_inode_data(fs, dir_inode, dir_inode_num, 0, dir_inode->i_size, dir_data) < 0) {
+        kfree(dir_data);
+        return -1;
+    }
+    
+    kfree(dir_data);
+    return found_inode;
 }
 
 /**
@@ -1491,6 +1578,166 @@ static int ext2_vfs_mkdir(vfs_node_t* parent, const char* name)
     }
     
     klog(LOG_INFO, "EXT2", "Created directory: ");
+    klog(LOG_INFO, "EXT2", name);
+    
+    return 0;
+}
+
+/* ===========================================
+ * Suppression de fichiers et répertoires
+ * =========================================== */
+
+/**
+ * Vérifie si un répertoire est vide (ne contient que . et ..)
+ */
+static int ext2_is_dir_empty(ext2_fs_t* fs, ext2_inode_t* dir_inode)
+{
+    if (dir_inode->i_size == 0) return 1;
+    
+    uint8_t* dir_data = (uint8_t*)kmalloc(dir_inode->i_size);
+    if (dir_data == NULL) return -1;
+    
+    if (ext2_read_inode_data(fs, dir_inode, 0, dir_inode->i_size, dir_data) < 0) {
+        kfree(dir_data);
+        return -1;
+    }
+    
+    uint32_t offset = 0;
+    int entry_count = 0;
+    
+    while (offset < dir_inode->i_size) {
+        ext2_dir_entry_t* entry = (ext2_dir_entry_t*)(dir_data + offset);
+        
+        if (entry->rec_len == 0) break;
+        
+        if (entry->inode != 0) {
+            /* Ignorer . et .. */
+            if (!(entry->name_len == 1 && entry->name[0] == '.') &&
+                !(entry->name_len == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
+                entry_count++;
+            }
+        }
+        
+        offset += entry->rec_len;
+    }
+    
+    kfree(dir_data);
+    return (entry_count == 0) ? 1 : 0;
+}
+
+/**
+ * Libère tous les blocs de données d'un inode.
+ */
+static int ext2_free_inode_blocks(ext2_fs_t* fs, ext2_inode_t* inode)
+{
+    /* Libérer les blocs directs */
+    for (int i = 0; i < 12; i++) {
+        if (inode->i_block[i] != 0) {
+            ext2_free_block(fs, inode->i_block[i]);
+            inode->i_block[i] = 0;
+        }
+    }
+    
+    /* TODO: Gérer les blocs indirects si nécessaire */
+    /* Pour l'instant, on ignore les blocs indirects */
+    
+    return 0;
+}
+
+/**
+ * Supprime un fichier ou répertoire.
+ * Pour les répertoires, ils doivent être vides.
+ */
+int ext2_vfs_unlink(vfs_node_t* parent, const char* name)
+{
+    if (parent == NULL || name == NULL) return -1;
+    if (parent->fs_data == NULL) return -1;
+    
+    /* Ne pas permettre la suppression de . et .. */
+    if ((name[0] == '.' && name[1] == '\0') ||
+        (name[0] == '.' && name[1] == '.' && name[2] == '\0')) {
+        KLOG_ERROR("EXT2", "unlink: cannot remove . or ..");
+        return -1;
+    }
+    
+    ext2_node_data_t* parent_data = (ext2_node_data_t*)parent->fs_data;
+    ext2_fs_t* fs = parent_data->fs;
+    
+    /* Trouver l'entrée à supprimer pour obtenir l'inode */
+    vfs_node_t* target = ext2_vfs_finddir(parent, name);
+    if (target == NULL) {
+        KLOG_ERROR("EXT2", "unlink: file not found");
+        return -1;
+    }
+    
+    ext2_node_data_t* target_data = (ext2_node_data_t*)target->fs_data;
+    uint32_t target_inode_num = target_data->inode_num;
+    int is_directory = (target->type == VFS_DIRECTORY);
+    
+    /* Si c'est un répertoire, vérifier qu'il est vide */
+    if (is_directory) {
+        int empty = ext2_is_dir_empty(fs, &target_data->inode);
+        if (empty != 1) {
+            KLOG_ERROR("EXT2", "unlink: directory not empty");
+            /* Libérer le noeud cible */
+            if (target->fs_data) kfree(target->fs_data);
+            kfree(target);
+            return -1;
+        }
+    }
+    
+    /* Supprimer l'entrée du répertoire parent */
+    int32_t removed_inode = ext2_remove_dir_entry(fs, &parent_data->inode,
+                                                   parent_data->inode_num, name);
+    if (removed_inode < 0) {
+        KLOG_ERROR("EXT2", "unlink: failed to remove dir entry");
+        if (target->fs_data) kfree(target->fs_data);
+        kfree(target);
+        return -1;
+    }
+    
+    /* Décrémenter le compteur de liens */
+    target_data->inode.i_links_count--;
+    
+    /* Si plus aucun lien, libérer l'inode et ses données */
+    if (target_data->inode.i_links_count == 0) {
+        /* Libérer les blocs de données */
+        ext2_free_inode_blocks(fs, &target_data->inode);
+        
+        /* Marquer l'inode comme supprimé (dtime non nul) */
+        target_data->inode.i_dtime = 1;  /* TODO: utiliser le temps réel */
+        target_data->inode.i_size = 0;
+        
+        /* Écrire l'inode mis à jour */
+        ext2_write_inode(fs, target_inode_num, &target_data->inode);
+        
+        /* Libérer l'inode */
+        ext2_free_inode(fs, target_inode_num);
+        
+        /* Si c'était un répertoire, mettre à jour le compteur de répertoires */
+        if (is_directory) {
+            uint32_t group = (target_inode_num - 1) / fs->inodes_per_group;
+            if (group < fs->num_groups && fs->group_descs[group].bg_used_dirs_count > 0) {
+                fs->group_descs[group].bg_used_dirs_count--;
+                ext2_write_group_desc(fs, group);
+            }
+            
+            /* Décrémenter le lien du parent (pour ..) */
+            if (parent_data->inode.i_links_count > 0) {
+                parent_data->inode.i_links_count--;
+                ext2_write_inode(fs, parent_data->inode_num, &parent_data->inode);
+            }
+        }
+    } else {
+        /* Écrire l'inode avec le compteur de liens décrémenté */
+        ext2_write_inode(fs, target_inode_num, &target_data->inode);
+    }
+    
+    /* Libérer le noeud VFS cible */
+    if (target->fs_data) kfree(target->fs_data);
+    kfree(target);
+    
+    klog(LOG_INFO, "EXT2", "Removed: ");
     klog(LOG_INFO, "EXT2", name);
     
     return 0;

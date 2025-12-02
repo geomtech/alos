@@ -223,6 +223,11 @@ int vfs_mkdir(const char* path);
  */
 int vfs_unlink(const char* path);
 
+/**
+ * Supprime un répertoire vide.
+ */
+int vfs_rmdir(const char* path);
+
 /* ===========================================
  * API VFS - Utilitaires
  * =========================================== */

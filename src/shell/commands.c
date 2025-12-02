@@ -41,6 +41,8 @@ static int cmd_mkdir(int argc, char** argv);
 static int cmd_touch(int argc, char** argv);
 static int cmd_echo(int argc, char** argv);
 static int cmd_meminfo(int argc, char** argv);
+static int cmd_rm(int argc, char** argv);
+static int cmd_rmdir(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -71,6 +73,8 @@ static shell_command_t commands[] = {
     { "touch",   "Create an empty file",                    cmd_touch },
     { "echo",    "Display a message",                       cmd_echo },
     { "meminfo", "Display memory information",              cmd_meminfo },
+    { "rm",      "Remove a file",                           cmd_rm },
+    { "rmdir",   "Remove an empty directory",               cmd_rmdir },
     
     /* Marqueur de fin */
     { NULL, NULL, NULL }
@@ -1258,6 +1262,110 @@ static int cmd_meminfo(int argc, char** argv)
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("\n============================================\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    return 0;
+}
+
+/* ========================================
+ * Commande rm - Supprimer un fichier
+ * ======================================== */
+static int cmd_rm(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Usage: rm <file>\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Résoudre le chemin */
+    char path[SHELL_PATH_MAX];
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("rm: invalid path\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Vérifier que ce n'est pas un répertoire */
+    vfs_node_t* node = vfs_resolve_path(path);
+    if (node == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts(path);
+        console_puts(": No such file\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    if (node->type == VFS_DIRECTORY) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts(path);
+        console_puts(": Is a directory (use rmdir)\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Supprimer le fichier */
+    if (vfs_unlink(path) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("rm: failed to remove '");
+        console_puts(path);
+        console_puts("'\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    return 0;
+}
+
+/* ========================================
+ * Commande rmdir - Supprimer un répertoire vide
+ * ======================================== */
+static int cmd_rmdir(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Usage: rmdir <directory>\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Résoudre le chemin */
+    char path[SHELL_PATH_MAX];
+    if (shell_resolve_path(argv[1], path, sizeof(path)) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("rmdir: invalid path\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Vérifier que c'est bien un répertoire */
+    vfs_node_t* node = vfs_resolve_path(path);
+    if (node == NULL) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts(path);
+        console_puts(": No such directory\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    if (node->type != VFS_DIRECTORY) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts(path);
+        console_puts(": Not a directory (use rm)\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
+    
+    /* Supprimer le répertoire */
+    if (vfs_rmdir(path) != 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("rmdir: failed to remove '");
+        console_puts(path);
+        console_puts("' (directory not empty?)\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        return 1;
+    }
     
     return 0;
 }

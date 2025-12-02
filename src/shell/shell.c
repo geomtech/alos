@@ -383,9 +383,9 @@ int shell_resolve_path(const char* path, char* result, size_t size)
             if (pos < size - 1) {
                 result[pos++] = '/';
             }
-            /* Ajouter le composant */
+            /* Ajouter le composant - s'arrêter au / ou \0 */
             const char* comp = components[i];
-            while (*comp != '\0' && pos < size - 1) {
+            while (*comp != '\0' && *comp != '/' && pos < size - 1) {
                 result[pos++] = *comp++;
             }
         }
