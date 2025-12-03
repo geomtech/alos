@@ -765,22 +765,10 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     uint16_t port = listen_sock->local_port;
     tcp_socket_t* client_sock = NULL;
     
-    /* Attendre qu'un socket client soit prêt (ESTABLISHED) - polling simple */
-    int timeout = 0;
+    /* Attendre qu'un socket client soit prêt (ESTABLISHED) - polling sans délai */
     while ((client_sock = tcp_find_ready_client(port)) == NULL) {
-        /* Vérifier interruption CTRL+D */
-        if (keyboard_getchar_nonblock() == 0x04) {
-            g_server_closing = 1;
-            return -2;
-        }
-        
-        /* Timeout après 30 secondes pour éviter blocage infini */
-        if (++timeout > 3000) {
-            return -1;
-        }
-        
-        /* Yield au scheduler - permet aux interrupts réseau d'être traitées */
-        thread_sleep_ms(10);
+        /* Juste céder le CPU, pas de délai */
+        thread_yield();
     }
     
     /* Allouer un nouveau FD pour le socket client */
@@ -838,15 +826,16 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
     
     net_lock();
     
-    /* Attente courte des données - timeout 500ms max */
-    int timeout = 10;
-    while (tcp_available(sock) == 0 && timeout > 0) {
+    /* Attente des données - yield sans délai */
+    while (tcp_available(sock) == 0) {
         if (sock->state != TCP_STATE_ESTABLISHED) {
             net_unlock();
             return 0;
         }
-        condvar_timedwait(&sock->state_changed, &net_mutex, 50);
-        timeout--;
+        /* Relâcher le lock, yield, reprendre */
+        net_unlock();
+        thread_yield();
+        net_lock();
     }
     
     int n = tcp_recv(sock, buf, len);
