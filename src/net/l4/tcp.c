@@ -496,7 +496,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     uint8_t flags = tcp_get_flags(flags_field);
     int header_len = tcp_get_header_len(flags_field);
     
-    /* Log: paquet TCP reçu */
+    /* Log: paquet TCP reçu (seulement pour SYN/RST, pas ACK/FIN routine) */
+#ifdef TCP_DEBUG_VERBOSE
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[TCP] Received ");
     if (flags & TCP_FLAG_SYN) console_puts("SYN ");
@@ -516,6 +517,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     console_put_hex(ack_num);
     console_puts(")\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+#endif
     
     /* Chercher un socket existant pour cette connexion */
     tcp_socket_t* sock = tcp_find_socket(dest_port, ip_hdr->src_ip, src_port);
@@ -629,11 +631,13 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 int payload_len = len - header_len;
                 uint8_t* payload = data + header_len;
                 
+#ifdef TCP_DEBUG_VERBOSE
                 console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
                 console_puts("[TCP] Received ");
                 console_put_dec(payload_len);
                 console_puts(" bytes of data\n");
                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+#endif
                 
                 /* Stocker les données dans le buffer circulaire */
                 int stored = 0;
