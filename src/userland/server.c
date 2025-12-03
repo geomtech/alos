@@ -1,5 +1,5 @@
 /* userland/server.c - Ultra-Optimized HTTP Server for ALOS */
-#include "../../userland/libc.h"
+#include "../lib/libc.h"
 
 #define PORT 8080
 
