@@ -949,9 +949,7 @@ void syscall_dispatcher(syscall_regs_t* regs)
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
     console_puts("[SYSCALL] #");
     console_put_dec(syscall_num);
-    console_puts(" (ebx=0x");
-    console_put_hex(regs->ebx);
-    console_puts(")\n");
+    console_puts("\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     KLOG_INFO("SYSCALL", "=== Syscall Dispatcher ===");
