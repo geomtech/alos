@@ -67,6 +67,20 @@ static void coalesce_block(KHeapBlock* block)
         return;
     }
     
+    /* Vérification de sanité : le pointeur next doit être dans le heap */
+    uint8_t* heap_end = (uint8_t*)heap_start + heap_total_size;
+    if ((uint8_t*)block->next < (uint8_t*)heap_start || 
+        (uint8_t*)block->next >= heap_end) {
+        /* Corruption détectée ! */
+        extern void console_puts(const char*);
+        extern void console_put_hex(uint32_t);
+        console_puts("\n[KHEAP] CORRUPTION: block->next = 0x");
+        console_put_hex((uint32_t)block->next);
+        console_puts(" is outside heap!\n");
+        block->next = NULL;  /* Couper la chaîne pour éviter le crash */
+        return;
+    }
+    
     /* Si le bloc suivant est libre, on le fusionne */
     if (block->next->is_free) {
         /* 
@@ -182,7 +196,13 @@ void kfree(void* ptr)
      * On le fait ici pour une meilleure défragmentation.
      */
     KHeapBlock* current = heap_start;
-    while (current != NULL) {
+    int max_iterations = 10000;  /* Protection contre boucle infinie */
+    while (current != NULL && max_iterations-- > 0) {
+        /* Vérification de sanité */
+        if ((uint8_t*)current < (uint8_t*)heap_start || 
+            (uint8_t*)current >= heap_end) {
+            break;  /* Corruption, arrêter */
+        }
         if (current->is_free) {
             coalesce_block(current);
         }

@@ -1499,6 +1499,19 @@ void scheduler_schedule(void)
     uint32_t new_cr3 = 0;
     if (next->owner && next->owner->cr3) {
         new_cr3 = next->owner->cr3;
+        
+        /* Vérification de sanité : CR3 doit être une adresse physique valide (alignée sur 4 Ko) */
+        if (new_cr3 < 0x1000 || (new_cr3 & 0xFFF) != 0) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("\n[SCHED] FATAL: Invalid CR3 = 0x");
+            console_put_hex(new_cr3);
+            console_puts(" for thread ");
+            console_puts(next->name);
+            console_puts("!\n");
+            console_puts("Process cr3 corrupted. Halting.\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            for (;;) asm volatile("hlt");
+        }
     }
     
     /* DEBUG: Afficher info sur le switch vers un thread user */

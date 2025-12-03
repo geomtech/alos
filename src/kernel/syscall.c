@@ -50,6 +50,9 @@ static void fd_table_init(void)
         console_puts("[SYSCALL] fd_table allocated at ");
         console_put_hex((uint32_t)fd_table);
         console_puts("\n");
+        
+        /* Forcer le rechargement du TLB pour être sûr que les nouveaux mappings sont visibles */
+        __asm__ volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" : : : "eax", "memory");
     }
     
     for (int i = 0; i < MAX_FD; i++) {
@@ -85,17 +88,10 @@ static int fd_alloc(void)
     fd_table_init();
     
     /* DEBUG: Vérifier l'accès à la table */
-    console_puts("[DEBUG] fd_alloc: scanning table...\n");
+    // console_puts("[DEBUG] fd_alloc: scanning table...\n");
     
     /* Commencer à 3 (après stdin/stdout/stderr) */
     for (int i = 3; i < MAX_FD; i++) {
-        /* DEBUG: Afficher index tous les 100 */
-        if (i % 100 == 0) {
-            console_puts("[DEBUG] fd_alloc: checking index ");
-            console_put_dec(i);
-            console_puts("\n");
-        }
-        
         if (fd_table[i].type == FILE_TYPE_NONE) {
             fd_table[i].ref_count = 1;
             console_puts("[DEBUG] fd_alloc: found free fd ");
@@ -596,10 +592,14 @@ static int sys_socket(int domain, int type, int protocol)
         return -1;
     }
     
+    console_puts("[DEBUG] sys_socket: fd allocated, setting up table...\n");
+    
     /* Associer le socket au FD */
     fd_table[fd].type = FILE_TYPE_SOCKET;
     fd_table[fd].flags = O_RDWR;
     fd_table[fd].socket = sock;
+    
+    console_puts("[DEBUG] sys_socket: table entry set\n");
     
     /* Sauvegarder globalement pour contourner le bug fd_table */
     g_server_socket = sock;

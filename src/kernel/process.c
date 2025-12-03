@@ -19,7 +19,7 @@
  * Constantes
  * ======================================== */
 
-#define KERNEL_STACK_SIZE   4096    /* Taille de la stack kernel par thread (4 KiB) */
+#define KERNEL_STACK_SIZE   16384   /* Taille de la stack kernel par thread (16 KiB) */
 
 /* Utiliser la définition de usermode.h si disponible, sinon définir ici */
 #ifndef USER_STACK_SIZE
