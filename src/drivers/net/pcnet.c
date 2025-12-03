@@ -240,6 +240,11 @@ void pcnet_irq_handler(void)
     }
 }
 
+void pcnet_poll(void)
+{
+    pcnet_irq_handler();
+}
+
 /* ============================================ */
 /*           MAC Address Reading                */
 /* ============================================ */

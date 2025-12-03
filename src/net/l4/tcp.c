@@ -169,6 +169,7 @@ void tcp_init(void)
         for (int j = 0; j < 4; j++) {
             tcp_sockets[i].remote_ip[j] = 0;
         }
+        condvar_init(&tcp_sockets[i].state_changed);
     }
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
@@ -316,6 +317,9 @@ void tcp_close(tcp_socket_t* sock)
     }
     /* Garder le local_port et in_use pour permettre de réutiliser le socket */
     sock->local_port = saved_port;
+    
+    /* Signal state change */
+    condvar_broadcast(&sock->state_changed);
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[TCP] Socket reset to LISTEN on port ");
@@ -579,6 +583,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     console_put_dec(sock->remote_port);
                     console_puts("!\n");
                     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    
+                    /* Signal connection established */
+                    condvar_broadcast(&sock->state_changed);
                 } else {
                     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
                     console_puts("[TCP] Invalid ACK: expected ");
@@ -639,6 +646,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 
                 /* Envoyer ACK */
                 tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+                
+                /* Signal data received */
+                condvar_broadcast(&sock->state_changed);
             }
             
             /* Si on reçoit un FIN */
@@ -672,6 +682,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 for (int i = 0; i < 4; i++) {
                     sock->remote_ip[i] = 0;
                 }
+                
+                /* Signal reset */
+                condvar_broadcast(&sock->state_changed);
             }
             break;
             
@@ -729,6 +742,7 @@ tcp_socket_t* tcp_socket_create(void)
     for (int i = 0; i < 4; i++) {
         sock->remote_ip[i] = 0;
     }
+    condvar_init(&sock->state_changed);
     
     return sock;
 }

@@ -5,6 +5,7 @@
 #include "../core/netdev.h"
 #include "../utils.h"
 #include "../../kernel/console.h"
+#include "../core/net.h"
 
 /**
  * Traite un paquet Ethernet reçu (nouvelle API avec NetInterface).
@@ -32,6 +33,9 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
     int payload_len = len - ETHERNET_HEADER_SIZE;
     
     /* Dispatcher selon le type de protocole */
+    /* Protection globale de la stack réseau */
+    net_lock();
+    
     switch (ethertype) {
         case ETH_TYPE_ARP:
             /* Paquet ARP */
@@ -51,6 +55,8 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
             /* Type inconnu - ignorer silencieusement */
             break;
     }
+    
+    net_unlock();
 }
 
 /**

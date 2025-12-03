@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../l3/ipv4.h"
+#include "../../kernel/sync.h"
 
 /* TCP Header Size (without options) */
 #define TCP_HEADER_SIZE     20
@@ -123,6 +124,9 @@ typedef struct tcp_socket {
     uint16_t    recv_head;      /* Where to write next */
     uint16_t    recv_tail;      /* Where to read next */
     uint16_t    recv_count;     /* Number of bytes in buffer */
+    
+    /* Synchronization */
+    condvar_t   state_changed;  /* Signaled when state changes or data arrives */
 } tcp_socket_t;
 
 /* Internal socket flags */

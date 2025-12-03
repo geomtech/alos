@@ -23,6 +23,9 @@ uint8_t NETMASK[4] = {0, 0, 0, 0};    /* Sera configuré par DHCP */
  */
 void net_init(uint8_t* mac)
 {
+    /* Initialize global network lock */
+    mutex_init(&net_mutex, MUTEX_TYPE_NORMAL);
+
     /* Copier notre adresse MAC dans la variable legacy */
     for (int i = 0; i < 6; i++) {
         MY_MAC[i] = mac[i];
@@ -75,11 +78,27 @@ int mac_is_broadcast(const uint8_t* mac)
 
 /**
  * Traite les paquets réseau en attente (polling mode).
- * Cette fonction appelle le handler d'interruption PCNet
- * pour traiter les paquets reçus.
+ * Cette fonction traite directement les paquets sans passer par le worker thread.
+ * Utilisée pendant le boot (DHCP) et dans les boucles d'attente syscall.
  */
 void net_poll(void)
 {
-    /* Appeler le handler d'interruption pour traiter les paquets */
-    pcnet_irq_handler();
+    /* Appeler le polling direct du driver PCnet */
+    pcnet_poll();
+}
+
+/* ========================================
+ * Global Network Lock Implementation
+ * ======================================== */
+
+mutex_t net_mutex;
+
+void net_lock(void)
+{
+    mutex_lock(&net_mutex);
+}
+
+void net_unlock(void)
+{
+    mutex_unlock(&net_mutex);
 }

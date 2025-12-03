@@ -243,6 +243,11 @@ void pcnet_stop(PCNetDevice* dev);
 void pcnet_irq_handler(void);
 
 /**
+ * Poll the device for events (used when interrupts are disabled or during boot).
+ */
+void pcnet_poll(void);
+
+/**
  * Retourne le périphérique PCnet global (s'il est initialisé).
  */
 PCNetDevice* pcnet_get_device(void);

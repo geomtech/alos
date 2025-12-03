@@ -65,4 +65,26 @@ int mac_is_broadcast(const uint8_t* mac);
  */
 void net_poll(void);
 
+/* ========================================
+ * Global Network Lock
+ * ======================================== */
+
+#include "../../kernel/sync.h"
+
+/**
+ * Global network mutex.
+ * Must be acquired before calling any network function that modifies state.
+ */
+extern mutex_t net_mutex;
+
+/**
+ * Acquires the global network lock.
+ */
+void net_lock(void);
+
+/**
+ * Releases the global network lock.
+ */
+void net_unlock(void);
+
 #endif /* NET_NET_H */

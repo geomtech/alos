@@ -4,6 +4,7 @@
 #include "console.h"
 #include "../fs/vfs.h"
 #include "../mm/kheap.h"
+#include "../arch/x86/io.h"
 
 /* ===========================================
  * Variables globales
@@ -154,6 +155,43 @@ static void write_to_file(const char* str)
     if (written > 0) {
         log_file_offset += written;
     }
+    if (written > 0) {
+        log_file_offset += written;
+    }
+}
+
+/* ===========================================
+ * Serial Port Support (COM1)
+ * =========================================== */
+#define PORT_COM1 0x3F8
+
+static void serial_init(void)
+{
+    outb(PORT_COM1 + 1, 0x00);    /* Disable all interrupts */
+    outb(PORT_COM1 + 3, 0x80);    /* Enable DLAB (set baud rate divisor) */
+    outb(PORT_COM1 + 0, 0x03);    /* Set divisor to 3 (lo byte) 38400 baud */
+    outb(PORT_COM1 + 1, 0x00);    /*                  (hi byte) */
+    outb(PORT_COM1 + 3, 0x03);    /* 8 bits, no parity, one stop bit */
+    outb(PORT_COM1 + 2, 0xC7);    /* Enable FIFO, clear them, with 14-byte threshold */
+    outb(PORT_COM1 + 4, 0x0B);    /* IRQs enabled, RTS/DSR set */
+}
+
+static int serial_is_transmit_empty(void)
+{
+    return inb(PORT_COM1 + 5) & 0x20;
+}
+
+static void serial_write_char(char a)
+{
+    while (serial_is_transmit_empty() == 0);
+    outb(PORT_COM1, a);
+}
+
+static void serial_write_str(const char* str)
+{
+    while (*str) {
+        serial_write_char(*str++);
+    }
 }
 
 /**
@@ -227,6 +265,9 @@ static void do_log(klog_level_t level, const char* module, const char* msg,
     } else {
         write_to_file(formatted);
     }
+    
+    /* Toujours écrire sur le port série pour le debug */
+    serial_write_str(formatted);
 }
 
 /* ===========================================
@@ -240,8 +281,11 @@ void klog_early_init(void)
     early_mode = 1;
     current_level = LOG_INFO;
     
+    /* Initialize serial port for debug output */
+    serial_init();
+    
     /* Premier message de log */
-    klog(LOG_INFO, "KLOG", "Early logging initialized (memory buffer)");
+    klog(LOG_INFO, "KLOG", "Early logging initialized (memory buffer + serial)");
 }
 
 int klog_init(void)

@@ -12,6 +12,7 @@
 #include "../net/l4/tcp.h"
 #include "../net/core/net.h"
 #include "../mm/kheap.h"
+#include "sync.h"
 
 /* Macro pour activer/désactiver les interruptions */
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
@@ -559,8 +560,11 @@ static int sys_socket(int domain, int type, int protocol)
         return -1;
     }
     
-    /* Créer le socket TCP kernel */
+    /* Créer le socket TCP kernel (protected) */
+    net_lock();
     tcp_socket_t* sock = tcp_socket_create();
+    net_unlock();
+    
     if (sock == NULL) {
         console_puts("[SYSCALL] socket: failed to create TCP socket\n");
         return -1;
@@ -649,7 +653,14 @@ static int sys_bind(int fd, sockaddr_in_t* addr, int len)
     console_puts("\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
-    return tcp_bind(sock, port);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    net_lock();
+    int result = tcp_bind(sock, port);
+    net_unlock();
+    
+    return result;
 }
 
 /**
@@ -687,8 +698,10 @@ static int sys_listen(int fd, int backlog)
         return -1;
     }
     
-    /* Passer en mode LISTEN */
+    /* Passer en mode LISTEN (protected) */
+    net_lock();
     sock->state = TCP_STATE_LISTEN;
+    net_unlock();
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[SYSCALL] listen: fd ");
@@ -741,38 +754,42 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     }
     
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] accept: waiting for connection on port ");
+        console_puts("[SYSCALL] accept: waiting for connection on port ");
     console_put_dec(sock->local_port);
     console_puts("...\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
-    /* Boucle d'attente bloquante */
-    /* On attend que le socket passe à ESTABLISHED */
-    int timeout = 0;
+    /* Acquérir le verrou global réseau */
+    net_lock();
+    
+    /* Boucle d'attente avec Condition Variable */
     while (sock->state != TCP_STATE_ESTABLISHED) {
         /* Vérifier si le socket a été fermé */
         if (sock->state == TCP_STATE_CLOSED) {
             console_puts("[SYSCALL] accept: socket closed\n");
+            net_unlock();
             return -1;
         }
         
         /* Vérifier si CTRL+D a été pressé (permet d'interrompre accept) */
-        char key = keyboard_getchar_nonblock();
-        if (key == 0x04) {  /* CTRL+D = EOT */
+        /* Note: Idéalement on devrait avoir un mécanisme de signal/interrupt plus propre */
+        if (keyboard_getchar_nonblock() == 0x04) {  /* CTRL+D = EOT */
             console_puts("[SYSCALL] accept: interrupted by CTRL+D\n");
-            g_server_closing = 1;  /* Marquer que le serveur veut se fermer */
-            return -2;  /* Code spécial pour interruption utilisateur */
+            g_server_closing = 1;
+            net_unlock();
+            return -2;
         }
         
-        /* Activer les interruptions pour permettre au réseau de fonctionner */
-        enable_interrupts();
-        
-        /* Traiter les paquets réseau en attente */
-        net_poll();
-        
-        /* Céder le CPU */
-        schedule();
+        /* Attendre sur la condition variable (libère le mutex et bloque) */
+        /* On utilise un timeout pour pouvoir vérifier CTRL+D périodiquement */
+        if (!condvar_timedwait(&sock->state_changed, &net_mutex, 100)) {
+            /* Timeout - on boucle pour vérifier CTRL+D */
+            continue;
+        }
     }
+    
+    /* Connexion établie ! */
+    net_unlock();
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("[SYSCALL] accept: connection established!\n");
@@ -825,25 +842,29 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
         return 0;  /* Connexion fermée */
     }
     
+    /* Acquérir le verrou global réseau */
+    net_lock();
+    
     /* Attente bloquante des données */
     while (tcp_available(sock) == 0) {
         /* Vérifier si la connexion est toujours active */
         if (sock->state != TCP_STATE_ESTABLISHED &&
             sock->state != TCP_STATE_CLOSE_WAIT) {
+            net_unlock();
             return 0;  /* Connexion fermée */
         }
         
-        /* Activer les interruptions et traiter les paquets réseau */
-        enable_interrupts();
-        net_poll();
-        
-        /* Petit délai */
-        for (volatile int i = 0; i < 10000; i++);
-        
-        schedule();
+        /* Attendre sur la condition variable */
+        if (!condvar_timedwait(&sock->state_changed, &net_mutex, 100)) {
+            continue;
+        }
     }
     
-    return tcp_recv(sock, buf, len);
+    /* Lire les données (protected) */
+    int n = tcp_recv(sock, buf, len);
+    net_unlock();
+    
+    return n;
 }
 
 /**

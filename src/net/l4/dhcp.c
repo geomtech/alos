@@ -301,8 +301,10 @@ int dhcp_discover(NetInterface* netif)
         dhcp_packet[total_len++] = 0;
     }
     
-    /* Envoyer */
+    /* Envoyer (protected) */
+    net_lock();
     dhcp_send_raw(netif, dhcp_packet, total_len);
+    net_unlock();
     
     return 0;
 }
@@ -356,8 +358,10 @@ static int dhcp_send_request(NetInterface* netif)
         dhcp_packet[total_len++] = 0;
     }
     
-    /* Envoyer */
+    /* Envoyer (protected) */
+    net_lock();
     dhcp_send_raw(netif, dhcp_packet, total_len);
+    net_unlock();
     
     return 0;
 }
