@@ -907,7 +907,17 @@ static void idle_thread_func(void *arg)
 {
     (void)arg;
     for (;;) {
+        /* Dormir jusqu'à la prochaine interruption */
         __asm__ volatile("hlt");
+        
+        /* Une interruption nous a réveillé (ex: réseau, clavier, timer).
+         * Il est possible qu'un thread soit devenu prêt ou qu'on doive
+         * traiter quelque chose. On cède donc la main au scheduler.
+         * 
+         * Si aucun thread n'est prêt, le scheduler nous redonnera la main
+         * immédiatement et on refera hlt.
+         */
+        thread_yield();
     }
 }
 

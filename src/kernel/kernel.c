@@ -31,6 +31,8 @@
 #include "../include/string.h"
 #include "../mm/vmm.h"
 #include "process.h"
+#include "thread.h"
+#include "workqueue.h"
 #include "../config/config.h"
 
 /* Variables globales pour les infos Multiboot */
@@ -123,6 +125,12 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
             vmm_init();
             
             /* ============================================ */
+            /* Scheduler & Workqueue                        */
+            /* ============================================ */
+            scheduler_init();
+            workqueue_init();
+            
+            /* ============================================ */
             /* PCI Bus Enumeration                          */
             /* ============================================ */
             pci_probe();
@@ -194,30 +202,42 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                         if (netif != NULL) {
                             if (use_dhcp) {
                                 /* === Configuration IP via DHCP === */
-                                KLOG_INFO("NET", "Starting DHCP configuration...");
+                                console_puts("[DHCP] Starting DHCP configuration...\n");
                                 
                                 /* Initialiser et démarrer DHCP */
                                 dhcp_init(netif);
                                 dhcp_discover(netif);
                                 
                                 /* Attendre la configuration DHCP (polling avec timeout) */
-                                KLOG_INFO("NET", "Waiting for DHCP response...");
-                                for (int i = 0; i < 50 && !dhcp_is_bound(netif); i++) {
-                                    /* Petite pause pour laisser les interruptions traiter les paquets */
-                                    for (volatile int j = 0; j < 1000000; j++);
-                                    
-                                    /* Permettre les interruptions d'être traitées */
+                                console_puts("[DHCP] Waiting for DHCP response...\n");
+                                for (int i = 0; i < 200 && !dhcp_is_bound(netif); i++) {
+                                    /* Activer les interruptions pour recevoir les paquets */
                                     asm volatile("sti");
-                                    asm volatile("hlt");  /* Attend la prochaine interruption */
+                                    
+                                    /* Traiter les paquets réseau en attente */
+                                    net_poll();
+                                    
+                                    /* Afficher un point tous les 20 tours */
+                                    if (i % 20 == 0) {
+                                        console_putc('.');
+                                    }
+                                    
+                                    /* Petite pause */
+                                    for (volatile int j = 0; j < 50000; j++);
                                 }
+                                console_putc('\n');
                                 
                                 if (dhcp_is_bound(netif)) {
-                                    KLOG_INFO("NET", "DHCP configuration complete!");
+                                    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                                    console_puts("[DHCP] Configuration complete!\n");
+                                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                                 } else {
-                                    KLOG_WARN("NET", "DHCP configuration timed out");
+                                    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                                    console_puts("[DHCP] Configuration timed out!\n");
+                                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
                                 }
                             } else {
-                                KLOG_INFO("NET", "Using static IP configuration");
+                                console_puts("[NET] Using static IP configuration\n");
                             }
                             
                             /* === Initialisation DNS === */
@@ -227,11 +247,6 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
                             
                             /* === Initialisation TCP === */
                             tcp_init();
-                            
-                            /* Ouvrir le port 80 (HTTP) en écoute */
-                            if (tcp_listen(TCP_PORT_HTTP) != NULL) {
-                                KLOG_INFO("TCP", "HTTP server listening on port 80");
-                            }
                         }
                     }
                 }
@@ -239,7 +254,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
         }
         
         /* Instructions */
-        console_clear(VGA_COLOR_BLACK);
+        /* console_clear(VGA_COLOR_BLACK); */
         console_puts("\n");
         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         console_puts("Welcome to ALOS - Alexy Operating System v0.1 - ");

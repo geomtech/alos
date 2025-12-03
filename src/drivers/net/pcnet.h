@@ -243,6 +243,14 @@ void pcnet_stop(PCNetDevice* dev);
 void pcnet_irq_handler(void);
 
 /**
+ * Traite les paquets en attente (polling mode).
+ * Contrairement à l'ISR qui utilise un worker thread,
+ * cette fonction traite les paquets directement.
+ * Utilisé pendant le boot et dans les boucles d'attente.
+ */
+void pcnet_poll(void);
+
+/**
  * Retourne le périphérique PCnet global (s'il est initialisé).
  */
 PCNetDevice* pcnet_get_device(void);

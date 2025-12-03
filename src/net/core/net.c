@@ -75,11 +75,11 @@ int mac_is_broadcast(const uint8_t* mac)
 
 /**
  * Traite les paquets réseau en attente (polling mode).
- * Cette fonction appelle le handler d'interruption PCNet
- * pour traiter les paquets reçus.
+ * Cette fonction traite directement les paquets sans passer par le worker thread.
+ * Utilisée pendant le boot (DHCP) et dans les boucles d'attente syscall.
  */
 void net_poll(void)
 {
-    /* Appeler le handler d'interruption pour traiter les paquets */
-    pcnet_irq_handler();
+    /* Appeler le polling direct du driver PCnet */
+    pcnet_poll();
 }

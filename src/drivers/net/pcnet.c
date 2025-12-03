@@ -7,9 +7,16 @@
 #include "../../net/l2/ethernet.h"
 #include "../../net/core/netdev.h"
 #include "../../arch/x86/idt.h"
+#include "../../kernel/workqueue.h"
+#include "../../kernel/sync.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;
+static volatile bool g_pcnet_rx_work_pending = false;
+static spinlock_t g_pcnet_rx_lock = {0};
+
+static void pcnet_receive(PCNetDevice* dev);
+static void pcnet_process_rx(PCNetDevice* dev);
 
 /* NetInterface pour la nouvelle API */
 static NetInterface* g_pcnet_netif = NULL;
@@ -48,6 +55,17 @@ void pci_enable_bus_mastering(PCIDevice* dev)
     
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("[PCnet] Bus Mastering enabled\n");
+}
+
+static void pcnet_process_rx(PCNetDevice* dev)
+{
+    if (dev == NULL) {
+        return;
+    }
+
+    spinlock_lock(&g_pcnet_rx_lock);
+    pcnet_receive(dev);
+    spinlock_unlock(&g_pcnet_rx_lock);
 }
 
 /* ============================================ */
@@ -169,6 +187,7 @@ static void pcnet_receive(PCNetDevice* dev)
             
             /* Passer le paquet à la couche Ethernet pour traitement (pas de log) */
             ethernet_handle_packet(buffer, len);
+            dev->packets_rx++;
         }
         
         /* CRITIQUE: Rendre le descripteur à la carte */
@@ -184,6 +203,28 @@ static void pcnet_receive(PCNetDevice* dev)
 /* ============================================ */
 /*           Interrupt Handler                  */
 /* ============================================ */
+
+/**
+ * Worker thread pour le traitement RX (Bottom Half).
+ * Appelé par le kernel worker pool.
+ * 
+ * Cette fonction s'exécute dans un thread kernel standard,
+ * donc avec les interruptions activées et la possibilité
+ * de prendre des verrous ou d'être préempté.
+ */
+static void pcnet_rx_work(void* arg)
+{
+    PCNetDevice* dev = (PCNetDevice*)arg;
+    
+    /* Traiter les paquets reçus */
+    pcnet_process_rx(dev);
+    
+    /* Réactiver les interruptions RX (démasquer RINT dans CSR3) */
+    uint32_t csr3 = pcnet_read_csr(dev, CSR3);
+    pcnet_write_csr(dev, CSR3, csr3 & ~CSR3_RINTM);
+
+    g_pcnet_rx_work_pending = false;
+}
 
 /**
  * Handler d'interruption PCnet (IRQ 11).
@@ -204,27 +245,24 @@ void pcnet_irq_handler(void)
      * Acquitter les interruptions en écrivant 1 sur les bits d'interruption.
      * Les bits 8-15 sont "write-1-to-clear" (écrire 1 efface le flag).
      * On doit garder IENA (bit 6) actif pour continuer à recevoir les IRQ.
-     * 
-     * Bits à effacer (écrire 1):
-     * - IDON (bit 8): Initialization Done
-     * - TINT (bit 9): Transmit Interrupt
-     * - RINT (bit 10): Receive Interrupt
-     * - MERR (bit 11): Memory Error
-     * - MISS (bit 12): Missed Frame
-     * - CERR (bit 13): Collision Error
-     * - BABL (bit 14): Babble
-     * - ERR (bit 15): Error summary
-     * 
-     * On écrit: (csr0 & 0xFF00) | IENA
-     * Cela efface tous les flags actifs tout en gardant IENA.
      */
     uint32_t ack = (csr0 & 0xFF00) | CSR0_IENA;
     pcnet_write_csr(g_pcnet_dev, CSR0, ack);
     
     /* Traiter les paquets reçus si RINT */
     if (csr0 & CSR0_RINT) {
-        pcnet_receive(g_pcnet_dev);
-        g_pcnet_dev->packets_rx++;
+        uint32_t csr3 = pcnet_read_csr(g_pcnet_dev, CSR3);
+        pcnet_write_csr(g_pcnet_dev, CSR3, csr3 | CSR3_RINTM);
+
+        if (!g_pcnet_rx_work_pending) {
+            g_pcnet_rx_work_pending = true;
+            if (kwork_submit(pcnet_rx_work, g_pcnet_dev) != 0) {
+                /* Fallback: traiter immédiatement et réactiver RINT */
+                g_pcnet_rx_work_pending = false;
+                pcnet_process_rx(g_pcnet_dev);
+                pcnet_write_csr(g_pcnet_dev, CSR3, csr3 & ~CSR3_RINTM);
+            }
+        }
     }
     
     /* Mettre à jour les statistiques TX */
@@ -238,6 +276,41 @@ void pcnet_irq_handler(void)
     
     if (csr0 & CSR0_IDON) {
         g_pcnet_dev->initialized = true;
+    }
+}
+
+/**
+ * Traite les paquets en attente (polling mode).
+ * Cette fonction traite directement les paquets sans passer par le worker thread.
+ * Elle est utilisée pendant le boot (DHCP) et dans les boucles d'attente.
+ * 
+ * IMPORTANT: Cette fonction peut être appelée en parallèle avec l'ISR,
+ * donc elle doit être prudente avec les accès concurrents.
+ */
+void pcnet_poll(void)
+{
+    if (g_pcnet_dev == NULL) return;
+    
+    /* Lire CSR0 pour voir s'il y a des paquets */
+    uint32_t csr0 = pcnet_read_csr(g_pcnet_dev, CSR0);
+    
+    /* Si RINT est set, il y a des paquets à traiter */
+    if (csr0 & CSR0_RINT) {
+        console_puts("[POLL] RINT set, processing packets\n");
+        
+        /* Acquitter RINT */
+        pcnet_write_csr(g_pcnet_dev, CSR0, CSR0_RINT | CSR0_IENA);
+        
+        /* Traiter les paquets directement */
+        pcnet_receive(g_pcnet_dev);
+    }
+    
+    /* S'assurer que RINT n'est pas masqué dans CSR3 
+     * (au cas où l'ISR l'aurait masqué et le worker n'a pas encore tourné) */
+    uint32_t csr3 = pcnet_read_csr(g_pcnet_dev, CSR3);
+    if (csr3 & CSR3_RINTM) {
+        /* Démasquer RINT */
+        pcnet_write_csr(g_pcnet_dev, CSR3, csr3 & ~CSR3_RINTM);
     }
 }
 
@@ -378,6 +451,7 @@ static int pcnet_netif_send(NetInterface* netif, uint8_t* data, int len)
 
 PCNetDevice* pcnet_init(PCIDevice* pci_dev)
 {
+    spinlock_init(&g_pcnet_rx_lock);
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("\n=== PCnet Driver Initialization ===\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
