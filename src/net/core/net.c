@@ -1,7 +1,7 @@
 /* src/net/core/net.c - Network Configuration */
 #include "net.h"
 #include "netdev.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 #include "../../drivers/net/pcnet.h"
 
 /* 
@@ -32,15 +32,15 @@ void net_init(uint8_t* mac)
     }
     
     /* Afficher l'état initial (en attente de DHCP) */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[NET] Network layer initialized\n");
-    console_puts("      MAC:     ");
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[NET] Network layer initialized\n");
+    net_puts("      MAC:     ");
     for (int i = 0; i < 6; i++) {
-        if (i > 0) console_putc(':');
-        console_put_hex_byte(MY_MAC[i]);
+        if (i > 0) net_putc(':');
+        net_put_hex_byte(MY_MAC[i]);
     }
-    console_puts("\n      Status:  Waiting for DHCP or static configuration\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n      Status:  Waiting for DHCP or static configuration\n");
+    net_reset_color();
 }
 
 /**

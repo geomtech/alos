@@ -4,7 +4,7 @@
 #include "../l3/ipv4.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 #include "../core/net.h"
 
 /**
@@ -14,11 +14,11 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale (header Ethernet = 14 bytes) */
     if (data == NULL || len < ETHERNET_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[ETH] Packet too short: ");
-        console_put_dec(len);
-        console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[ETH] Packet too short: ");
+        net_put_dec(len);
+        net_puts(" bytes\n");
+        net_reset_color();
         return;
     }
     

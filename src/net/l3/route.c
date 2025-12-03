@@ -3,7 +3,7 @@
 #include "../core/net.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 
 /* Table de routage statique */
 static route_entry_t routes[MAX_ROUTES];
@@ -15,8 +15,8 @@ static int route_count = 0;
 static void print_ip(const uint8_t* ip)
 {
     for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(ip[i]);
+        if (i > 0) net_putc('.');
+        net_put_dec(ip[i]);
     }
 }
 
@@ -78,16 +78,16 @@ void route_init(void)
     }
     route_count = 0;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[ROUTE] Initializing routing table...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[ROUTE] Initializing routing table...\n");
+    net_reset_color();
     
     /* Obtenir l'interface par défaut */
     netdev_t* default_iface = netdev_get_default();
     if (default_iface == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[ROUTE] No network interface available!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[ROUTE] No network interface available!\n");
+        net_reset_color();
         return;
     }
     
@@ -96,9 +96,9 @@ void route_init(void)
      * Cela évite le problème de gateway 0.0.0.0 avant DHCP.
      */
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[ROUTE] Routing table initialized (waiting for DHCP)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[ROUTE] Routing table initialized (waiting for DHCP)\n");
+    net_reset_color();
 }
 
 /**
@@ -117,9 +117,9 @@ void route_update_from_netif(NetInterface* netif)
         return;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[ROUTE] Updating routes from DHCP...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[ROUTE] Updating routes from DHCP...\n");
+    net_reset_color();
     
     /* Calculer l'adresse réseau à partir de l'IP et du masque */
     uint8_t network[4], netmask[4], gateway[4], no_gw[4] = {0, 0, 0, 0};
@@ -137,11 +137,11 @@ void route_update_from_netif(NetInterface* netif)
         route_add(default_net, default_mask, gateway, iface);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[ROUTE] Routes updated (");
-    console_put_dec(route_count);
-    console_puts(" routes)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[ROUTE] Routes updated (");
+    net_put_dec(route_count);
+    net_puts(" routes)\n");
+    net_reset_color();
 }
 
 /**
@@ -150,9 +150,9 @@ void route_update_from_netif(NetInterface* netif)
 bool route_add(uint8_t* network, uint8_t* netmask, uint8_t* gateway, netdev_t* iface)
 {
     if (route_count >= MAX_ROUTES) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[ROUTE] Table full!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[ROUTE] Table full!\n");
+        net_reset_color();
         return false;
     }
     
@@ -179,21 +179,21 @@ bool route_add(uint8_t* network, uint8_t* netmask, uint8_t* gateway, netdev_t* i
     route_count++;
     
     /* Log */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[ROUTE] Added: ");
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[ROUTE] Added: ");
     print_ip(network);
-    console_puts("/");
-    console_put_dec(netmask_length(netmask));
+    net_puts("/");
+    net_put_dec(netmask_length(netmask));
     if (!ip_is_zero(gateway)) {
-        console_puts(" via ");
+        net_puts(" via ");
         print_ip(gateway);
     } else {
-        console_puts(" (direct)");
+        net_puts(" (direct)");
     }
-    console_puts(" dev ");
-    console_puts(iface->name);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts(" dev ");
+    net_puts(iface->name);
+    net_puts("\n");
+    net_reset_color();
     
     return true;
 }
@@ -263,11 +263,11 @@ bool route_get_next_hop(uint8_t* dest_ip, uint8_t* next_hop)
  */
 void route_print_table(void)
 {
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("\n=== Routing Table ===\n");
-    console_puts("Destination      Gateway          Iface\n");
-    console_puts("-----------------------------------------\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("\n=== Routing Table ===\n");
+    net_puts("Destination      Gateway          Iface\n");
+    net_puts("-----------------------------------------\n");
+    net_reset_color();
     
     for (int i = 0; i < MAX_ROUTES; i++) {
         if (!routes[i].active) {
@@ -278,22 +278,22 @@ void route_print_table(void)
         
         /* Destination/masque */
         print_ip(r->network);
-        console_puts("/");
-        console_put_dec(netmask_length(r->netmask));
-        console_puts("\t");
+        net_puts("/");
+        net_put_dec(netmask_length(r->netmask));
+        net_puts("\t");
         
         /* Gateway */
         if (ip_is_zero(r->gateway)) {
-            console_puts("*\t\t");
+            net_puts("*\t\t");
         } else {
             print_ip(r->gateway);
-            console_puts("\t");
+            net_puts("\t");
         }
         
         /* Interface */
-        console_puts(r->interface->name);
-        console_puts("\n");
+        net_puts(r->interface->name);
+        net_puts("\n");
     }
     
-    console_puts("-----------------------------------------\n");
+    net_puts("-----------------------------------------\n");
 }

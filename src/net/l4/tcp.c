@@ -6,7 +6,7 @@
 #include "../core/net.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 #include "../../kernel/timer.h"
 #include "../../mm/kheap.h"
 
@@ -25,8 +25,8 @@ static tcp_socket_t tcp_sockets[TCP_MAX_SOCKETS];
 static void print_ip(const uint8_t* ip)
 {
     for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(ip[i]);
+        if (i > 0) net_putc('.');
+        net_put_dec(ip[i]);
     }
 }
 
@@ -149,9 +149,9 @@ static uint16_t tcp_checksum(uint8_t* src_ip, uint8_t* dest_ip,
  */
 void tcp_init(void)
 {
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Initializing TCP stack...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Initializing TCP stack...\n");
+    net_reset_color();
     
     /* Initialiser tous les sockets à CLOSED */
     for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
@@ -172,11 +172,11 @@ void tcp_init(void)
         condvar_init(&tcp_sockets[i].state_changed);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[TCP] TCP stack initialized (");
-    console_put_dec(TCP_MAX_SOCKETS);
-    console_puts(" sockets available)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[TCP] TCP stack initialized (");
+    net_put_dec(TCP_MAX_SOCKETS);
+    net_puts(" sockets available)\n");
+    net_reset_color();
 }
 
 /* ===========================================
@@ -237,20 +237,20 @@ tcp_socket_t* tcp_listen(uint16_t port)
 {
     /* Vérifier si le port est déjà utilisé */
     if (tcp_find_socket_by_local_port(port) != NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] Port ");
-        console_put_dec(port);
-        console_puts(" already in use\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] Port ");
+        net_put_dec(port);
+        net_puts(" already in use\n");
+        net_reset_color();
         return NULL;
     }
     
     /* Allouer un nouveau socket */
     tcp_socket_t* sock = tcp_alloc_socket();
     if (sock == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] No free sockets available\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] No free sockets available\n");
+        net_reset_color();
         return NULL;
     }
     
@@ -266,11 +266,11 @@ tcp_socket_t* tcp_listen(uint16_t port)
         sock->remote_ip[i] = 0;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Listening on port ");
-    console_put_dec(port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Listening on port ");
+    net_put_dec(port);
+    net_puts("\n");
+    net_reset_color();
     
     return sock;
 }
@@ -286,13 +286,13 @@ void tcp_close(tcp_socket_t* sock)
     
     uint16_t saved_port = sock->local_port;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Closing socket on port ");
-    console_put_dec(sock->local_port);
-    console_puts(" (state: ");
-    console_puts(tcp_state_name(sock->state));
-    console_puts(")\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Closing socket on port ");
+    net_put_dec(sock->local_port);
+    net_puts(" (state: ");
+    net_puts(tcp_state_name(sock->state));
+    net_puts(")\n");
+    net_reset_color();
     
     /* Si le socket est connecté, envoyer un FIN */
     if (sock->state == TCP_STATE_ESTABLISHED) {
@@ -321,11 +321,11 @@ void tcp_close(tcp_socket_t* sock)
     /* Signal state change */
     condvar_broadcast(&sock->state_changed);
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Socket reset to LISTEN on port ");
-    console_put_dec(saved_port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Socket reset to LISTEN on port ");
+    net_put_dec(saved_port);
+    net_puts("\n");
+    net_reset_color();
 }
 
 /* ===========================================
@@ -344,11 +344,11 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     
     /* Vérifier que le paquet n'est pas trop grand */
     if (len > (int)(sizeof(buffer) - TCP_HEADER_SIZE)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] Payload too large: ");
-        console_put_dec(len);
-        console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] Payload too large: ");
+        net_put_dec(len);
+        net_puts(" bytes\n");
+        net_reset_color();
         return;
     }
     
@@ -390,22 +390,22 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     
     /* Trouver le next hop (gateway si nécessaire) */
     if (!route_get_next_hop(sock->remote_ip, next_hop)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] No route to ");
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] No route to ");
         print_ip(sock->remote_ip);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_puts("\n");
+        net_reset_color();
         return;
     }
     
     /* Résoudre le MAC via ARP cache */
     if (!arp_cache_lookup(next_hop, dest_mac)) {
         /* Pas dans le cache - envoyer une requête ARP */
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-        console_puts("[TCP] ARP resolution pending for ");
+        net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+        net_puts("[TCP] ARP resolution pending for ");
         print_ip(next_hop);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_puts("\n");
+        net_reset_color();
         
         /* Envoyer une requête ARP */
         arp_send_request(netif, next_hop);
@@ -414,23 +414,23 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     }
     
     /* === Log debug === */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Sending ");
-    if (flags & TCP_FLAG_SYN) console_puts("SYN ");
-    if (flags & TCP_FLAG_ACK) console_puts("ACK ");
-    if (flags & TCP_FLAG_FIN) console_puts("FIN ");
-    if (flags & TCP_FLAG_RST) console_puts("RST ");
-    if (flags & TCP_FLAG_PSH) console_puts("PSH ");
-    console_puts("to ");
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Sending ");
+    if (flags & TCP_FLAG_SYN) net_puts("SYN ");
+    if (flags & TCP_FLAG_ACK) net_puts("ACK ");
+    if (flags & TCP_FLAG_FIN) net_puts("FIN ");
+    if (flags & TCP_FLAG_RST) net_puts("RST ");
+    if (flags & TCP_FLAG_PSH) net_puts("PSH ");
+    net_puts("to ");
     print_ip(sock->remote_ip);
-    console_puts(":");
-    console_put_dec(sock->remote_port);
-    console_puts(" (seq=");
-    console_put_hex(sock->seq);
-    console_puts(", ack=");
-    console_put_hex(sock->ack);
-    console_puts(")\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts(":");
+    net_put_dec(sock->remote_port);
+    net_puts(" (seq=");
+    net_put_hex(sock->seq);
+    net_puts(", ack=");
+    net_put_hex(sock->ack);
+    net_puts(")\n");
+    net_reset_color();
     
     /* === Envoyer via IPv4 === */
     ipv4_send_packet(netif, dest_mac, sock->remote_ip, IP_PROTO_TCP, buffer, TCP_HEADER_SIZE + len);
@@ -455,13 +455,13 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     
     /* === Debug: afficher l'avancement du SEQ === */
     if (seq_advance > 0) {
-        console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-        console_puts("[TCP] Advanced SEQ by ");
-        console_put_dec(seq_advance);
-        console_puts(" (new SEQ=");
-        console_put_hex(sock->seq);
-        console_puts(")\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
+        net_puts("[TCP] Advanced SEQ by ");
+        net_put_dec(seq_advance);
+        net_puts(" (new SEQ=");
+        net_put_hex(sock->seq);
+        net_puts(")\n");
+        net_reset_color();
     }
 }
 
@@ -476,11 +476,11 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < TCP_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] Packet too short: ");
-        console_put_dec(len);
-        console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] Packet too short: ");
+        net_put_dec(len);
+        net_puts(" bytes\n");
+        net_reset_color();
         return;
     }
     
@@ -498,25 +498,25 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     
     /* Log: paquet TCP reçu (seulement pour SYN/RST, pas ACK/FIN routine) */
 #ifdef TCP_DEBUG_VERBOSE
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[TCP] Received ");
-    if (flags & TCP_FLAG_SYN) console_puts("SYN ");
-    if (flags & TCP_FLAG_ACK) console_puts("ACK ");
-    if (flags & TCP_FLAG_FIN) console_puts("FIN ");
-    if (flags & TCP_FLAG_RST) console_puts("RST ");
-    if (flags & TCP_FLAG_PSH) console_puts("PSH ");
-    console_puts("from ");
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[TCP] Received ");
+    if (flags & TCP_FLAG_SYN) net_puts("SYN ");
+    if (flags & TCP_FLAG_ACK) net_puts("ACK ");
+    if (flags & TCP_FLAG_FIN) net_puts("FIN ");
+    if (flags & TCP_FLAG_RST) net_puts("RST ");
+    if (flags & TCP_FLAG_PSH) net_puts("PSH ");
+    net_puts("from ");
     print_ip(ip_hdr->src_ip);
-    console_puts(":");
-    console_put_dec(src_port);
-    console_puts(" -> port ");
-    console_put_dec(dest_port);
-    console_puts(" (seq=");
-    console_put_hex(seq_num);
-    console_puts(", ack=");
-    console_put_hex(ack_num);
-    console_puts(")\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts(":");
+    net_put_dec(src_port);
+    net_puts(" -> port ");
+    net_put_dec(dest_port);
+    net_puts(" (seq=");
+    net_put_hex(seq_num);
+    net_puts(", ack=");
+    net_put_hex(ack_num);
+    net_puts(")\n");
+    net_reset_color();
 #endif
     
     /* Chercher un socket existant pour cette connexion */
@@ -529,11 +529,11 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     
     /* Pas de socket trouvé - envoyer RST (pas implémenté pour l'instant) */
     if (sock == NULL) {
-        console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-        console_puts("[TCP] No socket for port ");
-        console_put_dec(dest_port);
-        console_puts(" - packet dropped\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+        net_puts("[TCP] No socket for port ");
+        net_put_dec(dest_port);
+        net_puts(" - packet dropped\n");
+        net_reset_color();
         return;
     }
     
@@ -542,13 +542,13 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         case TCP_STATE_LISTEN:
             /* En écoute - on attend un SYN */
             if (flags & TCP_FLAG_SYN) {
-                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                console_puts("[TCP] Connection request from ");
+                net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                net_puts("[TCP] Connection request from ");
                 print_ip(ip_hdr->src_ip);
-                console_puts(":");
-                console_put_dec(src_port);
-                console_puts("\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_puts(":");
+                net_put_dec(src_port);
+                net_puts("\n");
+                net_reset_color();
                 
                 /* Enregistrer l'adresse distante */
                 for (int i = 0; i < 4; i++) {
@@ -574,9 +574,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         case TCP_STATE_SYN_RCVD:
             /* Si on reçoit une retransmission du SYN (flags == SYN uniquement ou SYN+...) */
             if (flags & TCP_FLAG_SYN) {
-                console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-                console_puts("[TCP] Retransmitting SYN-ACK\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+                net_puts("[TCP] Retransmitting SYN-ACK\n");
+                net_reset_color();
                 
                 /* Renvoyer SYN-ACK */
                 tcp_send_packet(sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
@@ -589,31 +589,31 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 if (ack_num == sock->seq) {
                     sock->state = TCP_STATE_ESTABLISHED;
                     
-                    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                    console_puts("[TCP] Connection ESTABLISHED with ");
+                    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                    net_puts("[TCP] Connection ESTABLISHED with ");
                     print_ip(sock->remote_ip);
-                    console_puts(":");
-                    console_put_dec(sock->remote_port);
-                    console_puts("!\n");
-                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    net_puts(":");
+                    net_put_dec(sock->remote_port);
+                    net_puts("!\n");
+                    net_reset_color();
                     
                     /* Signal connection established */
                     condvar_broadcast(&sock->state_changed);
                 } else {
-                    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-                    console_puts("[TCP] Invalid ACK: expected ");
-                    console_put_hex(sock->seq);
-                    console_puts(", got ");
-                    console_put_hex(ack_num);
-                    console_puts("\n");
-                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                    net_puts("[TCP] Invalid ACK: expected ");
+                    net_put_hex(sock->seq);
+                    net_puts(", got ");
+                    net_put_hex(ack_num);
+                    net_puts("\n");
+                    net_reset_color();
                 }
             }
             /* Si on reçoit un RST, retourner en LISTEN */
             if (flags & TCP_FLAG_RST) {
-                console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-                console_puts("[TCP] Connection reset - returning to LISTEN\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+                net_puts("[TCP] Connection reset - returning to LISTEN\n");
+                net_reset_color();
                 
                 sock->state = TCP_STATE_LISTEN;
                 sock->remote_port = 0;
@@ -632,11 +632,11 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 uint8_t* payload = data + header_len;
                 
 #ifdef TCP_DEBUG_VERBOSE
-                console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-                console_puts("[TCP] Received ");
-                console_put_dec(payload_len);
-                console_puts(" bytes of data\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
+                net_puts("[TCP] Received ");
+                net_put_dec(payload_len);
+                net_puts(" bytes of data\n");
+                net_reset_color();
 #endif
                 
                 /* Stocker les données dans le buffer circulaire */
@@ -649,9 +649,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                         stored++;
                     } else {
                         /* Buffer plein - on perd les données */
-                        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-                        console_puts("[TCP] Recv buffer full! Dropping data.\n");
-                        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                        net_puts("[TCP] Recv buffer full! Dropping data.\n");
+                        net_reset_color();
                         break;
                     }
                 }
@@ -668,9 +668,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             
             /* Si on reçoit un FIN */
             if (flags & TCP_FLAG_FIN) {
-                console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-                console_puts("[TCP] Connection closing (FIN received)\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+                net_puts("[TCP] Connection closing (FIN received)\n");
+                net_reset_color();
                 
                 /* ACK le FIN */
                 sock->ack = seq_num + 1;
@@ -687,9 +687,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             
             /* Si on reçoit un RST */
             if (flags & TCP_FLAG_RST) {
-                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-                console_puts("[TCP] Connection reset by peer\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                net_puts("[TCP] Connection reset by peer\n");
+                net_reset_color();
                 
                 /* Retourner en LISTEN */
                 sock->state = TCP_STATE_LISTEN;
@@ -706,9 +706,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         case TCP_STATE_LAST_ACK:
             /* On attend l'ACK de notre FIN */
             if (flags & TCP_FLAG_ACK) {
-                console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                console_puts("[TCP] Connection closed gracefully\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                net_puts("[TCP] Connection closed gracefully\n");
+                net_reset_color();
                 
                 /* Retourner en LISTEN pour accepter de nouvelles connexions */
                 sock->state = TCP_STATE_LISTEN;
@@ -720,11 +720,11 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             break;
             
         default:
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-            console_puts("[TCP] Packet in unexpected state: ");
-            console_puts(tcp_state_name(sock->state));
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+            net_puts("[TCP] Packet in unexpected state: ");
+            net_puts(tcp_state_name(sock->state));
+            net_puts("\n");
+            net_reset_color();
             break;
     }
 }
@@ -776,11 +776,11 @@ int tcp_bind(tcp_socket_t* sock, uint16_t port)
         if (tcp_sockets[i].in_use && 
             &tcp_sockets[i] != sock &&
             tcp_sockets[i].local_port == port) {
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-            console_puts("[TCP] Port ");
-            console_put_dec(port);
-            console_puts(" already bound\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            net_puts("[TCP] Port ");
+            net_put_dec(port);
+            net_puts(" already bound\n");
+            net_reset_color();
             return -1;
         }
     }
@@ -829,9 +829,9 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len)
     
     /* Vérifier que le socket est connecté */
     if (sock->state != TCP_STATE_ESTABLISHED) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[TCP] Cannot send: socket not connected\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[TCP] Cannot send: socket not connected\n");
+        net_reset_color();
         return -1;
     }
     

@@ -7,7 +7,7 @@
 #include "../core/net.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 #include "../../mm/kheap.h"
 
 /* ========================================
@@ -32,8 +32,8 @@ static void print_ip_u32(uint32_t ip)
     uint8_t bytes[4];
     ip_u32_to_bytes(ip, bytes);
     for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(bytes[i]);
+        if (i > 0) net_putc('.');
+        net_put_dec(bytes[i]);
     }
 }
 
@@ -230,9 +230,9 @@ static void dhcp_send_raw(NetInterface* netif, uint8_t* dhcp_data, int dhcp_len)
     if (netif->send != NULL) {
         netif->send(netif, packet, offset);
     } else {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[DHCP] No send function on interface!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[DHCP] No send function on interface!\n");
+        net_reset_color();
     }
 }
 
@@ -253,11 +253,11 @@ void dhcp_init(NetInterface* netif)
     
     dhcp_initialized = true;
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[DHCP] Client initialized for interface: ");
-    console_puts(netif->name);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[DHCP] Client initialized for interface: ");
+    net_puts(netif->name);
+    net_puts("\n");
+    net_reset_color();
 }
 
 /**
@@ -274,9 +274,9 @@ int dhcp_discover(NetInterface* netif)
     dhcp_ctx.state = DHCP_STATE_SELECTING;
     dhcp_ctx.discover_count++;
     
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-    console_puts("[DHCP] Discovering...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    net_puts("[DHCP] Discovering...\n");
+    net_reset_color();
     
     /* Construire le paquet DHCP DISCOVER */
     uint8_t dhcp_packet[576];  /* Taille minimale BOOTP */
@@ -478,9 +478,9 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
                        &subnet_mask, &router, &dns, &lease_time);
     
     if (msg_type == DHCPNAK) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[DHCP] Received NAK - configuration rejected!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[DHCP] Received NAK - configuration rejected!\n");
+        net_reset_color();
         dhcp_ctx.state = DHCP_STATE_INIT;
         return;
     }
@@ -501,20 +501,20 @@ static void dhcp_handle_ack(NetInterface* netif, dhcp_header_t* dhcp,
     netif->gateway = router;
     netif->dns_server = dns;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[DHCP] *** BOUND ***\n");
-    console_puts("       IP Address:  ");
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[DHCP] *** BOUND ***\n");
+    net_puts("       IP Address:  ");
     print_ip_u32(netif->ip_addr);
-    console_puts("\n       Subnet Mask: ");
+    net_puts("\n       Subnet Mask: ");
     print_ip_u32(netif->netmask);
-    console_puts("\n       Gateway:     ");
+    net_puts("\n       Gateway:     ");
     print_ip_u32(netif->gateway);
-    console_puts("\n       DNS Server:  ");
+    net_puts("\n       DNS Server:  ");
     print_ip_u32(netif->dns_server);
-    console_puts("\n       Lease Time:  ");
-    console_put_dec(lease_time);
-    console_puts(" seconds\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n       Lease Time:  ");
+    net_put_dec(lease_time);
+    net_puts(" seconds\n");
+    net_reset_color();
     
     /* Mettre à jour les globales legacy pour compatibilité */
     ip_u32_to_bytes(netif->ip_addr, MY_IP);
@@ -577,11 +577,11 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
     uint32_t dummy1, dummy2, dummy3, dummy4, dummy5;
     dhcp_parse_options(options, opt_len, &msg_type, &dummy1, &dummy2, &dummy3, &dummy4, &dummy5);
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[DHCP] Message type: ");
-    console_put_dec(msg_type);
-    console_puts(" (1=DISCOVER, 2=OFFER, 3=REQUEST, 5=ACK, 6=NAK)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[DHCP] Message type: ");
+    net_put_dec(msg_type);
+    net_puts(" (1=DISCOVER, 2=OFFER, 3=REQUEST, 5=ACK, 6=NAK)\n");
+    net_reset_color();
     
     /* Traiter selon l'état */
     switch (dhcp_ctx.state) {
@@ -596,7 +596,7 @@ void dhcp_handle_packet(NetInterface* netif, uint8_t* data, int len)
             break;
             
         default:
-            console_puts("[DHCP] Unexpected state, ignoring\n");
+            net_puts("[DHCP] Unexpected state, ignoring\n");
             break;
     }
 }
@@ -610,11 +610,11 @@ void dhcp_release(NetInterface* netif)
         return;
     }
     
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-    console_puts("[DHCP] Releasing lease for ");
+    net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    net_puts("[DHCP] Releasing lease for ");
     print_ip_u32(netif->ip_addr);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n");
+    net_reset_color();
     
     /* Remettre l'interface à zéro */
     netif->ip_addr = 0;

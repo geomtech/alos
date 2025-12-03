@@ -7,7 +7,7 @@
 #include "../l2/arp.h"
 #include "../l4/dns.h"
 #include "../utils.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 
 /* ========================================
  * Variables globales pour le ping
@@ -22,8 +22,8 @@ static uint16_t g_ping_id = 0x1234;  /* ID unique pour nos pings */
 static void print_ip(const uint8_t* ip)
 {
     for (int i = 0; i < 4; i++) {
-        if (i > 0) console_putc('.');
-        console_put_dec(ip[i]);
+        if (i > 0) net_putc('.');
+        net_put_dec(ip[i]);
     }
 }
 
@@ -35,11 +35,11 @@ void icmp_handle_packet(NetInterface* netif, ethernet_header_t* eth,
 {
     /* Vérifier la taille minimale */
     if (icmp_data == NULL || len < ICMP_HEADER_SIZE) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[ICMP] Packet too short: ");
-        console_put_dec(len);
-        console_puts(" bytes\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[ICMP] Packet too short: ");
+        net_put_dec(len);
+        net_puts(" bytes\n");
+        net_reset_color();
         return;
     }
     
@@ -47,30 +47,30 @@ void icmp_handle_packet(NetInterface* netif, ethernet_header_t* eth,
     icmp_header_t* icmp = (icmp_header_t*)icmp_data;
     
     /* Log du paquet reçu */
-    console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-    console_puts("[ICMP] Type=");
-    console_put_dec(icmp->type);
-    console_puts(" Code=");
-    console_put_dec(icmp->code);
+    net_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
+    net_puts("[ICMP] Type=");
+    net_put_dec(icmp->type);
+    net_puts(" Code=");
+    net_put_dec(icmp->code);
     
     if (icmp->type == ICMP_TYPE_ECHO_REQUEST || icmp->type == ICMP_TYPE_ECHO_REPLY) {
-        console_puts(" ID=");
-        console_put_hex(ntohs(icmp->identifier));
-        console_puts(" Seq=");
-        console_put_dec(ntohs(icmp->sequence));
+        net_puts(" ID=");
+        net_put_hex(ntohs(icmp->identifier));
+        net_puts(" Seq=");
+        net_put_dec(ntohs(icmp->sequence));
     }
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n");
+    net_reset_color();
     
     /* Traiter selon le type */
     switch (icmp->type) {
         case ICMP_TYPE_ECHO_REQUEST:
             /* Ping Request - on doit répondre! */
-            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-            console_puts("[ICMP] Echo Request from ");
+            net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+            net_puts("[ICMP] Echo Request from ");
             print_ip(ip_hdr->src_ip);
-            console_puts(" - Sending Reply!\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_puts(" - Sending Reply!\n");
+            net_reset_color();
             
             /* === Construire la réponse ICMP === */
             
@@ -111,47 +111,47 @@ void icmp_handle_packet(NetInterface* netif, ethernet_header_t* eth,
                     g_ping.received++;
                     g_ping.waiting = false;
                     
-                    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                    console_puts("[PING] Reply from ");
+                    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                    net_puts("[PING] Reply from ");
                     print_ip(ip_hdr->src_ip);
-                    console_puts(": seq=");
-                    console_put_dec(reply_seq);
-                    console_puts("\n");
-                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    net_puts(": seq=");
+                    net_put_dec(reply_seq);
+                    net_puts("\n");
+                    net_reset_color();
                 } else {
-                    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-                    console_puts("[ICMP] Echo Reply from ");
+                    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+                    net_puts("[ICMP] Echo Reply from ");
                     print_ip(ip_hdr->src_ip);
-                    console_puts(" (not our ping)\n");
-                    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                    net_puts(" (not our ping)\n");
+                    net_reset_color();
                 }
             } else {
-                console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-                console_puts("[ICMP] Echo Reply from ");
+                net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+                net_puts("[ICMP] Echo Reply from ");
                 print_ip(ip_hdr->src_ip);
-                console_puts("\n");
-                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                net_puts("\n");
+                net_reset_color();
             }
             break;
             
         case ICMP_TYPE_DEST_UNREACH:
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-            console_puts("[ICMP] Destination Unreachable\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            net_puts("[ICMP] Destination Unreachable\n");
+            net_reset_color();
             break;
             
         case ICMP_TYPE_TIME_EXCEEDED:
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-            console_puts("[ICMP] Time Exceeded\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            net_puts("[ICMP] Time Exceeded\n");
+            net_reset_color();
             break;
             
         default:
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-            console_puts("[ICMP] Unknown type: ");
-            console_put_dec(icmp->type);
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
+            net_puts("[ICMP] Unknown type: ");
+            net_put_dec(icmp->type);
+            net_puts("\n");
+            net_reset_color();
             break;
     }
 }
@@ -180,9 +180,9 @@ void icmp_send_echo_request(const uint8_t* dest_ip)
 {
     NetInterface* netif = netif_get_default();
     if (netif == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[PING] No network interface!\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[PING] No network interface!\n");
+        net_reset_color();
         return;
     }
     
@@ -210,35 +210,35 @@ void icmp_send_echo_request(const uint8_t* dest_ip)
     uint8_t dest_mac[6];
     
     if (!route_get_next_hop((uint8_t*)dest_ip, next_hop)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[PING] No route to ");
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[PING] No route to ");
         print_ip(dest_ip);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_puts("\n");
+        net_reset_color();
         return;
     }
     
     /* Chercher la MAC dans le cache ARP */
     if (!arp_cache_lookup(next_hop, dest_mac)) {
         /* Envoyer une requête ARP */
-        console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-        console_puts("[PING] Resolving MAC for ");
+        net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+        net_puts("[PING] Resolving MAC for ");
         print_ip(next_hop);
-        console_puts("...\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_puts("...\n");
+        net_reset_color();
         
         arp_send_request(netif, next_hop);
         return;  /* Le ping sera réessayé */
     }
     
     /* Envoyer le paquet */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[PING] Sending to ");
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[PING] Sending to ");
     print_ip(dest_ip);
-    console_puts(" seq=");
-    console_put_dec(g_ping.sequence);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts(" seq=");
+    net_put_dec(g_ping.sequence);
+    net_puts("\n");
+    net_reset_color();
     
     /* Marquer comme en attente AVANT l'envoi (la réponse peut arriver très vite) */
     g_ping.sent++;
@@ -266,16 +266,16 @@ int ping_ip(const uint8_t* dest_ip)
     g_ping.dest_ip[2] = dest_ip[2];
     g_ping.dest_ip[3] = dest_ip[3];
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[PING] ");
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[PING] ");
     print_ip(dest_ip);
     if (g_ping.hostname[0]) {
-        console_puts(" (");
-        console_puts(g_ping.hostname);
-        console_puts(")");
+        net_puts(" (");
+        net_puts(g_ping.hostname);
+        net_puts(")");
     }
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n");
+    net_reset_color();
     
     /* Envoyer le premier ping (peut échouer si ARP pending) */
     icmp_send_echo_request(dest_ip);
@@ -305,21 +305,21 @@ int ping_ip(const uint8_t* dest_ip)
     }
     
     /* Afficher les statistiques */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[PING] ");
-    console_put_dec(g_ping.sent);
-    console_puts(" sent, ");
-    console_put_dec(g_ping.received);
-    console_puts(" received");
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[PING] ");
+    net_put_dec(g_ping.sent);
+    net_puts(" sent, ");
+    net_put_dec(g_ping.received);
+    net_puts(" received");
     if (g_ping.sent > 0 && g_ping.received == 0) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts(" (100% loss)");
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts(" (100% loss)");
     } else if (g_ping.received > 0) {
-        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        console_puts(" (0% loss)");
+        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        net_puts(" (0% loss)");
     }
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_puts("\n");
+    net_reset_color();
     
     g_ping.active = false;
     
@@ -333,11 +333,11 @@ int ping(const char* hostname)
 {
     uint8_t ip[4];
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[PING] Resolving ");
-    console_puts(hostname);
-    console_puts("...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    net_puts("[PING] Resolving ");
+    net_puts(hostname);
+    net_puts("...\n");
+    net_reset_color();
     
     /* Vérifier le cache DNS d'abord */
     if (dns_cache_lookup(hostname, ip)) {
@@ -364,11 +364,11 @@ int ping(const char* hostname)
     
     /* Récupérer le résultat */
     if (!dns_get_result(ip)) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[PING] DNS resolution failed for ");
-        console_puts(hostname);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[PING] DNS resolution failed for ");
+        net_puts(hostname);
+        net_puts("\n");
+        net_reset_color();
         return -1;
     }
     

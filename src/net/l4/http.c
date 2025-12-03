@@ -5,7 +5,7 @@
 #include "../core/netdev.h"
 #include "../../include/string.h"
 #include "../../fs/vfs.h"
-#include "../../kernel/console.h"
+#include "../netlog.h"
 #include "../../kernel/thread.h"
 #include "../../mm/kheap.h"
 
@@ -149,9 +149,9 @@ int http_get(const char* host, const char* path, uint16_t port,
         }
     } else {
         /* Resolve hostname via DNS */
-        console_puts("Resolving ");
-        console_puts(host);
-        console_puts("...\n");
+        net_puts("Resolving ");
+        net_puts(host);
+        net_puts("...\n");
         
         dns_send_query(host);
         
@@ -162,30 +162,30 @@ int http_get(const char* host, const char* path, uint16_t port,
         }
         
         if (!dns_get_result(server_ip)) {
-            console_puts("DNS resolution failed\n");
+            net_puts("DNS resolution failed\n");
             return -1;
         }
         
-        console_puts("Resolved to ");
-        console_put_dec(server_ip[0]);
-        console_putc('.');
-        console_put_dec(server_ip[1]);
-        console_putc('.');
-        console_put_dec(server_ip[2]);
-        console_putc('.');
-        console_put_dec(server_ip[3]);
-        console_puts("\n");
+        net_puts("Resolved to ");
+        net_put_dec(server_ip[0]);
+        net_putc('.');
+        net_put_dec(server_ip[1]);
+        net_putc('.');
+        net_put_dec(server_ip[2]);
+        net_putc('.');
+        net_put_dec(server_ip[3]);
+        net_puts("\n");
     }
     
     /* Connect to server */
-    console_puts("Connecting to server...\n");
+    net_puts("Connecting to server...\n");
     tcp_socket_t* sock = tcp_connect_timeout(server_ip, port, 5000);
     if (!sock) {
-        console_puts("Connection failed\n");
+        net_puts("Connection failed\n");
         return -1;
     }
     
-    console_puts("Connected!\n");
+    net_puts("Connected!\n");
     
     /* Build HTTP request */
     char request[512];
@@ -198,15 +198,15 @@ int http_get(const char* host, const char* path, uint16_t port,
     len = str_append(request, sizeof(request), len, "Connection: close\r\n\r\n");
     
     /* Send request */
-    console_puts("Sending HTTP request...\n");
+    net_puts("Sending HTTP request...\n");
     if (tcp_send(sock, (uint8_t*)request, len) < 0) {
-        console_puts("Failed to send request\n");
+        net_puts("Failed to send request\n");
         tcp_close(sock);
         return -1;
     }
     
     /* Receive response */
-    console_puts("Waiting for response...\n");
+    net_puts("Waiting for response...\n");
     uint32_t total_received = 0;
     int timeout = 1000;  /* 10 seconds */
     
@@ -233,9 +233,9 @@ int http_get(const char* host, const char* path, uint16_t port,
         thread_sleep_ms(10);
     }
     
-    console_puts("Received ");
-    console_put_dec(total_received);
-    console_puts(" bytes\n");
+    net_puts("Received ");
+    net_put_dec(total_received);
+    net_puts(" bytes\n");
     
     tcp_close(sock);
     return total_received;
@@ -248,34 +248,34 @@ int http_download_file(const char* url, const char* dest_path) {
     
     /* Parse URL */
     if (parse_url(url, host, &port, path) != 0) {
-        console_puts("Invalid URL format\n");
+        net_puts("Invalid URL format\n");
         return -1;
     }
     
-    console_puts("URL: ");
-    console_puts(url);
-    console_puts("\n");
-    console_puts("Host: ");
-    console_puts(host);
-    console_puts("\n");
-    console_puts("Port: ");
-    console_put_dec(port);
-    console_puts("\n");
-    console_puts("Path: ");
-    console_puts(path);
-    console_puts("\n\n");
+    net_puts("URL: ");
+    net_puts(url);
+    net_puts("\n");
+    net_puts("Host: ");
+    net_puts(host);
+    net_puts("\n");
+    net_puts("Port: ");
+    net_put_dec(port);
+    net_puts("\n");
+    net_puts("Path: ");
+    net_puts(path);
+    net_puts("\n\n");
     
     /* Allocate buffer for HTTP response */
     uint8_t* buffer = (uint8_t*)kmalloc(65536);  /* 64KB buffer */
     if (!buffer) {
-        console_puts("Out of memory\n");
+        net_puts("Out of memory\n");
         return -1;
     }
     
     /* Download file */
     int received = http_get(host, path, port, buffer, 65536);
     if (received <= 0) {
-        console_puts("Download failed\n");
+        net_puts("Download failed\n");
         kfree(buffer);
         return -1;
     }
@@ -302,25 +302,25 @@ int http_download_file(const char* url, const char* dest_path) {
         status[2] = buffer[11];
         int status_code = atoi(status);
         
-        console_puts("HTTP Status: ");
-        console_put_dec(status_code);
-        console_puts("\n");
+        net_puts("HTTP Status: ");
+        net_put_dec(status_code);
+        net_puts("\n");
         
         if (status_code != HTTP_OK) {
-            console_puts("HTTP error\n");
+            net_puts("HTTP error\n");
             kfree(buffer);
             return -1;
         }
     }
     
     /* Save to file */
-    console_puts("Saving to ");
-    console_puts(dest_path);
-    console_puts("...\n");
+    net_puts("Saving to ");
+    net_puts(dest_path);
+    net_puts("...\n");
     
     vfs_node_t* file = vfs_open(dest_path, VFS_O_WRONLY | VFS_O_CREAT);
     if (!file) {
-        console_puts("Failed to create file\n");
+        net_puts("Failed to create file\n");
         kfree(buffer);
         return -1;
     }
@@ -329,14 +329,14 @@ int http_download_file(const char* url, const char* dest_path) {
     vfs_close(file);
     
     if (written != body_len) {
-        console_puts("Failed to write all data\n");
+        net_puts("Failed to write all data\n");
         kfree(buffer);
         return -1;
     }
     
-    console_puts("Downloaded ");
-    console_put_dec(body_len);
-    console_puts(" bytes\n");
+    net_puts("Downloaded ");
+    net_put_dec(body_len);
+    net_puts(" bytes\n");
     
     kfree(buffer);
     return 0;
