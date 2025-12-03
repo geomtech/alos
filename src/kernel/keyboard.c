@@ -48,6 +48,9 @@ static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
 static volatile int kb_head = 0;  /* Position d'écriture */
 static volatile int kb_tail = 0;  /* Position de lecture */
 
+/* Wait queue pour les threads en attente de caractères */
+static wait_queue_t keyboard_wait_queue = { .head = NULL, .tail = NULL, .lock = {0} };
+
 /**
  * Ajoute un caractère dans le buffer circulaire.
  */
@@ -95,21 +98,31 @@ void keyboard_clear_buffer(void)
 }
 
 /**
+ * Prédicat pour wait_queue_wait : vérifie si un caractère est disponible.
+ */
+static bool keyboard_char_available(void* context)
+{
+    (void)context;
+    return keyboard_has_char();
+}
+
+/**
  * Lit un caractère du buffer (bloquant).
- * Attend avec hlt jusqu'à ce qu'un caractère soit disponible.
+ * Utilise une wait queue pour dormir efficacement jusqu'à ce qu'un caractère arrive.
  */
 char keyboard_getchar(void)
 {
+    /* Activer les interruptions pour recevoir l'IRQ clavier */
+    asm volatile("sti");
+    
+    /* Attendre qu'un caractère soit disponible via wait queue.
+     * Le thread sera bloqué (BLOCKED) et ne consommera pas de CPU.
+     * Il sera réveillé par l'ISR clavier quand un caractère arrive.
+     */
     while (!keyboard_has_char()) {
-        /* Activer les interruptions pour recevoir l'IRQ clavier */
-        asm volatile("sti");
-        
-        /* Céder le CPU aux autres threads au lieu de bloquer le CPU */
-        thread_yield();
-        
-        /* Petite pause pour éviter de spammer le scheduler si on est le seul thread */
-        asm volatile("hlt");
+        wait_queue_wait(&keyboard_wait_queue, keyboard_char_available, NULL);
     }
+    
     return keyboard_buffer_get();
 }
 
@@ -234,18 +247,22 @@ void keyboard_handler_c(void)
             
         case SCANCODE_UP_ARROW:
             keyboard_buffer_put(KEY_UP);
+            wait_queue_wake_one(&keyboard_wait_queue);
             break;
             
         case SCANCODE_DOWN_ARROW:
             keyboard_buffer_put(KEY_DOWN);
+            wait_queue_wake_one(&keyboard_wait_queue);
             break;
             
         case SCANCODE_LEFT_ARROW:
             keyboard_buffer_put(KEY_LEFT);
+            wait_queue_wake_one(&keyboard_wait_queue);
             break;
             
         case SCANCODE_RIGHT_ARROW:
             keyboard_buffer_put(KEY_RIGHT);
+            wait_queue_wake_one(&keyboard_wait_queue);
             break;
             
         case SCANCODE_PAGE_UP:
@@ -280,10 +297,12 @@ void keyboard_handler_c(void)
                     /* Vérifier CTRL+C */
                     else if (ctrl_pressed && (c == 'c' || c == 'C')) {
                         keyboard_buffer_put(KEY_CTRL_C);
+                        wait_queue_wake_one(&keyboard_wait_queue);
                     }
                     /* Vérifier CTRL+D */
                     else if (ctrl_pressed && (c == 'd' || c == 'D')) {
                         keyboard_buffer_put(KEY_CTRL_D);
+                        wait_queue_wake_one(&keyboard_wait_queue);
                     }
                     else {
                         /* Appliquer dead key si en attente */
@@ -306,6 +325,7 @@ void keyboard_handler_c(void)
                         }
                         
                         keyboard_buffer_put(c);
+                        wait_queue_wake_one(&keyboard_wait_queue);
                     }
                 }
             }

@@ -1184,23 +1184,29 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
         return 0;  /* Pas encore épuisé */
     }
     
-    /* Essayer de trouver un autre thread KERNEL.
-     * Les threads user ne peuvent pas être préemptés via IRQ car le format
-     * de leur contexte (sauvegardé par switch_task) n'est pas compatible
-     * avec le format attendu par l'IRQ handler (popa + iret vers Ring 3).
+    /* Essayer de trouver un autre thread à exécuter.
+     * 
+     * Règles de préemption :
+     * - Si le thread actuel est un thread kernel, on ne peut switcher que vers un autre kernel thread
+     *   (car le contexte IRQ n'est pas compatible avec le retour vers Ring 3)
+     * - Si le thread actuel est le thread idle, on peut switcher vers n'importe quel thread
+     *   (y compris les threads user) car idle n'a pas de contexte important à préserver
      * 
      * IMPORTANT: On ne doit PAS retirer les threads user de la queue ici,
      * sinon ils sont perdus ! On parcourt la queue sans modifier.
      */
     spinlock_lock(&g_scheduler_lock);
     
-    /* Chercher un thread KERNEL dans les run queues (sans retirer) */
+    /* Déterminer si on peut switcher vers des threads user */
+    bool can_switch_to_user = (current == g_idle_thread);
+    
+    /* Chercher un thread dans les run queues (sans retirer) */
     thread_t *next = NULL;
     for (int pri = THREAD_PRIORITY_COUNT - 1; pri >= THREAD_PRIORITY_IDLE && !next; pri--) {
         thread_t *t = g_run_queues[pri];
         while (t) {
-            /* Accepter seulement les threads kernel (owner == NULL) */
-            if (t->owner == NULL && t != current) {
+            /* Accepter les threads kernel, ou les threads user si on vient de idle */
+            if (t != current && (t->owner == NULL || can_switch_to_user)) {
                 next = t;
                 break;
             }

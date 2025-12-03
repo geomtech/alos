@@ -242,73 +242,6 @@ process_t* create_kernel_thread(void (*function)(void), const char* name)
     return proc;
 }
 
-void schedule(void)
-{
-    /* Ne rien faire si le multitasking n'est pas actif */
-    if (!multitasking_enabled || current_process == NULL) {
-        return;
-    }
-    
-    /* Ne rien faire s'il n'y a qu'un seul processus */
-    if (current_process->next == current_process) {
-        return;
-    }
-    
-    /* Trouver le prochain processus READY */
-    process_t* next = current_process->next;
-    process_t* start = next;
-    
-    do {
-        if (next->state == PROCESS_STATE_READY || next->state == PROCESS_STATE_RUNNING) {
-            break;
-        }
-        next = next->next;
-    } while (next != start);
-    
-    /* Si c'est le même processus, ne pas switcher */
-    if (next == current_process) {
-        return;
-    }
-    
-    /* Effectuer le context switch */
-    switch_to(next);
-}
-
-void switch_to(process_t* next)
-{
-    if (next == NULL || next == current_process) {
-        return;
-    }
-    
-    /* Sauvegarder le processus actuel */
-    process_t* prev = current_process;
-    
-    /* Marquer l'ancien comme READY (s'il tournait) */
-    if (prev->state == PROCESS_STATE_RUNNING) {
-        prev->state = PROCESS_STATE_READY;
-    }
-    
-    /* Marquer le nouveau comme RUNNING */
-    next->state = PROCESS_STATE_RUNNING;
-    current_process = next;
-    
-    /* ========================================
-     * Mettre à jour le TSS
-     * ========================================
-     * Si le nouveau processus est interrompu en Ring 3, le CPU
-     * utilisera esp0 du TSS comme stack kernel pour sauvegarder
-     * le contexte.
-     */
-    if (next->esp0 != 0) {
-        tss_set_kernel_stack(next->esp0);
-    }
-    
-    /* Effectuer le context switch ASM avec changement de CR3 */
-    /* Note: Le changement de Page Directory (CR3) est fait dans switch_task */
-    /* pour garantir une transition atomique entre les espaces mémoire */
-    switch_task(&prev->esp, next->esp, next->cr3);
-}
-
 void process_exit(void)
 {
     if (current_process == NULL || current_process == idle_process) {
@@ -373,7 +306,8 @@ uint32_t getpid(void)
 
 void yield(void)
 {
-    schedule();
+    /* Utiliser le nouveau scheduler basé sur les threads */
+    thread_yield();
 }
 
 int should_exit(void)

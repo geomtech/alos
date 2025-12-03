@@ -97,12 +97,23 @@ void timer_tick(void)
  * @param frame Pointeur vers les registres sauvegardés (interrupt_frame_t)
  * @return Nouvel ESP si préemption, 0 sinon
  */
+/* Déclaration externe de net_poll */
+extern void net_poll(void);
+
 uint32_t timer_handler_preempt(void *frame)
 {
     g_timer_ticks++;
     
     /* Envoyer EOI au PIC (Important: avant le scheduler!) */
     outb(0x20, 0x20);
+    
+    /* Traiter les paquets réseau en attente (toutes les 10ms environ) */
+    static uint32_t net_poll_counter = 0;
+    if (++net_poll_counter >= 10) {
+        net_poll_counter = 0;
+        /* Note: net_poll doit être safe à appeler depuis une IRQ */
+        net_poll();
+    }
     
     /* Appeler le scheduler avec le frame d'interruption */
     return scheduler_preempt(frame);

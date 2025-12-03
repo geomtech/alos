@@ -792,8 +792,8 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
         /* Traiter les paquets réseau en attente */
         net_poll();
         
-        /* Céder le CPU */
-        schedule();
+        /* Céder le CPU au scheduler de threads */
+        thread_yield();
     }
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
@@ -859,10 +859,8 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
         enable_interrupts();
         net_poll();
         
-        /* Petit délai */
-        for (volatile int i = 0; i < 10000; i++);
-        
-        schedule();
+        /* Céder le CPU au scheduler de threads */
+        thread_yield();
     }
     
     return tcp_recv(sock, buf, len);

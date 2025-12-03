@@ -37,32 +37,6 @@
 static multiboot_info_t *g_mboot_info = NULL;
 static uint32_t g_mboot_magic = 0;
 
-/* Fonction externe pour incrémenter les ticks */
-extern void timer_tick(void);
-
-/* Déclaration de schedule() pour le multitasking */
-extern void schedule(void);
-
-/* Compteur pour le scheduling (tous les X ticks) */
-static uint32_t schedule_counter = 0;
-#define SCHEDULE_INTERVAL 2  /* Scheduler toutes les 2 ticks (~20ms à 100Hz) */
-
-void timer_handler_c(void)
-{
-    /* Incrémenter le compteur de ticks */
-    timer_tick();
-    
-    /* Envoyer EOI au PIC (AVANT le schedule pour éviter les problèmes) */
-    outb(0x20, 0x20);
-    
-    /* Appeler le scheduler périodiquement */
-    schedule_counter++;
-    if (schedule_counter >= SCHEDULE_INTERVAL) {
-        schedule_counter = 0;
-        schedule();
-    }
-}
-
 void kernel_main(uint32_t magic, multiboot_info_t *mboot_info)
 {
     /* Sauvegarder les infos Multiboot */

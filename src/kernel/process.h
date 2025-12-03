@@ -126,19 +126,6 @@ void init_multitasking(void);
 process_t* create_kernel_thread(void (*function)(void), const char* name);
 
 /**
- * Ordonnanceur (Round Robin).
- * Passe au processus suivant dans la liste.
- */
-void schedule(void);
-
-/**
- * Force un changement de contexte vers un processus spécifique.
- * 
- * @param next  Processus vers lequel basculer
- */
-void switch_to(process_t* next);
-
-/**
  * Termine le processus courant.
  */
 void process_exit(void);
