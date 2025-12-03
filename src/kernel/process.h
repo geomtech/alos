@@ -3,6 +3,9 @@
 #define PROCESS_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include "thread.h"  /* Include du nouveau système de threads */
 
 /* ========================================
  * Constantes
@@ -10,12 +13,14 @@
 
 #define KERNEL_STACK_SIZE   4096    /* Taille de la stack kernel par thread (4 KiB) */
 #define MAX_PROCESSES       64      /* Nombre max de processus */
+#define PROCESS_NAME_MAX    32      /* Longueur max du nom de processus */
 
 /* États des processus */
 typedef enum {
     PROCESS_STATE_READY,        /* Prêt à être exécuté */
     PROCESS_STATE_RUNNING,      /* En cours d'exécution */
     PROCESS_STATE_BLOCKED,      /* En attente (I/O, sleep, etc.) */
+    PROCESS_STATE_ZOMBIE,       /* Terminé, en attente de join */
     PROCESS_STATE_TERMINATED    /* Terminé */
 } process_state_t;
 
@@ -46,13 +51,15 @@ typedef struct {
 } __attribute__((packed)) context_t;
 
 /**
- * Structure représentant un processus/thread.
+ * Structure représentant un processus.
+ * Un processus peut contenir plusieurs threads.
  */
 typedef struct process {
     uint32_t pid;                   /* Process ID unique */
-    char name[32];                  /* Nom du processus (debug) */
+    char name[PROCESS_NAME_MAX];    /* Nom du processus (debug) */
     process_state_t state;          /* État du processus */
     volatile int should_terminate;  /* Flag pour demander l'arrêt (CTRL+C) */
+    int exit_status;                /* Code de sortie */
     
     /* ===== Context ===== */
     uint32_t esp;                   /* Stack Pointer sauvegardé */
@@ -65,6 +72,20 @@ typedef struct process {
     /* ===== Stack ===== */
     void* stack_base;               /* Base de la stack allouée (pour kfree) */
     uint32_t stack_size;            /* Taille de la stack */
+    
+    /* ===== Threads ===== */
+    thread_t* main_thread;          /* Thread principal du processus */
+    thread_t* thread_list;          /* Liste de tous les threads */
+    uint32_t thread_count;          /* Nombre de threads actifs */
+    
+    /* ===== Synchronisation ===== */
+    wait_queue_t wait_queue;        /* Pour process_join */
+    
+    /* ===== Hiérarchie ===== */
+    struct process* parent;         /* Processus parent */
+    struct process* first_child;    /* Premier enfant */
+    struct process* sibling_next;   /* Prochain frère */
+    struct process* sibling_prev;   /* Frère précédent */
     
     /* ===== Liste chaînée circulaire ===== */
     struct process* next;           /* Processus suivant dans la liste */
@@ -169,6 +190,72 @@ int process_execute(const char* filename);
  * @return          0 si succès, -1 si erreur (ne retourne pas normalement)
  */
 int process_exec_and_wait(const char* filename, int argc, char** argv);
+
+/* ========================================
+ * Nouvelles fonctions Multithreading
+ * ======================================== */
+
+/**
+ * Crée un nouveau processus kernel.
+ */
+process_t* process_create_kernel(const char* name, thread_entry_t entry, void* arg, 
+                                 uint32_t stack_size);
+
+/**
+ * Met le processus courant en sommeil pendant un nombre de millisecondes.
+ */
+void process_sleep_ms(uint32_t ms);
+
+/**
+ * Cède le CPU au scheduler.
+ */
+void process_yield(void);
+
+/**
+ * Attend la fin d'un processus.
+ * @return Code de sortie du processus
+ */
+int process_join(process_t* proc);
+
+/**
+ * Tue un processus et tous ses threads.
+ */
+void process_kill(process_t* proc);
+
+/**
+ * Tue l'arbre de processus (process et tous ses enfants).
+ */
+void process_kill_tree(process_t* proc);
+
+/**
+ * Retourne le processus courant.
+ */
+process_t* process_current(void);
+
+/**
+ * Vérifie si un processus est zombie.
+ */
+bool process_is_zombie(process_t* proc);
+
+/**
+ * Retourne le nom de l'état d'un processus.
+ */
+const char* process_state_name(process_state_t state);
+
+/**
+ * Prend un snapshot de tous les processus.
+ */
+typedef struct {
+    uint32_t pid;
+    process_state_t state;
+    thread_state_t thread_state;
+    const char* name;
+    const char* thread_name;
+    bool is_current;
+    uint32_t time_slice_remaining;
+} process_info_t;
+
+size_t process_snapshot(process_info_t* buffer, size_t capacity);
 
 /* ========================================
  * Fonction ASM (définie dans switch.s)

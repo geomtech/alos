@@ -93,6 +93,16 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
     KLOG_INFO("ELF", "=== Loading ELF ===");
     KLOG_INFO("ELF", filename);
     
+    /* Déterminer le Page Directory cible */
+    page_directory_t* target_dir = NULL;
+    if (proc != NULL && proc->page_directory != NULL) {
+        target_dir = (page_directory_t*)proc->page_directory;
+        KLOG_INFO("ELF", "Loading into process-specific page directory");
+    } else {
+        target_dir = vmm_get_kernel_directory();
+        KLOG_INFO("ELF", "Loading into kernel page directory");
+    }
+    
     /* Ouvrir le fichier via VFS */
     vfs_node_t* file = vfs_open(filename, VFS_O_RDONLY);
     if (file == NULL) {
@@ -172,7 +182,7 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
             uint32_t virt_addr = vaddr_start + (page * PAGE_SIZE);
             
             /* Vérifier si la page n'est pas déjà mappée */
-            if (!vmm_is_mapped(virt_addr)) {
+            if (!vmm_is_mapped_in_dir(target_dir, virt_addr)) {
                 /* Allouer une page physique */
                 void* phys_page = pmm_alloc_block();
                 if (phys_page == NULL) {
@@ -188,11 +198,22 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
                     page_flags |= PAGE_RW;
                 }
                 
-                /* Mapper la page */
-                vmm_map_page((uint32_t)phys_page, virt_addr, page_flags);
+                /* Mapper la page dans le directory cible */
+                if (vmm_map_page_in_dir(target_dir, (uint32_t)phys_page, virt_addr, page_flags) != 0) {
+                    KLOG_ERROR("ELF", "Failed to map page!");
+                    pmm_free_block(phys_page);
+                    kfree(phdrs);
+                    vfs_close(file);
+                    return ELF_ERR_MEMORY;
+                }
                 
                 /* Mettre la page à zéro */
-                elf_memset((void*)virt_addr, 0, PAGE_SIZE);
+                if (vmm_memset_in_dir(target_dir, virt_addr, 0, PAGE_SIZE) != 0) {
+                    KLOG_ERROR("ELF", "Failed to zero page!");
+                    kfree(phdrs);
+                    vfs_close(file);
+                    return ELF_ERR_MEMORY;
+                }
             }
         }
         
@@ -217,8 +238,14 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
                 return ELF_ERR_FILE;
             }
             
-            /* Copier vers l'adresse virtuelle */
-            elf_memcpy((void*)phdr->p_vaddr, seg_buffer, phdr->p_filesz);
+            /* Copier vers l'adresse virtuelle dans le directory cible */
+            if (vmm_copy_to_dir(target_dir, phdr->p_vaddr, seg_buffer, phdr->p_filesz) != 0) {
+                KLOG_ERROR("ELF", "Failed to copy segment data!");
+                kfree(seg_buffer);
+                kfree(phdrs);
+                vfs_close(file);
+                return ELF_ERR_MEMORY;
+            }
             
             kfree(seg_buffer);
         }

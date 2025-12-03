@@ -194,4 +194,35 @@ page_directory_t* vmm_get_kernel_directory(void);
  */
 page_directory_t* vmm_clone_directory(page_directory_t* src);
 
+/**
+ * Vérifie si une adresse virtuelle est mappée dans un Page Directory spécifique.
+ * 
+ * @param dir   Page Directory dans lequel vérifier
+ * @param virt  Adresse virtuelle à vérifier
+ * @return true si mappée, false sinon
+ */
+bool vmm_is_mapped_in_dir(page_directory_t* dir, uint32_t virt);
+
+/**
+ * Copie des données depuis l'espace kernel vers une adresse dans un autre Page Directory.
+ * Utilise une fenêtre temporaire pour accéder à la mémoire cible.
+ * 
+ * @param dir       Page Directory cible
+ * @param dst_virt  Adresse virtuelle de destination (dans dir)
+ * @param src       Adresse source (dans l'espace kernel courant)
+ * @param size      Nombre d'octets à copier
+ * @return 0 si succès, -1 si échec
+ */
+int vmm_copy_to_dir(page_directory_t* dir, uint32_t dst_virt, const void* src, uint32_t size);
+
+/**
+ * Met à zéro une plage de mémoire dans un Page Directory spécifique.
+ * 
+ * @param dir       Page Directory cible
+ * @param dst_virt  Adresse virtuelle de destination
+ * @param size      Nombre d'octets à mettre à zéro
+ * @return 0 si succès, -1 si échec
+ */
+int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, uint32_t size);
+
 #endif /* VMM_H */

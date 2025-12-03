@@ -89,4 +89,22 @@ void syscall_init(void);
  */
 void syscall_dispatcher(syscall_regs_t* regs);
 
+/* ========================================
+ * Fonctions syscall exportées (pour linux_compat)
+ * ======================================== */
+
+/**
+ * Syscalls exportés pour utilisation par linux_compat.
+ * Ces fonctions sont des wrappers publics autour des implémentations internes.
+ */
+void syscall_do_exit(int status);
+int syscall_do_read(int fd, void* buf, uint32_t count);
+int syscall_do_write(int fd, const void* buf, uint32_t count);
+int syscall_do_open(const char* path, uint32_t flags);
+int syscall_do_close(int fd);
+int syscall_do_getpid(void);
+int syscall_do_getcwd(char* buf, uint32_t size);
+int syscall_do_chdir(const char* path);
+int syscall_do_mkdir(const char* path);
+
 #endif /* SYSCALL_H */

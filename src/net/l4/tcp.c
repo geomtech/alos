@@ -566,6 +566,17 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             break;
             
         case TCP_STATE_SYN_RCVD:
+            /* Si on reçoit une retransmission du SYN (flags == SYN uniquement ou SYN+...) */
+            if (flags & TCP_FLAG_SYN) {
+                console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+                console_puts("[TCP] Retransmitting SYN-ACK\n");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                
+                /* Renvoyer SYN-ACK */
+                tcp_send_packet(sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
+                return;
+            }
+            
             /* On a envoyé SYN-ACK, on attend ACK */
             if (flags & TCP_FLAG_ACK) {
                 /* Vérifier que l'ACK correspond */

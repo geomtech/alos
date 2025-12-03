@@ -6,6 +6,7 @@
 #include "../../net/utils.h"
 #include "../../net/l2/ethernet.h"
 #include "../../net/core/netdev.h"
+#include "../../arch/x86/idt.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice* g_pcnet_dev = NULL;
@@ -414,6 +415,27 @@ PCNetDevice* pcnet_init(PCIDevice* pci_dev)
     console_put_hex(dev->io_base);
     console_puts("\n");
     
+    console_puts("[PCnet] PCI Interrupt Line: ");
+    console_put_dec(pci_dev->interrupt_line);
+    console_puts("\n");
+
+    if (pci_dev->interrupt_line != 11) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("[PCnet] WARNING: Card uses IRQ ");
+        console_put_dec(pci_dev->interrupt_line);
+        console_puts(" but IDT expects IRQ 11!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        
+        /* Attempt to patch IDT */
+        console_puts("[PCnet] Patching IDT for IRQ ");
+        console_put_dec(pci_dev->interrupt_line);
+        console_puts("...\n");
+        
+        /* Utiliser le wrapper ASM existant pour IRQ 11 car il fait ce qu'on veut (EOI) */
+        extern void irq11_handler(void);
+        idt_set_gate(32 + pci_dev->interrupt_line, (uint32_t)irq11_handler, 0x08, 0x8E);
+    }
+
     /* Étape 1: Activer le Bus Mastering PCI */
     pci_enable_bus_mastering(pci_dev);
     
