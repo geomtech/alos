@@ -2,5 +2,3 @@
 *.o
 *.pcap
 lux-os/
-.vscode/
-.claude/

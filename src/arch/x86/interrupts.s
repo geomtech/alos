@@ -21,7 +21,9 @@ idt_flush:
 
 global syscall_handler_asm
 syscall_handler_asm:
-    ; Pas de CLI ici - les interruptions restent activées pendant les syscalls
+    ; Désactiver les interruptions pendant le syscall pour éviter
+    ; la préemption qui corromprait le contexte kernel/user
+    cli
     
     ; Sauvegarder les segments utilisateur
     push gs
@@ -39,11 +41,18 @@ syscall_handler_asm:
     mov fs, ax
     mov gs, ax
     
+    ; Réactiver les interruptions maintenant que le contexte est sauvegardé
+    ; Le syscall peut maintenant être préempté en toute sécurité
+    sti
+    
     ; Passer le pointeur vers la structure des registres
     ; ESP pointe maintenant sur la structure syscall_regs_t
     push esp
     call syscall_dispatcher
     add esp, 4          ; Nettoyer l'argument
+    
+    ; Désactiver les interruptions pendant la restauration du contexte
+    cli
     
     ; Restaurer les registres généraux
     ; Note: EAX contient maintenant la valeur de retour du syscall
@@ -55,7 +64,7 @@ syscall_handler_asm:
     pop fs
     pop gs
     
-    ; Retour en Ring 3
+    ; Retour en Ring 3 (iretd réactive les interruptions via EFLAGS)
     iretd
 
 ; ============================================
@@ -128,12 +137,70 @@ exception_common:
     add esp, 8            ; Nettoyer exception_num et error_code
     iretd
 
-; --- HANDLER TIMER (IRQ 0) ---
+; --- HANDLER TIMER (IRQ 0) avec support préemption ---
+; Cette version sauvegarde le contexte complet pour permettre
+; au scheduler de changer de thread depuis l'IRQ.
+;
+; Format de stack (sans segments pour simplicité):
+;   [user_ss]     <- si changement de ring (optionnel)
+;   [user_esp]    <- si changement de ring (optionnel)
+;   [eflags]      <- pushé par le CPU
+;   [cs]          <- pushé par le CPU
+;   [eip]         <- pushé par le CPU
+;   [eax]         <- pusha
+;   [ecx]
+;   [edx]
+;   [ebx]
+;   [esp_dummy]
+;   [ebp]
+;   [esi]
+;   [edi]         <- ESP pointe ici après pusha
+;
+extern timer_handler_preempt
+
 global irq0_handler
 irq0_handler:
+    ; Sauvegarder tous les registres
     pusha
-    call timer_handler_c
+    
+    ; Charger les segments kernel pour le handler
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    
+    ; Passer ESP (pointeur vers le frame) en argument
+    push esp
+    call timer_handler_preempt
+    add esp, 4
+    
+    ; Si EAX != 0, c'est le nouvel ESP (on a changé de thread)
+    test eax, eax
+    jz .no_switch
+    
+    ; Changer de stack vers le nouveau thread
+    mov esp, eax
+    
+.no_switch:
+    ; Restaurer les registres
     popa
+    
+    ; Vérifier si on retourne vers Ring 3 (CS sur la stack a RPL=3)
+    ; CS est à [ESP+4] après popa
+    test dword [esp + 4], 0x03
+    jz .irq0_kernel_return
+    
+    ; Retour vers user mode: charger les segments user
+    push eax
+    mov ax, 0x23            ; User data segment
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    pop eax
+    
+.irq0_kernel_return:
     iretd
 
 ; --- HANDLER CLAVIER (IRQ 1) ---

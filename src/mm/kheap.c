@@ -1,11 +1,15 @@
 /* src/kheap.c - Kernel Heap Allocator avec Liste Chaînée */
 #include "kheap.h"
+#include "../kernel/thread.h"
 
 /* Pointeur vers le premier bloc du heap */
 static KHeapBlock* heap_start = NULL;
 
 /* Taille totale du heap */
 static size_t heap_total_size = 0;
+
+/* Spinlock pour protéger l'accès concurrent au heap */
+static spinlock_t heap_lock;
 
 /**
  * Aligne une taille sur 4 octets (alignement naturel pour 32-bit).
@@ -63,6 +67,20 @@ static void coalesce_block(KHeapBlock* block)
         return;
     }
     
+    /* Vérification de sanité : le pointeur next doit être dans le heap */
+    uint8_t* heap_end = (uint8_t*)heap_start + heap_total_size;
+    if ((uint8_t*)block->next < (uint8_t*)heap_start || 
+        (uint8_t*)block->next >= heap_end) {
+        /* Corruption détectée ! */
+        extern void console_puts(const char*);
+        extern void console_put_hex(uint32_t);
+        console_puts("\n[KHEAP] CORRUPTION: block->next = 0x");
+        console_put_hex((uint32_t)block->next);
+        console_puts(" is outside heap!\n");
+        block->next = NULL;  /* Couper la chaîne pour éviter le crash */
+        return;
+    }
+    
     /* Si le bloc suivant est libre, on le fusionne */
     if (block->next->is_free) {
         /* 
@@ -84,6 +102,9 @@ static void coalesce_block(KHeapBlock* block)
 
 void kheap_init(void* start_addr, size_t size_bytes)
 {
+    /* Initialiser le spinlock du heap */
+    spinlock_init(&heap_lock);
+    
     if (start_addr == NULL || size_bytes < sizeof(KHeapBlock) + KHEAP_MIN_BLOCK_SIZE) {
         return;
     }
@@ -99,6 +120,7 @@ void kheap_init(void* start_addr, size_t size_bytes)
 
 void* kmalloc(size_t size)
 {
+    /* Vérification rapide avant de prendre le lock */
     if (size == 0 || heap_start == NULL) {
         return NULL;
     }
@@ -110,6 +132,9 @@ void* kmalloc(size_t size)
     if (size < KHEAP_MIN_BLOCK_SIZE) {
         size = KHEAP_MIN_BLOCK_SIZE;
     }
+    
+    /* Prendre le lock avant d'accéder aux structures du heap */
+    spinlock_lock(&heap_lock);
     
     /* Parcourir la liste pour trouver un bloc libre assez grand (First Fit) */
     KHeapBlock* current = heap_start;
@@ -124,6 +149,9 @@ void* kmalloc(size_t size)
             /* Marquer comme utilisé */
             current->is_free = false;
             
+            /* Libérer le lock avant de retourner */
+            spinlock_unlock(&heap_lock);
+            
             /* Retourner l'adresse des données (après le header) */
             return KHEAP_BLOCK_DATA(current);
         }
@@ -131,12 +159,14 @@ void* kmalloc(size_t size)
         current = current->next;
     }
     
-    /* Aucun bloc libre assez grand trouvé */
+    /* Aucun bloc libre assez grand trouvé - libérer le lock */
+    spinlock_unlock(&heap_lock);
     return NULL;
 }
 
 void kfree(void* ptr)
 {
+    /* Vérification rapide avant de prendre le lock */
     if (ptr == NULL || heap_start == NULL) {
         return;
     }
@@ -144,9 +174,13 @@ void kfree(void* ptr)
     /* Retrouver le header du bloc */
     KHeapBlock* block = KHEAP_DATA_BLOCK(ptr);
     
+    /* Prendre le lock avant d'accéder aux structures du heap */
+    spinlock_lock(&heap_lock);
+    
     /* Vérification basique : le bloc doit être dans le heap */
     uint8_t* heap_end = (uint8_t*)heap_start + heap_total_size;
     if ((uint8_t*)block < (uint8_t*)heap_start || (uint8_t*)block >= heap_end) {
+        spinlock_unlock(&heap_lock);
         return; /* Pointeur invalide, hors du heap */
     }
     
@@ -162,12 +196,20 @@ void kfree(void* ptr)
      * On le fait ici pour une meilleure défragmentation.
      */
     KHeapBlock* current = heap_start;
-    while (current != NULL) {
+    int max_iterations = 10000;  /* Protection contre boucle infinie */
+    while (current != NULL && max_iterations-- > 0) {
+        /* Vérification de sanité */
+        if ((uint8_t*)current < (uint8_t*)heap_start || 
+            (uint8_t*)current >= heap_end) {
+            break;  /* Corruption, arrêter */
+        }
         if (current->is_free) {
             coalesce_block(current);
         }
         current = current->next;
     }
+    
+    spinlock_unlock(&heap_lock);
 }
 
 size_t kheap_get_total_size(void)
@@ -177,6 +219,8 @@ size_t kheap_get_total_size(void)
 
 size_t kheap_get_free_size(void)
 {
+    spinlock_lock(&heap_lock);
+    
     size_t free_size = 0;
     KHeapBlock* current = heap_start;
     
@@ -187,11 +231,14 @@ size_t kheap_get_free_size(void)
         current = current->next;
     }
     
+    spinlock_unlock(&heap_lock);
     return free_size;
 }
 
 size_t kheap_get_block_count(void)
 {
+    spinlock_lock(&heap_lock);
+    
     size_t count = 0;
     KHeapBlock* current = heap_start;
     
@@ -200,11 +247,14 @@ size_t kheap_get_block_count(void)
         current = current->next;
     }
     
+    spinlock_unlock(&heap_lock);
     return count;
 }
 
 size_t kheap_get_free_block_count(void)
 {
+    spinlock_lock(&heap_lock);
+    
     size_t count = 0;
     KHeapBlock* current = heap_start;
     
@@ -215,5 +265,6 @@ size_t kheap_get_free_block_count(void)
         current = current->next;
     }
     
+    spinlock_unlock(&heap_lock);
     return count;
 }

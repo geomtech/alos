@@ -6,6 +6,7 @@
 #include "console.h"
 #include "keyboard.h"
 #include "keymap.h"
+#include "thread.h"
 
 /* Scancodes spéciaux */
 #define SCANCODE_UP_ARROW    0x48
@@ -100,8 +101,13 @@ void keyboard_clear_buffer(void)
 char keyboard_getchar(void)
 {
     while (!keyboard_has_char()) {
-        /* Activer les interruptions et attendre */
+        /* Activer les interruptions pour recevoir l'IRQ clavier */
         asm volatile("sti");
+        
+        /* Céder le CPU aux autres threads au lieu de bloquer le CPU */
+        thread_yield();
+        
+        /* Petite pause pour éviter de spammer le scheduler si on est le seul thread */
         asm volatile("hlt");
     }
     return keyboard_buffer_get();

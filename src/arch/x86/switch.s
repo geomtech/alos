@@ -1,127 +1,228 @@
 ; src/arch/x86/switch.s - Context Switch Assembly
 ; 
-; Ce fichier contient la fonction magique qui permet de passer
-; d'un processus à un autre en sauvegardant/restaurant les registres.
+; Ce fichier contient les fonctions de context switch.
+; Format unifié: interrupt_frame_t (pusha + eip/cs/eflags)
 
 [BITS 32]
 
 section .text
 
 ; ============================================================
-; void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp, uint32_t new_cr3)
+; uint32_t switch_context(uint32_t* old_esp_ptr, uint32_t new_esp)
 ; ============================================================
 ; 
-; Paramètres (cdecl calling convention):
+; Context switch coopératif (yield).
+; Sauvegarde le contexte au format interrupt_frame_t.
+;
+; Paramètres:
 ;   [ESP+4]  = old_esp_ptr : Pointeur où sauvegarder l'ESP actuel
 ;   [ESP+8]  = new_esp     : Nouvel ESP à charger
-;   [ESP+12] = new_cr3     : Nouveau Page Directory (adresse physique)
 ;
-; Cette fonction :
-;   1. Push les registres callee-saved du processus actuel
-;   2. Sauvegarde l'ESP dans *old_esp_ptr
-;   3. Change CR3 si nécessaire (bascule d'espace mémoire)
-;   4. Charge le new_esp dans ESP
-;   5. Pop les registres du nouveau processus
-;   6. Retourne (ret saute à l'EIP du nouveau processus)
+; Retour: ne retourne pas directement, on "retourne" via popa+iretd
 ;
-; Après l'appel, on se retrouve dans le contexte du nouveau processus !
-;
-; CRITIQUE: Le mapping kernel (0-16 Mo) DOIT être présent dans new_cr3
-;           sinon le CPU ne pourra pas exécuter les instructions suivantes!
-;
-global switch_task
-switch_task:
-    ; ===== Sauvegarder le contexte du processus actuel =====
+global switch_context
+switch_context:
+    ; Désactiver les interruptions pendant le switch
+    cli
     
-    ; Push les registres callee-saved (ceux qu'on doit préserver)
-    ; L'ordre est important : on les pop dans l'ordre inverse
-    push ebx
-    push esi
-    push edi
-    push ebp
+    ; Récupérer les arguments avant de modifier la stack
+    mov eax, [esp + 4]      ; EAX = old_esp_ptr
+    mov ecx, [esp + 8]      ; ECX = new_esp
     
-    ; ===== Sauvegarder l'ESP actuel =====
+    ; Construire un interrupt_frame_t sur la stack actuelle
+    ; Format: [EFLAGS] [CS] [EIP] [EAX] [ECX] [EDX] [EBX] [ESP] [EBP] [ESI] [EDI]
     
-    ; Récupérer les arguments AVANT de modifier ESP
-    ; Note: ESP a changé à cause des push (+16 octets), donc l'offset change
-    ; [ESP]    = EBP (qu'on vient de push)
-    ; [ESP+4]  = EDI
-    ; [ESP+8]  = ESI
-    ; [ESP+12] = EBX
-    ; [ESP+16] = Adresse de retour (return address)
-    ; [ESP+20] = old_esp_ptr (premier argument)
-    ; [ESP+24] = new_esp (deuxième argument)
-    ; [ESP+28] = new_cr3 (troisième argument)
+    ; Pousser ce qui sera restauré par iretd
+    pushf                   ; EFLAGS (avec IF=1 pour réactiver les interrupts)
+    push dword 0x08         ; CS = kernel code segment
+    push dword .return_point ; EIP = où continuer après le switch
     
-    mov eax, [esp + 20]     ; EAX = old_esp_ptr
-    mov ecx, [esp + 24]     ; ECX = new_esp (sauvegarder AVANT de changer ESP!)
-    mov edx, [esp + 28]     ; EDX = new_cr3 (sauvegarder aussi)
-    mov [eax], esp          ; *old_esp_ptr = ESP actuel
+    ; Pousser les registres (format pusha, mais dans le bon ordre pour popa)
+    push eax                ; EAX (sera écrasé)
+    push ecx                ; ECX (sera écrasé)
+    push edx                ; EDX
+    push ebx                ; EBX
+    push esp                ; ESP (ignoré par popa)
+    push ebp                ; EBP
+    push esi                ; ESI
+    push edi                ; EDI
     
-    ; ===== Changer de Page Directory (CR3) si nécessaire =====
+    ; Sauvegarder ESP dans old_esp_ptr
+    ; EAX contient toujours old_esp_ptr
+    mov [eax], esp
     
-    ; Vérifier si new_cr3 est différent de l'actuel
-    ; (Optimisation: éviter flush TLB si même espace mémoire)
-    mov eax, cr3
-    cmp eax, edx            ; Comparer CR3 actuel avec new_cr3
-    je .skip_cr3_switch     ; Si égaux, ne pas changer
-    
-    ; Changer CR3 - Bascule instantanée dans le nouvel espace mémoire!
-    ; ATTENTION: Le code kernel DOIT être mappé dans le nouveau Page Directory
-    mov cr3, edx            ; CR3 = new_cr3 (flush TLB automatique)
-    
-.skip_cr3_switch:
-    ; ===== Charger le contexte du nouveau processus =====
-    
-    ; Charger le nouvel ESP depuis ECX (pas depuis la stack!)
+    ; Basculer vers la nouvelle stack
     mov esp, ecx            ; ESP = new_esp
-                            ; On est maintenant sur la stack du nouveau processus
     
-    ; Pop les registres du nouveau processus
-    ; (dans l'ordre inverse de comment ils ont été push)
-    pop ebp
-    pop edi
-    pop esi
-    pop ebx
-    
-    ; ===== Retourner dans le nouveau processus =====
-    
-    ; ret va dépiler l'adresse de retour (EIP) de la stack
-    ; et sauter à cette adresse.
-    ; Pour un nouveau thread, c'est l'adresse de la fonction thread.
-    ; Pour un thread existant, c'est l'adresse après son dernier schedule().
+    ; Restaurer le contexte du nouveau thread (format interrupt_frame)
+    popa                    ; Restaure EDI, ESI, EBP, (skip ESP), EBX, EDX, ECX, EAX
+    iretd                   ; Restaure EIP, CS, EFLAGS (et réactive les interrupts)
+
+.return_point:
+    ; On arrive ici quand ce thread est reschedulé
+    ; Les interruptions sont réactivées par iretd
     ret
 
 
 ; ============================================================
+; void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp, uint32_t new_cr3)
+; ============================================================
+; 
+; Context switch avec support optionnel de changement d'espace d'adressage.
+; Si new_cr3 != 0, change le Page Directory (CR3) pour l'isolation mémoire.
+;
+; Format de stack (sans segments):
+;   [SS]       <- seulement pour user (iretd vers Ring 3)
+;   [ESP_user] <- seulement pour user (iretd vers Ring 3)
+;   [EFLAGS]
+;   [CS]
+;   [EIP]
+;   [EAX] [ECX] [EDX] [EBX] [ESP_dummy] [EBP] [ESI] [EDI]  <- pusha/popa
+;
+; Paramètres:
+;   [ESP+4]  = old_esp_ptr : Pointeur où sauvegarder l'ESP actuel
+;   [ESP+8]  = new_esp     : Nouvel ESP à charger
+;   [ESP+12] = new_cr3     : Nouveau Page Directory (0 = pas de changement)
+;
+global switch_task
+switch_task:
+    ; Désactiver les interruptions pendant le switch
+    cli
+    
+    ; Récupérer les arguments avant de modifier la stack
+    mov eax, [esp + 4]      ; EAX = old_esp_ptr
+    mov ecx, [esp + 8]      ; ECX = new_esp
+    mov edx, [esp + 12]     ; EDX = new_cr3
+    
+    ; Pousser ce qui sera restauré par iretd
+    pushf                   ; EFLAGS (avec IF=1 pour réactiver les interrupts)
+    push dword 0x08         ; CS = kernel code segment
+    push dword .return_point ; EIP = où continuer après le switch
+    
+    ; Pousser les registres (format pusha, mais dans le bon ordre pour popa)
+    push eax                ; EAX (sera écrasé)
+    push ecx                ; ECX (sera écrasé)
+    push edx                ; EDX (sera écrasé)
+    push ebx                ; EBX
+    push esp                ; ESP (ignoré par popa)
+    push ebp                ; EBP
+    push esi                ; ESI
+    push edi                ; EDI
+    
+    ; Sauvegarder ESP dans old_esp_ptr
+    ; EAX contient toujours old_esp_ptr
+    mov [eax], esp
+    
+    ; Changer le Page Directory si new_cr3 != 0
+    ; EDX contient new_cr3
+    test edx, edx
+    jz .skip_cr3_switch
+    
+    ; Charger le nouveau Page Directory
+    mov cr3, edx
+    
+.skip_cr3_switch:
+    ; Basculer vers la nouvelle stack
+    mov esp, ecx            ; ESP = new_esp
+    
+    ; Restaurer le contexte du nouveau thread
+    popa                    ; Restaure EDI, ESI, EBP, (skip ESP), EBX, EDX, ECX, EAX
+    
+    ; Vérifier si on retourne vers Ring 3 (CS sur la stack a RPL=3)
+    ; CS est à [ESP+4] après popa
+    test dword [esp + 4], 0x03
+    jz .kernel_return
+    
+    ; Retour vers user mode: charger les segments user
+    push eax
+    mov ax, 0x23            ; User data segment
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    pop eax
+    
+.kernel_return:
+    iretd                   ; Restaure EIP, CS, EFLAGS (et SS/ESP si Ring 3)
+
+.return_point:
+    ; On arrive ici quand ce thread est reschedulé
+    ; Les interruptions sont réactivées par iretd
+    ret
+
+; ============================================================
+; void jump_to_user(uint32_t esp, uint32_t cr3)
+; ============================================================
+; 
+; Saute vers un thread user sans sauvegarder le contexte actuel.
+; Utilisé pour le PREMIER switch vers un thread user.
+;
+; Paramètres:
+;   [ESP+4]  = esp : ESP du thread user (pointe vers le frame initial)
+;   [ESP+8]  = cr3 : Page Directory du processus (0 = pas de changement)
+;
+global jump_to_user
+jump_to_user:
+    cli
+    
+    mov ecx, [esp + 4]      ; ECX = new_esp
+    mov edx, [esp + 8]      ; EDX = new_cr3
+    
+    ; Changer le Page Directory si cr3 != 0
+    test edx, edx
+    jz .skip_cr3_user
+    mov cr3, edx
+.skip_cr3_user:
+    
+    ; Charger la nouvelle stack
+    mov esp, ecx
+    
+    ; Restaurer les registres (le frame a été créé par thread_create_user)
+    popa
+    
+    ; Charger les segments user (on sait qu'on va vers Ring 3)
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    
+    ; Sauter en user mode
+    iretd
+
 ; void task_entry_point(void)
 ; ============================================================
 ;
 ; Point d'entrée pour les nouveaux threads.
-; Cette fonction est appelée quand un thread démarre pour la première fois.
-; Elle appelle la fonction du thread, puis process_exit() à la fin.
+; Appelé via iretd depuis le scheduler préemptif.
 ;
-extern process_exit
+; À l'entrée (après popa + iretd):
+;   EAX = adresse de la fonction entry
+;   ECX = argument (void *arg)
+;
+; Cette fonction appelle entry(arg) puis thread_exit().
+;
+extern thread_exit
 
 global task_entry_point
 task_entry_point:
-    ; À ce point, la stack contient :
-    ; [ESP]   = Adresse de la fonction du thread
-    ; [ESP+4] = Argument (si besoin, pour plus tard)
+    ; Les interruptions sont déjà activées (EFLAGS.IF=1 via iretd)
     
-    ; Activer les interruptions (désactivées pendant le switch)
-    sti
-    
-    ; Récupérer l'adresse de la fonction
-    pop eax                 ; EAX = adresse de la fonction
+    ; Pousser l'argument sur la stack pour la convention cdecl
+    push ecx                ; arg sur la stack
     
     ; Appeler la fonction du thread
-    call eax
+    call eax                ; entry(arg)
+    
+    ; Nettoyer l'argument
+    add esp, 4
     
     ; Si la fonction retourne, terminer proprement le thread
-    call process_exit
+    ; EAX contient le code de retour de entry()
+    push eax                ; status = valeur de retour
+    call thread_exit        ; thread_exit(status)
     
-    ; On ne devrait jamais arriver ici
+    ; On ne devrait jamais arriver ici (thread_exit ne retourne pas)
     cli
 .hang:
     hlt

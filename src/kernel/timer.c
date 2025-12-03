@@ -78,13 +78,34 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
  * Handler d'interruption Timer (IRQ 0)
  * =========================================== */
 
+/* Déclaration externe du scheduler */
+extern void scheduler_tick(void);
+extern uint32_t scheduler_preempt(void *frame);
+
 /**
- * Cette fonction est appelée par timer_handler_c dans kernel.c
- * Mise à jour: on remplace timer_handler_c pour gérer les ticks.
+ * Ancien handler - gardé pour compatibilité
  */
 void timer_tick(void)
 {
     g_timer_ticks++;
+    scheduler_tick();
+}
+
+/**
+ * Nouveau handler avec support préemption.
+ * Appelé directement depuis l'IRQ0 ASM.
+ * @param frame Pointeur vers les registres sauvegardés (interrupt_frame_t)
+ * @return Nouvel ESP si préemption, 0 sinon
+ */
+uint32_t timer_handler_preempt(void *frame)
+{
+    g_timer_ticks++;
+    
+    /* Envoyer EOI au PIC (Important: avant le scheduler!) */
+    outb(0x20, 0x20);
+    
+    /* Appeler le scheduler avec le frame d'interruption */
+    return scheduler_preempt(frame);
 }
 
 /* ===========================================
@@ -93,6 +114,10 @@ void timer_tick(void)
 
 void timer_init(uint32_t frequency)
 {
+    if (frequency == 0) {
+        frequency = TIMER_FREQUENCY;  /* Valeur par défaut si 0 */
+    }
+    
     g_timer_frequency = frequency;
     
     /* Calcul du diviseur pour obtenir la fréquence désirée */
@@ -140,6 +165,9 @@ uint64_t timer_get_uptime_ms(void)
 {
     /* Éviter la division 64 bits en utilisant la fréquence connue */
     /* Si freq = 1000 Hz, alors ticks = ms directement */
+    if (g_timer_frequency == 0) {
+        return 0;  /* Sécurité contre division par zéro */
+    }
     if (g_timer_frequency == 1000) {
         return g_timer_ticks;
     }
@@ -151,12 +179,18 @@ uint64_t timer_get_uptime_ms(void)
 uint32_t timer_get_uptime_seconds(void)
 {
     /* Utiliser seulement les 32 bits bas pour éviter __udivdi3 */
+    if (g_timer_frequency == 0) {
+        return 0;  /* Sécurité contre division par zéro */
+    }
     uint32_t ticks_low = (uint32_t)g_timer_ticks;
     return ticks_low / g_timer_frequency;
 }
 
 void timer_sleep_ms(uint32_t ms)
 {
+    if (g_timer_frequency == 0) {
+        return;  /* Sécurité contre division par zéro */
+    }
     uint64_t target = g_timer_ticks + (ms * g_timer_frequency) / 1000;
     
     while (g_timer_ticks < target) {
