@@ -51,8 +51,8 @@ MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
 
 # Drivers
-DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c
-DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o
+DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c
+DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o
 
 # Network stack (par couche OSI)
 NET_L2_SRC = src/net/l2/ethernet.c src/net/l2/arp.c
@@ -165,7 +165,7 @@ clean:
 run: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
-		-device pcnet,netdev=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk \
 		-serial stdio
 
@@ -173,7 +173,7 @@ run: alos.bin
 run-pcap: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 1024M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
-		-device pcnet,netdev=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-object filter-dump,id=dump0,netdev=net0,file=alos-network.pcap
 	@echo "Capture sauvée dans alos-network.pcap"
 
@@ -182,7 +182,7 @@ run-pcap: alos.bin
 run-tap: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 1024M \
 		-netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
-		-device pcnet,netdev=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec vmnet-shared (macOS uniquement - même réseau que l'hôte)
@@ -191,7 +191,7 @@ run-tap: alos.bin
 run-vmnet: alos.bin
 	sudo qemu-system-i386 -kernel alos.bin -m 2048M \
 		-netdev vmnet-shared,id=net0 \
-		-device pcnet,netdev=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-d int,cpu_reset -no-reboot \
 		-drive file=disk.img,format=raw,index=0,media=disk
 
@@ -199,12 +199,12 @@ run-vmnet: alos.bin
 run-socket: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 1024M \
 		-netdev socket,id=net0,mcast=230.0.0.1:1234 \
-		-device pcnet,netdev=net0 \
+		-device virtio-net-pci,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 1024M -netdev user,id=net0 -device pcnet,netdev=net0 -s -S &
+	qemu-system-i386 -kernel alos.bin -m 1024M -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"
 
 install-userland: src/userland/server.elf
