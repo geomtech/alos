@@ -381,16 +381,17 @@ page_directory_t* vmm_create_directory(void)
         new_dir[i] = 0;
     }
     
-    /* Copier SEULEMENT l'entrée 0 du kernel (0-4 Mo) qui contient le code kernel.
+    /* Copier les entrées kernel SAUF l'entrée 1 (4-8 Mo) où l'ELF est chargé.
      * 
-     * IMPORTANT: On ne copie PAS les entrées 1-3 car elles sont dans l'espace
-     * où les programmes ELF user seront chargés (typiquement à 0x00400000).
-     * Si on les copiait, vmm_is_mapped_in_dir retournerait true et le code
-     * ELF ne serait jamais mappé.
-     * 
-     * Le kernel est chargé dans les premiers 4 Mo, donc l'entrée 0 suffit.
+     * Entrée 0 (0-4 Mo)   : Kernel code/data + Heap
+     * Entrée 1 (4-8 Mo)   : User ELF (ne pas copier !)
+     * Entrée 2 (8-12 Mo)  : Libre
+     * Entrée 3 (12-16 Mo) : TEMP_MAP_ADDR (nécessaire pour VMM)
      */
-    new_dir[0] = kernel_page_directory[0];
+    for (int i = 0; i < KERNEL_TABLES_COUNT; i++) {
+        if (i == 1) continue; /* Sauter l'espace ELF user */
+        new_dir[i] = kernel_page_directory[i];
+    }
     
     vmm_temp_unmap();
     

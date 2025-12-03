@@ -84,10 +84,23 @@ static int fd_alloc(void)
 {
     fd_table_init();
     
+    /* DEBUG: Vérifier l'accès à la table */
+    console_puts("[DEBUG] fd_alloc: scanning table...\n");
+    
     /* Commencer à 3 (après stdin/stdout/stderr) */
     for (int i = 3; i < MAX_FD; i++) {
+        /* DEBUG: Afficher index tous les 100 */
+        if (i % 100 == 0) {
+            console_puts("[DEBUG] fd_alloc: checking index ");
+            console_put_dec(i);
+            console_puts("\n");
+        }
+        
         if (fd_table[i].type == FILE_TYPE_NONE) {
             fd_table[i].ref_count = 1;
+            console_puts("[DEBUG] fd_alloc: found free fd ");
+            console_put_dec(i);
+            console_puts("\n");
             return i;
         }
     }
