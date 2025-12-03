@@ -214,6 +214,23 @@ static tcp_socket_t* tcp_find_listening_socket(uint16_t port)
 }
 
 /**
+ * Trouve un socket client prêt (ESTABLISHED) pour un port donné.
+ * Utilisé par sys_accept pour trouver les connexions créées par tcp_handle_packet.
+ * Ne retourne pas les sockets LISTEN ou CLOSED.
+ */
+tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
+{
+    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+        if (tcp_sockets[i].in_use && 
+            tcp_sockets[i].local_port == local_port &&
+            tcp_sockets[i].state == TCP_STATE_ESTABLISHED) {
+            return &tcp_sockets[i];
+        }
+    }
+    return NULL;
+}
+
+/**
  * Trouve un socket par port local (pour les connexions entrantes).
  * Note: Retourne le premier socket trouvé, quel que soit son état.
  */
@@ -293,9 +310,14 @@ tcp_socket_t* tcp_listen(uint16_t port)
 }
 
 /**
- * Ferme un socket TCP.
- * Envoie un FIN si le socket est connecté.
- * Si le socket était un serveur (a un local_port), le remet en LISTEN.
+ * Ferme un socket TCP de manière conforme au standard (FIN-ACK).
+ * Version NON-BLOQUANTE : envoie FIN et libère immédiatement.
+ * 
+ * Pour un socket serveur réutilisable : remet en LISTEN.
+ * Pour un socket client (créé par accept) : libère complètement.
+ * 
+ * RFC 793 : Le FIN est envoyé, l'ACK sera traité par la machine à états
+ * mais on n'attend pas (le client recevra le FIN de toute façon).
  */
 void tcp_close(tcp_socket_t* sock)
 {
@@ -303,24 +325,52 @@ void tcp_close(tcp_socket_t* sock)
     
     uint16_t saved_port = sock->local_port;
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[TCP] Closing socket on port ");
-    net_put_dec(sock->local_port);
-    net_puts(" (state: ");
-    net_puts(tcp_state_name(sock->state));
-    net_puts(")\n");
-    net_reset_color();
+    /* Si le socket est connecté, envoyer FIN pour fermeture propre */
+    if (sock->state == TCP_STATE_ESTABLISHED) {
+        /* Envoyer FIN+ACK - non bloquant */
+        tcp_send_packet(sock, TCP_FLAG_FIN | TCP_FLAG_ACK, NULL, 0);
+        /* Note: On ne change pas l'état ici, on libère directement */
+    } else if (sock->state == TCP_STATE_CLOSE_WAIT) {
+        /* Le client a déjà envoyé FIN, on envoie notre FIN */
+        tcp_send_packet(sock, TCP_FLAG_FIN | TCP_FLAG_ACK, NULL, 0);
+    }
+    /* Pour SYN_RCVD ou autres états, on ne fait rien de spécial */
     
-    /* Si le socket est connecté, envoyer un FIN */
+    /* Libérer le socket immédiatement */
+    sock->state = TCP_STATE_CLOSED;
+    sock->remote_port = 0;
+    sock->seq = 0;
+    sock->ack = 0;
+    sock->flags = 0;
+    sock->recv_head = 0;
+    sock->recv_tail = 0;
+    sock->recv_count = 0;
+    for (int i = 0; i < 4; i++) {
+        sock->remote_ip[i] = 0;
+    }
+    sock->local_port = 0;  /* Libérer le port pour ce socket */
+    sock->in_use = false;  /* Marquer comme libre */
+    
+    /* Signal state change */
+    condvar_broadcast(&sock->state_changed);
+}
+
+/**
+ * Ferme un socket client et remet le socket serveur en LISTEN.
+ * Utilisé quand on a un seul socket qui fait serveur ET client.
+ */
+void tcp_close_and_relisten(tcp_socket_t* sock, uint16_t listen_port)
+{
+    if (sock == NULL) return;
+    
+    /* Si le socket est connecté, envoyer FIN pour fermeture propre */
     if (sock->state == TCP_STATE_ESTABLISHED) {
         tcp_send_packet(sock, TCP_FLAG_FIN | TCP_FLAG_ACK, NULL, 0);
-        /* Note: tcp_send_packet incrémente déjà SEQ pour le FIN */
-        
-        /* Attendre un peu pour que le FIN soit envoyé */
-        for (volatile int i = 0; i < 100000; i++);
+    } else if (sock->state == TCP_STATE_CLOSE_WAIT) {
+        tcp_send_packet(sock, TCP_FLAG_FIN | TCP_FLAG_ACK, NULL, 0);
     }
     
-    /* Remettre le socket en mode LISTEN pour réutilisation */
+    /* Remettre immédiatement en LISTEN - non bloquant */
     sock->state = TCP_STATE_LISTEN;
     sock->remote_port = 0;
     sock->seq = 0;
@@ -332,22 +382,60 @@ void tcp_close(tcp_socket_t* sock)
     for (int i = 0; i < 4; i++) {
         sock->remote_ip[i] = 0;
     }
-    /* Garder le local_port et in_use pour permettre de réutiliser le socket */
-    sock->local_port = saved_port;
+    sock->local_port = listen_port;
     
-    /* Signal state change */
+    /* Signal state change pour débloquer accept() */
     condvar_broadcast(&sock->state_changed);
-    
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[TCP] Socket reset to LISTEN on port ");
-    net_put_dec(saved_port);
-    net_puts("\n");
-    net_reset_color();
 }
 
 /* ===========================================
  * Envoi de paquets
  * =========================================== */
+
+/**
+ * Envoie un paquet RST sans socket (pour rejeter les connexions orphelines).
+ * 
+ * @param dest_ip     IP destination (l'expéditeur du paquet original)
+ * @param dest_port   Port destination
+ * @param src_port    Port source (notre port)
+ * @param seq         Numéro de séquence (généralement l'ACK reçu)
+ * @param ack         Numéro d'ACK (généralement seq reçu + 1)
+ */
+static void tcp_send_rst(uint8_t* dest_ip, uint16_t dest_port, uint16_t src_port, 
+                          uint32_t seq, uint32_t ack)
+{
+    uint8_t buffer[TCP_HEADER_SIZE];
+    tcp_header_t* tcp = (tcp_header_t*)buffer;
+    
+    tcp->src_port = htons(src_port);
+    tcp->dest_port = htons(dest_port);
+    tcp->seq_num = htonl(seq);
+    tcp->ack_num = htonl(ack);
+    tcp->data_offset_flags = htons(tcp_make_data_offset_flags(TCP_HEADER_SIZE, TCP_FLAG_RST | TCP_FLAG_ACK));
+    tcp->window_size = 0;
+    tcp->checksum = 0;
+    tcp->urgent_ptr = 0;
+    
+    /* Calculer le checksum */
+    uint8_t my_ip[4];
+    NetInterface* netif = netif_get_default();
+    if (netif != NULL && netif->ip_addr != 0) {
+        ip_u32_to_bytes(netif->ip_addr, my_ip);
+    } else {
+        for (int i = 0; i < 4; i++) {
+            my_ip[i] = MY_IP[i];
+        }
+    }
+    tcp->checksum = tcp_checksum(my_ip, dest_ip, tcp, NULL, 0);
+    
+    /* Résoudre MAC et envoyer */
+    uint8_t dest_mac[6];
+    uint8_t next_hop[4];
+    if (!route_get_next_hop(dest_ip, next_hop)) return;
+    if (!arp_cache_lookup(next_hop, dest_mac)) return;
+    
+    ipv4_send_packet(netif, dest_mac, dest_ip, IP_PROTO_TCP, buffer, TCP_HEADER_SIZE);
+}
 
 /**
  * Envoie un paquet TCP.
@@ -544,21 +632,13 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         sock = tcp_find_listening_socket(dest_port);
     }
     
-    /* Pas de socket trouvé - envoyer RST (pas implémenté pour l'instant) */
+    /* Pas de socket trouvé */
     if (sock == NULL) {
-        net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-        net_puts("[TCP] No socket for port ");
-        net_put_dec(dest_port);
-        net_puts(" from ");
-        print_ip(ip_hdr->src_ip);
-        net_puts(":");
-        net_put_dec(src_port);
-        net_puts(" (flags=");
-        if (flags & TCP_FLAG_SYN) net_puts("SYN ");
-        if (flags & TCP_FLAG_ACK) net_puts("ACK ");
-        if (flags & TCP_FLAG_FIN) net_puts("FIN ");
-        net_puts(") - packet dropped\n");
-        net_reset_color();
+        /* Pour tous les paquets sans socket, envoyer RST */
+        /* Cela fait réessayer le client immédiatement au lieu d'attendre le timeout */
+        if (!(flags & TCP_FLAG_RST)) {
+            tcp_send_rst(ip_hdr->src_ip, src_port, dest_port, ack_num, seq_num + 1);
+        }
         return;
     }
     
@@ -575,24 +655,40 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 net_puts("\n");
                 net_reset_color();
                 
-                /* Enregistrer l'adresse distante */
-                for (int i = 0; i < 4; i++) {
-                    sock->remote_ip[i] = ip_hdr->src_ip[i];
+                /* NOUVEAU: Créer immédiatement un socket client pour cette connexion.
+                 * Le socket serveur reste en LISTEN pour accepter d'autres connexions. */
+                tcp_socket_t* client_sock = tcp_alloc_socket();
+                if (client_sock == NULL) {
+                    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                    net_puts("[TCP] No free sockets for new connection!\n");
+                    net_reset_color();
+                    /* Envoyer RST car on ne peut pas accepter */
+                    tcp_send_rst(ip_hdr->src_ip, src_port, dest_port, 0, seq_num + 1);
+                    return;
                 }
-                sock->remote_port = src_port;
+                
+                /* Configurer le socket client */
+                client_sock->local_port = sock->local_port;
+                for (int i = 0; i < 4; i++) {
+                    client_sock->remote_ip[i] = ip_hdr->src_ip[i];
+                }
+                client_sock->remote_port = src_port;
                 
                 /* Calculer notre numéro de séquence initial (ISN) */
-                /* Utiliser le timer comme source d'aléatoire simple */
-                sock->seq = (uint32_t)timer_get_ticks() * 12345;
+                client_sock->seq = (uint32_t)timer_get_ticks() * 12345;
                 
                 /* Enregistrer leur numéro de séquence + 1 */
-                sock->ack = seq_num + 1;
+                client_sock->ack = seq_num + 1;
                 
                 /* Passer en état SYN_RCVD */
-                sock->state = TCP_STATE_SYN_RCVD;
+                client_sock->state = TCP_STATE_SYN_RCVD;
+                client_sock->window = TCP_WINDOW_SIZE;
+                condvar_init(&client_sock->state_changed);
                 
-                /* Envoyer SYN-ACK */
-                tcp_send_packet(sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
+                /* Envoyer SYN-ACK depuis le socket client */
+                tcp_send_packet(client_sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
+                
+                /* Le socket serveur reste en LISTEN - rien à changer! */
             }
             break;
             
@@ -777,6 +873,60 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 condvar_broadcast(&sock->state_changed);
             }
             break;
+        
+        case TCP_STATE_FIN_WAIT_1:
+            /* On a envoyé FIN, on attend ACK et/ou FIN du client */
+            if (flags & TCP_FLAG_ACK) {
+                /* ACK de notre FIN reçu */
+                if (flags & TCP_FLAG_FIN) {
+                    /* FIN+ACK simultané - ACK le FIN et passer en TIME_WAIT */
+                    sock->ack = seq_num + 1;
+                    tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+                    sock->state = TCP_STATE_TIME_WAIT;
+                    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                    net_puts("[TCP] Simultaneous close, entering TIME_WAIT\n");
+                    net_reset_color();
+                } else {
+                    /* Juste ACK - passer en FIN_WAIT_2 */
+                    sock->state = TCP_STATE_FIN_WAIT_2;
+                }
+                condvar_broadcast(&sock->state_changed);
+            } else if (flags & TCP_FLAG_FIN) {
+                /* FIN sans ACK - simultaneous close */
+                sock->ack = seq_num + 1;
+                tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+                sock->state = TCP_STATE_CLOSING;
+                condvar_broadcast(&sock->state_changed);
+            }
+            break;
+            
+        case TCP_STATE_FIN_WAIT_2:
+            /* On attend le FIN du client */
+            if (flags & TCP_FLAG_FIN) {
+                sock->ack = seq_num + 1;
+                tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+                sock->state = TCP_STATE_TIME_WAIT;
+                net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+                net_puts("[TCP] FIN received, connection closing gracefully\n");
+                net_reset_color();
+                condvar_broadcast(&sock->state_changed);
+            }
+            break;
+            
+        case TCP_STATE_CLOSING:
+            /* Simultaneous close - on attend l'ACK de notre FIN */
+            if (flags & TCP_FLAG_ACK) {
+                sock->state = TCP_STATE_TIME_WAIT;
+                condvar_broadcast(&sock->state_changed);
+            }
+            break;
+            
+        case TCP_STATE_TIME_WAIT:
+            /* Ignorer les paquets en TIME_WAIT (juste ACK les retransmissions) */
+            if (flags & TCP_FLAG_FIN) {
+                tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+            }
+            break;
             
         case TCP_STATE_LAST_ACK:
             /* On attend l'ACK de notre FIN */
@@ -927,4 +1077,90 @@ int tcp_available(tcp_socket_t* sock)
         return 0;
     }
     return sock->recv_count;
+}
+
+/**
+ * Accepte une connexion entrante sur un socket LISTEN.
+ * 
+ * Modèle multi-socket: le socket serveur reste en LISTEN,
+ * et un nouveau socket est créé pour chaque connexion.
+ * 
+ * @param listen_sock Socket en mode LISTEN
+ * @return Nouveau socket pour la connexion, ou NULL si pas de connexion
+ */
+tcp_socket_t* tcp_accept(tcp_socket_t* listen_sock)
+{
+    if (listen_sock == NULL) return NULL;
+    
+    /* Si le socket serveur est déjà connecté (connexion en attente), 
+     * créer un nouveau socket et transférer la connexion */
+    if (listen_sock->state == TCP_STATE_ESTABLISHED ||
+        listen_sock->state == TCP_STATE_SYN_RCVD) {
+        
+        /* Allouer un nouveau socket pour cette connexion */
+        tcp_socket_t* client_sock = tcp_alloc_socket();
+        if (client_sock == NULL) {
+            net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            net_puts("[TCP] accept: no free sockets\n");
+            net_reset_color();
+            return NULL;
+        }
+        
+        /* Copier l'état de connexion du socket serveur vers le nouveau socket */
+        client_sock->state = listen_sock->state;
+        client_sock->local_port = listen_sock->local_port;
+        client_sock->remote_port = listen_sock->remote_port;
+        client_sock->seq = listen_sock->seq;
+        client_sock->ack = listen_sock->ack;
+        client_sock->window = listen_sock->window;
+        client_sock->flags = listen_sock->flags;
+        for (int i = 0; i < 4; i++) {
+            client_sock->remote_ip[i] = listen_sock->remote_ip[i];
+        }
+        /* Copier le buffer de réception si des données sont arrivées */
+        client_sock->recv_head = listen_sock->recv_head;
+        client_sock->recv_tail = listen_sock->recv_tail;
+        client_sock->recv_count = listen_sock->recv_count;
+        for (int i = 0; i < TCP_RECV_BUFFER_SIZE; i++) {
+            client_sock->recv_buffer[i] = listen_sock->recv_buffer[i];
+        }
+        condvar_init(&client_sock->state_changed);
+        
+        /* Remettre le socket serveur en LISTEN pour accepter d'autres connexions */
+        listen_sock->state = TCP_STATE_LISTEN;
+        listen_sock->remote_port = 0;
+        listen_sock->seq = 0;
+        listen_sock->ack = 0;
+        listen_sock->recv_head = 0;
+        listen_sock->recv_tail = 0;
+        listen_sock->recv_count = 0;
+        for (int i = 0; i < 4; i++) {
+            listen_sock->remote_ip[i] = 0;
+        }
+        
+        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        net_puts("[TCP] accept: connection transferred to new socket\n");
+        net_reset_color();
+        
+        return client_sock;
+    }
+    
+    /* Pas de connexion en attente */
+    return NULL;
+}
+
+/**
+ * Trouve un socket par ses adresses (pour router les paquets après accept).
+ * Cherche d'abord une correspondance exacte, sinon cherche le socket LISTEN.
+ */
+tcp_socket_t* tcp_find_connection(uint16_t local_port, uint8_t* remote_ip, uint16_t remote_port)
+{
+    /* D'abord chercher une correspondance exacte (socket client) */
+    tcp_socket_t* sock = tcp_find_socket(local_port, remote_ip, remote_port);
+    if (sock != NULL) {
+        return sock;
+    }
+    
+    /* Sinon chercher un socket LISTEN sur ce port */
+    return tcp_find_listening_socket(local_port);
 }

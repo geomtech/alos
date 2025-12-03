@@ -739,150 +739,116 @@ static int sys_listen(int fd, int backlog)
 /**
  * SYS_ACCEPT (43) - Accepter une connexion entrante
  * 
- * Bloquant: attend qu'une connexion soit établie.
+ * Modèle MULTI-SOCKET: le socket serveur reste TOUJOURS en LISTEN.
+ * Les sockets clients sont créés automatiquement par tcp_handle_packet
+ * quand un SYN arrive. Cette fonction trouve juste le socket client prêt.
  * 
  * @param fd    File descriptor du socket en écoute
  * @param addr  Pointeur vers sockaddr_in pour l'adresse du client (peut être NULL)
  * @param len   Pointeur vers la taille (ignoré)
- * @return Nouveau FD pour la connexion, ou -1 si erreur
+ * @return NOUVEAU FD pour le socket client, ou -1 si erreur
  */
 static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
 {
     (void)len;
-    (void)fd;  /* On ignore fd et on utilise le socket global */
     
-    /* Utiliser le socket global au lieu de fd_table */
-    tcp_socket_t* sock = g_server_socket;
-    if (sock == NULL) {
-        console_puts("[SYSCALL] accept: no server socket\n");
+    /* Vérifier le FD du socket serveur */
+    if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
         return -1;
     }
     
-    /* Debug: afficher l'état actuel */
-    console_puts("[SYSCALL] accept: socket state = ");
-    console_puts(tcp_state_name(sock->state));
-    console_puts("\n");
-    
-    /* Si le socket n'est pas en LISTEN, le remettre en LISTEN */
-    if (sock->state != TCP_STATE_LISTEN && 
-        sock->state != TCP_STATE_SYN_RCVD &&
-        sock->state != TCP_STATE_ESTABLISHED) {
-        console_puts("[SYSCALL] accept: resetting socket to LISTEN\n");
-        sock->state = TCP_STATE_LISTEN;
-        sock->remote_port = 0;
-        sock->seq = 0;
-        sock->ack = 0;
-        for (int i = 0; i < 4; i++) sock->remote_ip[i] = 0;
+    tcp_socket_t* listen_sock = fd_table[fd].socket;
+    if (listen_sock == NULL || listen_sock->state != TCP_STATE_LISTEN) {
+        return -1;
     }
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-        console_puts("[SYSCALL] accept: waiting for connection on port ");
-    console_put_dec(sock->local_port);
-    console_puts("...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    uint16_t port = listen_sock->local_port;
+    tcp_socket_t* client_sock = NULL;
     
-    /* Acquérir le verrou global réseau */
-    net_lock();
-    
-    /* Boucle d'attente avec Condition Variable */
-    while (sock->state != TCP_STATE_ESTABLISHED) {
-        /* Vérifier si le socket a été fermé */
-        if (sock->state == TCP_STATE_CLOSED) {
-            console_puts("[SYSCALL] accept: socket closed\n");
-            net_unlock();
-            return -1;
-        }
-        
-        /* Vérifier si CTRL+D a été pressé (permet d'interrompre accept) */
-        /* Note: Idéalement on devrait avoir un mécanisme de signal/interrupt plus propre */
-        if (keyboard_getchar_nonblock() == 0x04) {  /* CTRL+D = EOT */
-            console_puts("[SYSCALL] accept: interrupted by CTRL+D\n");
+    /* Attendre qu'un socket client soit prêt (ESTABLISHED) - polling simple */
+    int timeout = 0;
+    while ((client_sock = tcp_find_ready_client(port)) == NULL) {
+        /* Vérifier interruption CTRL+D */
+        if (keyboard_getchar_nonblock() == 0x04) {
             g_server_closing = 1;
-            net_unlock();
             return -2;
         }
         
-        /* Attendre sur la condition variable (libère le mutex et bloque) */
-        /* On utilise un timeout pour pouvoir vérifier CTRL+D périodiquement */
-        if (!condvar_timedwait(&sock->state_changed, &net_mutex, 100)) {
-            /* Timeout - on boucle pour vérifier CTRL+D */
-            continue;
+        /* Timeout après 30 secondes pour éviter blocage infini */
+        if (++timeout > 3000) {
+            return -1;
         }
+        
+        /* Yield au scheduler - permet aux interrupts réseau d'être traitées */
+        thread_sleep_ms(10);
     }
     
-    /* Connexion établie ! */
-    net_unlock();
+    /* Allouer un nouveau FD pour le socket client */
+    int client_fd = fd_alloc();
+    if (client_fd < 0) {
+        console_puts("[SYSCALL] accept: no free fd\n");
+        net_lock();
+        tcp_close(client_sock);
+        net_unlock();
+        return -1;
+    }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] accept: connection established!\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
-    /* 
-     * V1 Simplifié: On retourne le même fd que le socket serveur.
-     * Après close(), le serveur devra refaire bind()+listen() pour accepter
-     * une nouvelle connexion.
-     * 
-     * TODO V2: Créer un socket séparé pour chaque connexion client
-     */
+    /* Configurer le FD */
+    fd_table[client_fd].type = FILE_TYPE_SOCKET;
+    fd_table[client_fd].socket = client_sock;
+    fd_table[client_fd].flags = O_RDWR;
     
     /* Remplir l'adresse du client si demandé */
     if (addr != NULL) {
         addr->sin_family = AF_INET;
-        addr->sin_port = htons(sock->remote_port);
-        addr->sin_addr = ((uint32_t)sock->remote_ip[0]) |
-                         ((uint32_t)sock->remote_ip[1] << 8) |
-                         ((uint32_t)sock->remote_ip[2] << 16) |
-                         ((uint32_t)sock->remote_ip[3] << 24);
+        addr->sin_port = htons(client_sock->remote_port);
+        addr->sin_addr = ((uint32_t)client_sock->remote_ip[0]) |
+                         ((uint32_t)client_sock->remote_ip[1] << 8) |
+                         ((uint32_t)client_sock->remote_ip[2] << 16) |
+                         ((uint32_t)client_sock->remote_ip[3] << 24);
     }
     
-    return g_server_fd;
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("[SYSCALL] accept: new client fd ");
+    console_put_dec(client_fd);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
+    return client_fd;
 }
 
 /**
  * SYS_RECV (45) - Recevoir des données depuis un socket
- * 
- * @param fd     File descriptor du socket
- * @param buf    Buffer de destination
- * @param len    Taille maximale à lire
- * @param flags  Flags (ignorés pour V1)
- * @return Nombre de bytes lus, 0 si connexion fermée, -1 si erreur
+ * Utilise le FD pour trouver le socket (modèle multi-socket).
  */
 static int sys_recv(int fd, uint8_t* buf, int len, int flags)
 {
     (void)flags;
-    (void)fd;
     
-    /* Utiliser le socket global */
-    tcp_socket_t* sock = g_server_socket;
-    if (sock == NULL) {
+    /* Vérifier le FD */
+    if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
         return -1;
     }
     
-    /* Vérifier que le socket est connecté */
-    if (sock->state != TCP_STATE_ESTABLISHED &&
-        sock->state != TCP_STATE_CLOSE_WAIT) {
-        return 0;  /* Connexion fermée */
+    tcp_socket_t* sock = fd_table[fd].socket;
+    if (sock == NULL || sock->state != TCP_STATE_ESTABLISHED) {
+        return 0;
     }
     
-    /* Acquérir le verrou global réseau */
     net_lock();
     
-    /* Attente bloquante des données */
-    while (tcp_available(sock) == 0) {
-        /* Vérifier si la connexion est toujours active */
-        if (sock->state != TCP_STATE_ESTABLISHED &&
-            sock->state != TCP_STATE_CLOSE_WAIT) {
+    /* Attente courte des données - timeout 500ms max */
+    int timeout = 10;
+    while (tcp_available(sock) == 0 && timeout > 0) {
+        if (sock->state != TCP_STATE_ESTABLISHED) {
             net_unlock();
-            return 0;  /* Connexion fermée */
+            return 0;
         }
-        
-        /* Attendre sur la condition variable */
-        if (!condvar_timedwait(&sock->state_changed, &net_mutex, 100)) {
-            continue;
-        }
+        condvar_timedwait(&sock->state_changed, &net_mutex, 50);
+        timeout--;
     }
     
-    /* Lire les données (protected) */
     int n = tcp_recv(sock, buf, len);
     net_unlock();
     
@@ -891,20 +857,18 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
 
 /**
  * SYS_SEND (44) - Envoyer des données via un socket
- * 
- * @param fd     File descriptor du socket
- * @param buf    Buffer source
- * @param len    Nombre de bytes à envoyer
- * @param flags  Flags (ignorés pour V1)
- * @return Nombre de bytes envoyés, -1 si erreur
+ * Utilise le FD pour trouver le socket (modèle multi-socket).
  */
 static int sys_send(int fd, const uint8_t* buf, int len, int flags)
 {
     (void)flags;
-    (void)fd;
     
-    /* Utiliser le socket global */
-    tcp_socket_t* sock = g_server_socket;
+    /* Vérifier le FD */
+    if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+        return -1;
+    }
+    
+    tcp_socket_t* sock = fd_table[fd].socket;
     if (sock == NULL) {
         return -1;
     }
@@ -923,28 +887,6 @@ static int sys_close(int fd)
     KLOG_INFO("SYSCALL", "sys_close called");
     KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
     
-    /* Si c'est le socket serveur global */
-    if (fd == g_server_fd && g_server_socket != NULL) {
-        /* Si on a demandé la fermeture du serveur (CTRL+D), libérer complètement */
-        if (g_server_closing) {
-            /* Libérer complètement le socket pour permettre un nouveau bind */
-            g_server_socket->in_use = 0;
-            g_server_socket->local_port = 0;
-            g_server_socket->state = TCP_STATE_CLOSED;
-            g_server_socket = NULL;
-            g_server_fd = -1;
-            g_server_closing = 0;
-            /* Libérer le FD */
-            fd_free(fd);
-            console_puts("[SYSCALL] close: server socket fully closed\n");
-        } else {
-            /* Fermeture normale d'une connexion client - remettre en LISTEN */
-            tcp_close(g_server_socket);
-            console_puts("[SYSCALL] close: connection closed, socket back to LISTEN\n");
-        }
-        return 0;
-    }
-    
     /* Vérifier le FD */
     if (fd < 0 || fd >= MAX_FD) {
         return -1;
@@ -957,6 +899,36 @@ static int sys_close(int fd)
     
     if (fd_table == NULL || fd_table[fd].type == FILE_TYPE_NONE) {
         return -1;
+    }
+    
+    /* Si c'est le socket serveur global - fermeture CTRL+D uniquement */
+    if (fd == g_server_fd && g_server_socket != NULL && g_server_closing) {
+        /* Libérer complètement le socket pour permettre un nouveau bind */
+        tcp_close(g_server_socket);
+        g_server_socket = NULL;
+        g_server_fd = -1;
+        g_server_closing = 0;
+        fd_free(fd);
+        return 0;
+    }
+    
+    /* Si c'est un socket client (créé par accept) ou le serveur après connexion */
+    if (fd_table[fd].type == FILE_TYPE_SOCKET && fd_table[fd].socket != NULL) {
+        tcp_socket_t* sock = fd_table[fd].socket;
+        uint16_t port = sock->local_port;
+        
+        /* Vérifier si c'est le socket serveur (même socket que g_server_socket) */
+        if (sock == g_server_socket) {
+            /* Socket serveur : fermer connexion et remettre en LISTEN */
+            tcp_close_and_relisten(sock, port);
+            /* Ne pas libérer le FD ni le socket - on le réutilise */
+            return 0;
+        } else {
+            /* Socket client séparé : fermer et libérer */
+            tcp_close(sock);
+            fd_free(fd);
+            return 0;
+        }
     }
     
     /* Si c'est un fichier VFS, le fermer */

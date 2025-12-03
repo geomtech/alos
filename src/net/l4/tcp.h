@@ -16,6 +16,9 @@
 /* Receive buffer size per socket */
 #define TCP_RECV_BUFFER_SIZE    4096
 
+/* Default TCP window size */
+#define TCP_WINDOW_SIZE         4096
+
 /* Well-known ports */
 #define TCP_PORT_HTTP       80
 #define TCP_PORT_HTTPS      443
@@ -151,11 +154,21 @@ void tcp_init(void);
 tcp_socket_t* tcp_listen(uint16_t port);
 
 /**
- * Ferme un socket TCP.
+ * Ferme un socket TCP (non-bloquant).
+ * Envoie FIN et libère le socket immédiatement.
  * 
  * @param sock Socket à fermer
  */
 void tcp_close(tcp_socket_t* sock);
+
+/**
+ * Ferme un socket et le remet en mode LISTEN (non-bloquant).
+ * Utilisé pour les serveurs mono-socket.
+ * 
+ * @param sock        Socket à fermer/réutiliser
+ * @param listen_port Port sur lequel remettre en écoute
+ */
+void tcp_close_and_relisten(tcp_socket_t* sock, uint16_t listen_port);
 
 /**
  * Traite un paquet TCP reçu.
@@ -229,5 +242,25 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len);
  * @return Nombre de bytes disponibles
  */
 int tcp_available(tcp_socket_t* sock);
+
+/**
+ * Accepte une connexion entrante sur un socket LISTEN.
+ * 
+ * Si une connexion est en attente sur le socket serveur, crée un nouveau
+ * socket pour cette connexion et remet le socket serveur en LISTEN.
+ * 
+ * @param listen_sock Socket en mode LISTEN
+ * @return Nouveau socket pour la connexion, ou NULL si pas de connexion en attente
+ */
+tcp_socket_t* tcp_accept(tcp_socket_t* listen_sock);
+
+/**
+ * Trouve un socket client prêt (ESTABLISHED ou SYN_RCVD) pour un port donné.
+ * Utilisé par sys_accept pour trouver les connexions créées par tcp_handle_packet.
+ * 
+ * @param local_port Port local du serveur
+ * @return Socket client prêt, ou NULL si aucun
+ */
+tcp_socket_t* tcp_find_ready_client(uint16_t local_port);
 
 #endif /* NET_TCP_H */
