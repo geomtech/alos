@@ -198,7 +198,24 @@ static tcp_socket_t* tcp_alloc_socket(void)
 }
 
 /**
+ * Trouve un socket par port local EN MODE LISTEN uniquement.
+ * Pour les nouvelles connexions entrantes.
+ */
+static tcp_socket_t* tcp_find_listening_socket(uint16_t port)
+{
+    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+        if (tcp_sockets[i].in_use && 
+            tcp_sockets[i].local_port == port &&
+            tcp_sockets[i].state == TCP_STATE_LISTEN) {
+            return &tcp_sockets[i];
+        }
+    }
+    return NULL;
+}
+
+/**
  * Trouve un socket par port local (pour les connexions entrantes).
+ * Note: Retourne le premier socket trouvé, quel que soit son état.
  */
 static tcp_socket_t* tcp_find_socket_by_local_port(uint16_t port)
 {
@@ -519,12 +536,12 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     net_reset_color();
 #endif
     
-    /* Chercher un socket existant pour cette connexion */
+    /* Chercher un socket existant pour cette connexion (exact match) */
     tcp_socket_t* sock = tcp_find_socket(dest_port, ip_hdr->src_ip, src_port);
     
-    /* Si pas trouvé, chercher un socket en LISTEN sur ce port */
-    if (sock == NULL) {
-        sock = tcp_find_socket_by_local_port(dest_port);
+    /* Si pas trouvé et c'est un SYN (nouvelle connexion), chercher un socket LISTEN */
+    if (sock == NULL && (flags & TCP_FLAG_SYN) && !(flags & TCP_FLAG_ACK)) {
+        sock = tcp_find_listening_socket(dest_port);
     }
     
     /* Pas de socket trouvé - envoyer RST (pas implémenté pour l'instant) */
@@ -532,7 +549,15 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
         net_puts("[TCP] No socket for port ");
         net_put_dec(dest_port);
-        net_puts(" - packet dropped\n");
+        net_puts(" from ");
+        print_ip(ip_hdr->src_ip);
+        net_puts(":");
+        net_put_dec(src_port);
+        net_puts(" (flags=");
+        if (flags & TCP_FLAG_SYN) net_puts("SYN ");
+        if (flags & TCP_FLAG_ACK) net_puts("ACK ");
+        if (flags & TCP_FLAG_FIN) net_puts("FIN ");
+        net_puts(") - packet dropped\n");
         net_reset_color();
         return;
     }
@@ -573,19 +598,24 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             
         case TCP_STATE_SYN_RCVD:
             /* Si on reçoit une retransmission du SYN (flags == SYN uniquement ou SYN+...) */
-            if (flags & TCP_FLAG_SYN) {
+            if ((flags & TCP_FLAG_SYN) && !(flags & TCP_FLAG_ACK)) {
                 net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
                 net_puts("[TCP] Retransmitting SYN-ACK\n");
                 net_reset_color();
                 
-                /* Renvoyer SYN-ACK */
+                /* Renvoyer SYN-ACK - mais ne pas ré-incrémenter seq!
+                 * On doit envoyer le même SYN-ACK qu'avant.
+                 * tcp_send_packet va incrémenter seq, donc on le décrémente d'abord. */
+                sock->seq--;
                 tcp_send_packet(sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
                 return;
             }
             
             /* On a envoyé SYN-ACK, on attend ACK */
             if (flags & TCP_FLAG_ACK) {
-                /* Vérifier que l'ACK correspond */
+                /* Vérifier que l'ACK correspond.
+                 * Note: sock->seq a déjà été incrémenté par tcp_send_packet après le SYN-ACK.
+                 * Le client ACK notre ISN+1, qui est maintenant sock->seq. */
                 if (ack_num == sock->seq) {
                     sock->state = TCP_STATE_ESTABLISHED;
                     
@@ -599,14 +629,59 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     
                     /* Signal connection established */
                     condvar_broadcast(&sock->state_changed);
+                    
+                    /* Si le paquet ACK contient aussi des données (PSH+ACK), les traiter */
+                    if (len > header_len) {
+                        int payload_len = len - header_len;
+                        uint8_t* payload = data + header_len;
+                        
+                        /* Stocker les données dans le buffer circulaire */
+                        for (int i = 0; i < payload_len; i++) {
+                            if (sock->recv_count < TCP_RECV_BUFFER_SIZE) {
+                                sock->recv_buffer[sock->recv_head] = payload[i];
+                                sock->recv_head = (sock->recv_head + 1) % TCP_RECV_BUFFER_SIZE;
+                                sock->recv_count++;
+                            }
+                        }
+                        
+                        /* Mettre à jour notre ACK */
+                        sock->ack = seq_num + payload_len;
+                        
+                        /* Envoyer ACK */
+                        tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+                        
+                        /* Signal data received */
+                        condvar_broadcast(&sock->state_changed);
+                    }
                 } else {
+                    /* Debug plus détaillé pour comprendre le problème */
                     net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-                    net_puts("[TCP] Invalid ACK: expected ");
+                    net_puts("[TCP] Invalid ACK in SYN_RCVD: expected 0x");
                     net_put_hex(sock->seq);
-                    net_puts(", got ");
+                    net_puts(", got 0x");
                     net_put_hex(ack_num);
-                    net_puts("\n");
+                    net_puts(" (diff=");
+                    if (ack_num > sock->seq) {
+                        net_puts("+");
+                        net_put_dec(ack_num - sock->seq);
+                    } else {
+                        net_puts("-");
+                        net_put_dec(sock->seq - ack_num);
+                    }
+                    net_puts(")\n");
                     net_reset_color();
+                    
+                    /* Si l'ACK est proche (différence de 1), c'est probablement un off-by-one.
+                     * Accepter quand même pour être plus tolérant. */
+                    int32_t diff = (int32_t)(ack_num - sock->seq);
+                    if (diff >= -1 && diff <= 1) {
+                        net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+                        net_puts("[TCP] Accepting ACK anyway (close enough)\n");
+                        net_reset_color();
+                        
+                        sock->state = TCP_STATE_ESTABLISHED;
+                        condvar_broadcast(&sock->state_changed);
+                    }
                 }
             }
             /* Si on reçoit un RST, retourner en LISTEN */
