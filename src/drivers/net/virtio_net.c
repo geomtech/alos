@@ -6,7 +6,6 @@
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
 #include "../../net/netlog.h"
-#include "../../net/utils.h"
 
 /* Global instance */
 static VirtIONetDevice *g_virtio_dev = NULL;
