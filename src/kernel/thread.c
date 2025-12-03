@@ -6,8 +6,12 @@
 #include "timer.h"
 #include "sync.h"
 #include "../mm/kheap.h"
+#include "../mm/vmm.h"
 #include "../include/string.h"
 #include "../arch/x86/tss.h"
+
+/* Fonction ASM pour sauter vers un thread user (premier switch) */
+extern void jump_to_user(uint32_t esp, uint32_t cr3);
 
 /* ========================================
  * Variables globales
@@ -329,6 +333,7 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->should_terminate = 0;
     thread->exited = false;
     thread->exit_status = 0;
+    thread->first_switch = true;  /* Premier switch à venir */
     
     thread->stack_base = stack;
     thread->stack_size = stack_size;
@@ -378,17 +383,12 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->preempt_count = 0;
     thread->preempt_pending = false;
     
-    /* Préparer la stack initiale au format interrupt_frame_t
-     * pour la préemption (popa + iretd).
+    /* Préparer la stack initiale au format popa + iretd.
      * 
-     * L'IRQ handler fait: popa; iretd
-     * Donc on doit préparer la stack comme si on avait été interrompu
-     * juste avant d'appeler la fonction entry.
-     *
      * Layout (du haut vers le bas - ESP pointe vers EDI):
      *   [EFLAGS]   <- iretd pop eflags (avec IF=1 pour activer les interrupts)
      *   [CS]       <- iretd pop cs (segment code kernel = 0x08)
-     *   [EIP]      <- iretd pop eip (= task_entry_point_preempt)
+     *   [EIP]      <- iretd pop eip (= task_entry_point)
      *   [EAX]      <- popa (= entry address)
      *   [ECX]      <- popa (= arg)
      *   [EDX]      <- popa (= 0)
@@ -438,6 +438,167 @@ thread_t *thread_create_in_process(process_t *proc, const char *name,
     
     /* Ajouter à la liste des threads du process */
     /* TODO: implement process thread list */
+    
+    return thread;
+}
+
+/**
+ * Crée un thread user mode pour un processus.
+ * Le thread démarrera en Ring 3 à l'adresse entry_point avec la stack user_esp.
+ * 
+ * @param proc        Processus propriétaire
+ * @param name        Nom du thread
+ * @param entry_point Point d'entrée en user mode (EIP)
+ * @param user_esp    Stack pointer user mode (ESP)
+ * @param kernel_stack Stack kernel pré-allouée (pour les syscalls)
+ * @param kernel_stack_size Taille de la kernel stack
+ * @return Thread créé, ou NULL si erreur
+ */
+thread_t *thread_create_user(process_t *proc, const char *name,
+                             uint32_t entry_point, uint32_t user_esp,
+                             void *kernel_stack, uint32_t kernel_stack_size)
+{
+    if (!proc || !kernel_stack) {
+        KLOG_ERROR("THREAD", "thread_create_user: invalid parameters");
+        return NULL;
+    }
+    
+    KLOG_INFO("THREAD", "Creating user thread:");
+    KLOG_INFO("THREAD", name ? name : "<unnamed>");
+    KLOG_INFO_HEX("THREAD", "Entry point: ", entry_point);
+    KLOG_INFO_HEX("THREAD", "User ESP: ", user_esp);
+    
+    /* Allouer la structure thread */
+    thread_t *thread = (thread_t *)kmalloc(sizeof(thread_t));
+    if (!thread) {
+        KLOG_ERROR("THREAD", "Failed to allocate thread structure");
+        return NULL;
+    }
+    
+    /* Initialiser la structure */
+    thread->tid = g_next_tid++;
+    if (name) {
+        safe_strcpy(thread->name, name, THREAD_NAME_MAX);
+    } else {
+        thread->name[0] = '\0';
+    }
+    thread->magic = THREAD_MAGIC;
+    
+    thread->owner = proc;
+    
+    thread->state = THREAD_STATE_READY;
+    thread->should_terminate = 0;
+    thread->exited = false;
+    thread->exit_status = 0;
+    thread->first_switch = true;  /* Premier switch - utiliser jump_to_user */
+    
+    /* La stack du thread est la kernel stack (pour les syscalls) */
+    thread->stack_base = kernel_stack;
+    thread->stack_size = kernel_stack_size;
+    thread->esp0 = (uint32_t)kernel_stack + kernel_stack_size;
+    
+    thread->entry = NULL;  /* Pas de fonction entry pour user threads */
+    thread->arg = NULL;
+    
+    thread->base_priority = THREAD_PRIORITY_NORMAL;
+    thread->priority = THREAD_PRIORITY_NORMAL;
+    thread->time_slice_remaining = scheduler_get_time_slice(thread);
+
+    /* Nice value and aging */
+    thread->nice = THREAD_NICE_DEFAULT;
+    thread->is_boosted = false;
+    thread->wait_start_tick = timer_get_ticks();
+
+    /* CPU accounting */
+    thread->cpu_ticks = 0;
+    thread->context_switches = 0;
+    thread->run_start_tick = 0;
+
+    /* SMP preparation */
+    thread->cpu_affinity = 0xFFFFFFFF;
+    thread->last_cpu = 0;
+
+    thread->wake_tick = 0;
+    thread->waiting_queue = NULL;
+    thread->wait_queue_next = NULL;
+
+    /* Timeout support */
+    thread->timeout_tick = 0;
+    thread->wait_result = 0;
+    thread->current_wait_queue = NULL;
+
+    /* Join support */
+    wait_queue_init(&thread->join_waiters);
+
+    /* Reaper support */
+    thread->zombie_next = NULL;
+
+    thread->sched_next = NULL;
+    thread->sched_prev = NULL;
+    thread->proc_next = NULL;
+
+    /* Préemption */
+    thread->preempt_count = 0;
+    thread->preempt_pending = false;
+    
+    /* ========================================
+     * Préparer la stack pour IRET vers User Mode (Ring 3)
+     * ========================================
+     * 
+     * Quand le scheduler fait switch_task vers ce thread, il fera:
+     *   popa; iretd
+     * 
+     * Pour un retour vers Ring 3, iretd attend sur la stack:
+     *   [SS]      <- segment stack user (0x23)
+     *   [ESP]     <- stack pointer user
+     *   [EFLAGS]  <- flags (avec IF=1)
+     *   [CS]      <- segment code user (0x1B)
+     *   [EIP]     <- point d'entrée user
+     * 
+     * Et popa attend:
+     *   [EAX] [ECX] [EDX] [EBX] [ESP_dummy] [EBP] [ESI] [EDI]
+     */
+    uint32_t *kstack_top = (uint32_t *)((uint32_t)kernel_stack + kernel_stack_size);
+    
+    /* Frame pour IRET vers User Mode (Ring 3) */
+    *(--kstack_top) = 0x23;           /* SS: User Data Segment (RPL=3) */
+    *(--kstack_top) = user_esp;       /* ESP: User stack pointer */
+    *(--kstack_top) = 0x202;          /* EFLAGS: IF=1 (interrupts enabled) */
+    *(--kstack_top) = 0x1B;           /* CS: User Code Segment (RPL=3) */
+    *(--kstack_top) = entry_point;    /* EIP: User entry point */
+    
+    /* Simuler pusha (registres initialisés à 0) */
+    *(--kstack_top) = 0;              /* EAX */
+    *(--kstack_top) = 0;              /* ECX */
+    *(--kstack_top) = 0;              /* EDX */
+    *(--kstack_top) = 0;              /* EBX */
+    *(--kstack_top) = 0;              /* ESP (ignoré par popa) */
+    *(--kstack_top) = 0;              /* EBP */
+    *(--kstack_top) = 0;              /* ESI */
+    *(--kstack_top) = 0;              /* EDI */
+    
+    thread->esp = (uint32_t)kstack_top;
+    
+    KLOG_INFO_DEC("THREAD", "Created user thread TID: ", thread->tid);
+    KLOG_INFO_HEX("THREAD", "Kernel stack: ", (uint32_t)kernel_stack);
+    KLOG_INFO_HEX("THREAD", "ESP (kernel): ", thread->esp);
+    KLOG_INFO_HEX("THREAD", "ESP0: ", thread->esp0);
+    
+    /* DEBUG: Afficher les infos du thread user créé */
+    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+    console_puts("[DEBUG] User thread created: TID=");
+    console_put_dec(thread->tid);
+    console_puts(" entry=0x");
+    console_put_hex(entry_point);
+    console_puts(" user_esp=0x");
+    console_put_hex(user_esp);
+    console_puts(" kstack_esp=0x");
+    console_put_hex(thread->esp);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* Ajouter au scheduler */
+    scheduler_enqueue(thread);
     
     return thread;
 }
@@ -977,6 +1138,24 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
 {
     if (!g_scheduler_active || !g_current_thread) return 0;
     
+    /* ========================================
+     * IMPORTANT: Ne pas préempter les threads user !
+     * ========================================
+     * 
+     * Si l'IRQ a interrompu un thread user (Ring 3), on ne peut pas
+     * faire de context switch car le format du frame sauvegardé par
+     * l'IRQ (avec SS/ESP_user) n'est pas compatible avec switch_task.
+     * 
+     * Les threads user ne peuvent céder le CPU que via les syscalls
+     * bloquants qui appellent scheduler_schedule().
+     * 
+     * On détecte Ring 3 en regardant le CS sauvegardé sur la stack.
+     */
+    if ((frame->cs & 0x03) == 3) {
+        /* On était en Ring 3 (user mode), ne pas préempter */
+        return 0;
+    }
+    
     /* Réveiller les threads endormis */
     scheduler_wake_sleeping();
     
@@ -1005,13 +1184,32 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
         return 0;  /* Pas encore épuisé */
     }
     
-    /* Essayer de trouver un autre thread */
+    /* Essayer de trouver un autre thread KERNEL.
+     * Les threads user ne peuvent pas être préemptés via IRQ car le format
+     * de leur contexte (sauvegardé par switch_task) n'est pas compatible
+     * avec le format attendu par l'IRQ handler (popa + iret vers Ring 3).
+     * 
+     * IMPORTANT: On ne doit PAS retirer les threads user de la queue ici,
+     * sinon ils sont perdus ! On parcourt la queue sans modifier.
+     */
     spinlock_lock(&g_scheduler_lock);
     
-    thread_t *next = scheduler_pick_next_nolock();
+    /* Chercher un thread KERNEL dans les run queues (sans retirer) */
+    thread_t *next = NULL;
+    for (int pri = THREAD_PRIORITY_COUNT - 1; pri >= THREAD_PRIORITY_IDLE && !next; pri--) {
+        thread_t *t = g_run_queues[pri];
+        while (t) {
+            /* Accepter seulement les threads kernel (owner == NULL) */
+            if (t->owner == NULL && t != current) {
+                next = t;
+                break;
+            }
+            t = t->sched_next;
+        }
+    }
     
-    if (!next || next == current) {
-        /* Personne d'autre, continuer avec le même thread */
+    if (!next) {
+        /* Aucun thread kernel disponible, continuer avec le thread actuel */
         spinlock_unlock(&g_scheduler_lock);
         /* Recharger le time slice si épuisé */
         if (current->time_slice_remaining == 0) {
@@ -1019,6 +1217,19 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
         }
         return 0;
     }
+    
+    /* Retirer le thread sélectionné de sa queue */
+    thread_priority_t pri = next->priority;
+    if (next->sched_prev) {
+        next->sched_prev->sched_next = next->sched_next;
+    } else {
+        g_run_queues[pri] = next->sched_next;
+    }
+    if (next->sched_next) {
+        next->sched_next->sched_prev = next->sched_prev;
+    }
+    next->sched_next = NULL;
+    next->sched_prev = NULL;
     
     /* On va changer de thread ! */
 
@@ -1282,13 +1493,35 @@ void scheduler_schedule(void)
     }
     
     /* Context switch !
-     * Note: new_cr3 = 0 car tous les threads kernel partagent le même espace mémoire
+     * Utiliser le CR3 du processus owner si disponible (pour les processus user)
+     * Sinon, CR3 = 0 pour les threads kernel (pas de changement de page directory)
      */
+    uint32_t new_cr3 = 0;
+    if (next->owner && next->owner->cr3) {
+        new_cr3 = next->owner->cr3;
+    }
+    
+    /* DEBUG: Afficher info sur le switch vers un thread user */
+    if (next->owner && next->owner->cr3 && next->first_switch) {
+        console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
+        console_puts("[DEBUG] First switch to user thread: ");
+        console_puts(next->name);
+        console_puts(" TID=");
+        console_put_dec(next->tid);
+        console_puts(" ESP=0x");
+        console_put_hex(next->esp);
+        console_puts(" CR3=0x");
+        console_put_hex(new_cr3);
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        next->first_switch = false;  /* Marquer comme déjà switché */
+    }
+    
     if (current) {
-        switch_task(&current->esp, next->esp, 0);
+        switch_task(&current->esp, next->esp, new_cr3);
     } else {
         /* Premier switch - utiliser un ESP dummy */
-        switch_task(&g_dummy_esp, next->esp, 0);
+        switch_task(&g_dummy_esp, next->esp, new_cr3);
     }
     
     /* On revient ici quand ce thread est reschedulé */
@@ -1393,7 +1626,43 @@ static void reaper_thread_func(void *arg)
         KLOG_INFO("REAPER", "Cleaning up zombie thread:");
         KLOG_INFO("REAPER", zombie->name);
         
-        /* Free stack */
+        /* Si le thread a un processus owner, vérifier s'il faut le nettoyer */
+        if (zombie->owner) {
+            process_t *proc = zombie->owner;
+            
+            /* Décrémenter le compteur de threads du processus */
+            proc->thread_count--;
+            
+            /* Si c'était le dernier thread, nettoyer le processus */
+            if (proc->thread_count == 0) {
+                KLOG_INFO("REAPER", "Last thread of process, cleaning up process:");
+                KLOG_INFO("REAPER", proc->name);
+                
+                /* Réveiller les threads en attente sur ce processus (waitpid) */
+                wait_queue_wake_all(&proc->wait_queue);
+                
+                /* Libérer le Page Directory si ce n'est pas le kernel directory */
+                if (proc->page_directory && 
+                    proc->page_directory != (uint32_t*)vmm_get_kernel_directory()) {
+                    KLOG_INFO("REAPER", "Freeing user page directory");
+                    vmm_free_directory((page_directory_t*)proc->page_directory);
+                    proc->page_directory = NULL;
+                }
+                
+                /* Libérer la kernel stack du processus */
+                if (proc->stack_base) {
+                    kfree(proc->stack_base);
+                    proc->stack_base = NULL;
+                }
+                
+                /* Libérer la structure du processus */
+                kfree(proc);
+            }
+            
+            zombie->owner = NULL;
+        }
+        
+        /* Free thread stack */
         if (zombie->stack_base) {
             kfree(zombie->stack_base);
             zombie->stack_base = NULL;

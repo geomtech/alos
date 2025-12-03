@@ -53,17 +53,6 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         return;
     }
 
-    /* Log: paquet UDP reçu */
-    console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-    console_puts("[UDP] Packet received on Port ");
-    console_put_dec(dest_port);
-    console_puts(" from ");
-    print_ip(ip_hdr->src_ip);
-    console_puts(":");
-    console_put_dec(src_port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
     /* Calculer le pointeur vers le payload UDP */
     uint8_t* payload = data + UDP_HEADER_SIZE;
     int payload_len = udp_len - UDP_HEADER_SIZE;
@@ -94,12 +83,7 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             return;
 
         default:
-            /* Port non géré */
-            console_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-            console_puts("[UDP] No handler for port ");
-            console_put_dec(dest_port);
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            /* Pas de handler pour les autres ports, en clair, ils ne sont pas en écoute. */
             break;
     }
 }
@@ -175,17 +159,4 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
 
     /* === Envoyer via IPv4 === */
     ipv4_send_packet(netif, dest_mac, dest_ip, IP_PROTO_UDP, buffer, UDP_HEADER_SIZE + len);
-
-    /* Log */
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[UDP] Sent ");
-    console_put_dec(len);
-    console_puts(" bytes to ");
-    print_ip(dest_ip);
-    console_puts(":");
-    console_put_dec(dest_port);
-    console_puts(" from port ");
-    console_put_dec(src_port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 }

@@ -347,11 +347,37 @@ make run-pcap
 - [x] Scripting files (`/config/startup.sh`)
 - [x] Network configuration files (`/config/network.conf`)
 - [x] Persistent history (`/config/history`)
+- [x] **Linux Binary Compatibility** (run statically-linked Linux i386 binaries)
 - [ ] GUI + Mouse
 - [ ] OpenGL
 - [ ] SSL
 - [ ] SSH
 - [ ] UTF-8 string and console
+
+## Linux Compatibility
+
+ALOS now includes a **Linux binary compatibility layer** that allows running statically-linked Linux applications compiled for i386 (32-bit x86). This feature maps Linux syscalls to ALOS's native implementations.
+
+### Quick Start
+
+Enable Linux compatibility mode from the ALOS shell:
+
+```bash
+linux on          # Enable Linux syscall compatibility
+exec /bin/hello   # Execute a Linux binary
+linux off         # Disable Linux mode
+```
+
+### Supported Features
+
+- **File I/O**: read, write, open, close, chdir, getcwd, mkdir, access
+- **Process**: exit, getpid (fork/exec not yet supported)
+- **Memory**: brk (basic), mmap (stub)
+- **System**: uname
+- **Network**: socketcall multiplexer (partial)
+
+For complete documentation including syscall reference, limitations, and compilation instructions, see [LINUX-COMPAT.md](LINUX-COMPAT.md).
+
 
 ## License
 

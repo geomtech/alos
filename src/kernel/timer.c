@@ -114,6 +114,10 @@ uint32_t timer_handler_preempt(void *frame)
 
 void timer_init(uint32_t frequency)
 {
+    if (frequency == 0) {
+        frequency = TIMER_FREQUENCY;  /* Valeur par défaut si 0 */
+    }
+    
     g_timer_frequency = frequency;
     
     /* Calcul du diviseur pour obtenir la fréquence désirée */
@@ -161,6 +165,9 @@ uint64_t timer_get_uptime_ms(void)
 {
     /* Éviter la division 64 bits en utilisant la fréquence connue */
     /* Si freq = 1000 Hz, alors ticks = ms directement */
+    if (g_timer_frequency == 0) {
+        return 0;  /* Sécurité contre division par zéro */
+    }
     if (g_timer_frequency == 1000) {
         return g_timer_ticks;
     }
@@ -172,12 +179,18 @@ uint64_t timer_get_uptime_ms(void)
 uint32_t timer_get_uptime_seconds(void)
 {
     /* Utiliser seulement les 32 bits bas pour éviter __udivdi3 */
+    if (g_timer_frequency == 0) {
+        return 0;  /* Sécurité contre division par zéro */
+    }
     uint32_t ticks_low = (uint32_t)g_timer_ticks;
     return ticks_low / g_timer_frequency;
 }
 
 void timer_sleep_ms(uint32_t ms)
 {
+    if (g_timer_frequency == 0) {
+        return;  /* Sécurité contre division par zéro */
+    }
     uint64_t target = g_timer_ticks + (ms * g_timer_frequency) / 1000;
     
     while (g_timer_ticks < target) {

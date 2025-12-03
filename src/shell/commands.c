@@ -12,6 +12,7 @@
 #include "../include/string.h"
 #include "../net/l3/icmp.h"
 #include "../net/core/netdev.h"
+#include "../net/l4/http.h"
 #include "../arch/x86/usermode.h"
 #include "../fs/vfs.h"
 #include "../config/config.h"
@@ -33,6 +34,7 @@ static int cmd_keymap(int argc, char** argv);
 static int cmd_script(int argc, char** argv);
 static int cmd_netconf(int argc, char** argv);
 static int cmd_savehist(int argc, char** argv);
+static int cmd_linux(int argc, char** argv);
 
 /* Nouvelles commandes filesystem et système */
 static int cmd_clear(int argc, char** argv);
@@ -50,6 +52,7 @@ static int cmd_threads(int argc, char** argv);
 static int cmd_synctest(int argc, char** argv);
 static int cmd_schedtest(int argc, char** argv);
 static int cmd_worktest(int argc, char** argv);
+static int cmd_wget(int argc, char** argv);
 
 /* ========================================
  * Table des commandes
@@ -73,6 +76,7 @@ static shell_command_t commands[] = {
     { "script",   "Run a script file (/config/startup.sh)",  cmd_script },
     { "netconf",  "Configure network interface (eth0, etc.)", cmd_netconf },
     { "savehist", "Save command history to disk",            cmd_savehist },
+    { "linux",    "Toggle Linux compatibility mode",         cmd_linux },
     
     /* Commandes filesystem et système */
     { "clear",   "Clear the screen",                        cmd_clear },
@@ -86,6 +90,7 @@ static shell_command_t commands[] = {
     { "meminfo", "Display memory information",              cmd_meminfo },
     { "rm",      "Remove a file",                           cmd_rm },
     { "rmdir",   "Remove an empty directory",               cmd_rmdir },
+    { "wget",    "Download a file via HTTP",                cmd_wget },
     
     /* Marqueur de fin */
     { NULL, NULL, NULL }
@@ -486,14 +491,16 @@ static int cmd_tasks(int argc, char** argv)
 
 /**
  * Commande: ps
- * Affiche la liste des processus.
+ * Affiche la liste des threads (nouveau système de multithreading).
+ * Utilise thread_list_debug() qui affiche TID, état, priorité, nice, CPU time, etc.
  */
 static int cmd_ps(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
     
-    process_list_debug();
+    /* Utiliser le nouveau système de threads au lieu de l'ancien process_list */
+    thread_list_debug();
     
     return 0;
 }
@@ -2182,4 +2189,130 @@ static int cmd_worktest(int argc, char** argv)
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
+}
+
+/* ========================================
+ * cmd_linux - Toggle Linux compatibility mode
+ * ======================================== */
+
+static int cmd_linux(int argc, char** argv)
+{
+    extern void linux_compat_set_mode(int enable);
+    extern int linux_compat_is_active(void);
+    
+    if (argc < 2) {
+        /* Afficher l'état actuel */
+        if (linux_compat_is_active()) {
+            console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+            console_puts("Linux compatibility mode: ENABLED\n");
+        } else {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Linux compatibility mode: DISABLED\n");
+        }
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("\nUsage: linux <on|off>\n");
+        console_puts("  on  - Enable Linux syscall compatibility\n");
+        console_puts("  off - Disable Linux syscall compatibility\n");
+        return 0;
+    }
+    
+    if (strcmp(argv[1], "on") == 0) {
+        linux_compat_set_mode(1);
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("Linux compatibility mode ENABLED\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("You can now run statically-linked Linux ELF binaries.\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        linux_compat_set_mode(0);
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Linux compatibility mode DISABLED\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    } else {
+        console_puts("Invalid argument. Use 'on' or 'off'.\n");
+        return -1;
+    }
+    
+    return 0;
+}
+
+/* ========================================
+ * cmd_wget - Download file via HTTP
+ * ======================================== */
+
+static int cmd_wget(int argc, char** argv)
+{
+    if (argc < 2) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Usage: wget <url> [destination]\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("\nExamples:\n");
+        console_puts("  wget http://example.com/file.txt\n");
+        console_puts("  wget http://example.com/file.txt /tmp/myfile.txt\n");
+        console_puts("  wget http://10.0.2.2:8000/binary /bin/app\n");
+        console_puts("\nNote: Only HTTP (not HTTPS) is supported.\n");
+        return -1;
+    }
+    
+    const char* url = argv[1];
+    char dest_path[256];
+    
+    /* Determine destination path */
+    if (argc >= 3) {
+        /* User specified destination */
+        if (shell_resolve_path(argv[2], dest_path, sizeof(dest_path)) != 0) {
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Invalid destination path\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            return -1;
+        }
+    } else {
+        /* Extract filename from URL */
+        const char* filename = url;
+        const char* last_slash = NULL;
+        for (const char* p = url; *p; p++) {
+            if (*p == '/') last_slash = p;
+        }
+        if (last_slash && *(last_slash + 1)) {
+            filename = last_slash + 1;
+        } else {
+            filename = "index.html";
+        }
+        
+        /* Save to current directory */
+        const char* cwd = shell_get_cwd();
+        if (strcmp(cwd, "/") == 0) {
+            strcpy(dest_path, "/");
+            strcat(dest_path, filename);
+        } else {
+            strcpy(dest_path, cwd);
+            strcat(dest_path, "/");
+            strcat(dest_path, filename);
+        }
+    }
+    
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("=== WGET - Download File ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("\n");
+    
+    /* Download the file */
+    int result = http_download_file(url, dest_path);
+    
+    if (result == 0) {
+        console_puts("\n");
+        console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        console_puts("Download successful!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        console_puts("File saved to: ");
+        console_puts(dest_path);
+        console_puts("\n");
+    } else {
+        console_puts("\n");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Download failed!\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+    
+    return result;
 }

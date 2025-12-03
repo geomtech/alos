@@ -2,8 +2,10 @@
 #include "syscall.h"
 #include "console.h"
 #include "process.h"
+#include "thread.h"
 #include "klog.h"
 #include "keyboard.h"
+#include "linux_compat.h"
 #include "../arch/x86/idt.h"
 #include "../arch/x86/io.h"
 #include "../shell/shell.h"
@@ -134,10 +136,17 @@ static int sys_exit(int status)
     console_puts("\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
-    /* Retourner au shell */
-    /* Note: Ceci est temporaire - idéalement on devrait faire un vrai process_exit() */
-    asm volatile("sti");  /* Réactiver les interruptions */
-    shell_run();          /* Relancer le shell */
+    /* Terminer proprement le thread/processus courant */
+    thread_t* current = thread_current();
+    if (current && current->owner) {
+        /* Sauvegarder le code de sortie dans le processus */
+        current->owner->exit_status = status;
+        KLOG_INFO("SYSCALL", "Terminating user process thread");
+    }
+    
+    /* Terminer le thread via le scheduler */
+    /* thread_exit() ne retourne jamais */
+    thread_exit(status);
     
     /* Ne devrait jamais arriver */
     while (1) {
@@ -936,11 +945,28 @@ void syscall_dispatcher(syscall_regs_t* regs)
     uint32_t syscall_num = regs->eax;
     int result = -1;
     
+    /* DEBUG: Afficher le syscall reçu */
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("[SYSCALL] #");
+    console_put_dec(syscall_num);
+    console_puts(" (ebx=0x");
+    console_put_hex(regs->ebx);
+    console_puts(")\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
     KLOG_INFO("SYSCALL", "=== Syscall Dispatcher ===");
     KLOG_INFO_HEX("SYSCALL", "Syscall number (EAX): ", syscall_num);
     KLOG_INFO_HEX("SYSCALL", "Arg1 (EBX): ", regs->ebx);
     KLOG_INFO_HEX("SYSCALL", "Arg2 (ECX): ", regs->ecx);
     KLOG_INFO_HEX("SYSCALL", "Arg3 (EDX): ", regs->edx);
+    
+    /* Vérifier si le mode compatibilité Linux est actif */
+    if (linux_compat_is_active()) {
+        /* Déléguer au handler Linux */
+        result = linux_syscall_handler(regs);
+        regs->eax = (uint32_t)result;
+        return;
+    }
     
     switch (syscall_num) {
         case SYS_EXIT:
@@ -1069,5 +1095,49 @@ void syscall_init(void)
     idt_set_gate(0x80, (uint32_t)syscall_handler_asm, 0x08, 0xEE);
     
     KLOG_INFO("SYSCALL", "INT 0x80 registered (DPL=3)");
+    
+    /* Initialiser la couche de compatibilité Linux */
+    linux_compat_init();
+    
     KLOG_INFO("SYSCALL", "Syscall interface ready!");
+}
+
+/* ========================================
+ * Fonctions syscall exportées (pour linux_compat)
+ * ======================================== */
+
+void syscall_do_exit(int status) {
+    sys_exit(status);
+}
+
+int syscall_do_read(int fd, void* buf, uint32_t count) {
+    return sys_read(fd, buf, count);
+}
+
+int syscall_do_write(int fd, const void* buf, uint32_t count) {
+    return sys_write(fd, buf, count);
+}
+
+int syscall_do_open(const char* path, uint32_t flags) {
+    return sys_open(path, flags);
+}
+
+int syscall_do_close(int fd) {
+    return sys_close(fd);
+}
+
+int syscall_do_getpid(void) {
+    return sys_getpid();
+}
+
+int syscall_do_getcwd(char* buf, uint32_t size) {
+    return sys_getcwd(buf, size);
+}
+
+int syscall_do_chdir(const char* path) {
+    return sys_chdir(path);
+}
+
+int syscall_do_mkdir(const char* path) {
+    return sys_mkdir(path);
 }

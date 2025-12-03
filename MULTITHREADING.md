@@ -481,36 +481,88 @@ B = Boosted by aging (Rocket Boost)
 - [x] **Reaper thread** - Nettoyage des threads zombie (reaper_thread_func, reaper_add_zombie)
 - [x] **Worker threads** - Pool pour travaux asynchrones (workqueue.c, 4 workers, FIFO, timeout support)
 
-## ❌ User Mode Multithreading (Non implémenté)
+## 🔄 User Mode Multithreading (En cours)
 
 Pour avoir plusieurs programmes ELF en parallèle en User Mode :
 
 | Fonctionnalité | Status | Description |
 |----------------|--------|-------------|
-| Isolation mémoire | ❌ | Chaque process = son propre Page Directory |
+| Isolation mémoire | ✅ | Chaque process = son propre Page Directory |
+| CR3 switch | ✅ | `switch_task()` change le Page Directory |
+| ELF dans directory isolé | ✅ | `elf_load_file()` charge dans le directory du process |
+| `sys_exit()` propre | ✅ | Termine le thread via `thread_exit()` |
+| Libération Page Directory | ✅ | Reaper libère le Page Directory à la fin |
 | `exec` non-bloquant | ❌ | Actuellement `exec` attend la fin du programme |
-| Context switch Ring 3 | ❌ | Sauvegarder/restaurer contexte User Mode |
 | `fork()` / `spawn()` | ❌ | Créer des processus enfants |
+| `waitpid()` | ❌ | Attendre la fin d'un processus enfant |
 | Signaux | ❌ | Communication inter-processus |
 
-### Situation Actuelle
+### Isolation Mémoire Implémentée
 
 ```
-┌─────────────────────────────────────────┐
-│            Kernel Mode (Ring 0)          │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐    │
-│  │ Thread1 │ │ Thread2 │ │ Thread3 │    │  ← Parallèle ✅
-│  └─────────┘ └─────────┘ └─────────┘    │
-├─────────────────────────────────────────┤
-│            User Mode (Ring 3)            │
-│  ┌──────────────────────────────────┐   │
-│  │     Programme ELF (bloquant)      │   │  ← Séquentiel ❌
-│  └──────────────────────────────────┘   │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Kernel Mode (Ring 0)                      │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐                        │
+│  │ Thread1 │ │ Thread2 │ │ Thread3 │  ← Parallèle ✅        │
+│  └─────────┘ └─────────┘ └─────────┘                        │
+│                                                              │
+│  Page Directory Kernel (partagé par tous les threads kernel) │
+├─────────────────────────────────────────────────────────────┤
+│                    User Mode (Ring 3)                        │
+│  ┌────────────────┐  ┌────────────────┐                     │
+│  │   Process A    │  │   Process B    │  ← Isolés ✅        │
+│  │ Page Dir: 0x1  │  │ Page Dir: 0x2  │                     │
+│  │ ┌────────────┐ │  │ ┌────────────┐ │                     │
+│  │ │ Code+Data  │ │  │ │ Code+Data  │ │                     │
+│  │ │ User Stack │ │  │ │ User Stack │ │                     │
+│  │ └────────────┘ │  │ └────────────┘ │                     │
+│  └────────────────┘  └────────────────┘                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-- Les **threads kernel** peuvent tourner en parallèle ✅
-- Les **programmes user** sont exécutés un par un (bloquant) ❌
+### Fichiers Modifiés pour l'Isolation
+
+| Fichier | Modification |
+|---------|--------------|
+| `src/arch/x86/switch.s` | `switch_task()` charge CR3 si != 0 |
+| `src/mm/vmm.c` | `vmm_is_mapped_in_dir()`, `vmm_copy_to_dir()`, `vmm_memset_in_dir()` |
+| `src/kernel/elf.c` | Charge ELF dans le Page Directory du processus |
+| `src/kernel/process.c` | `process_execute()` crée un Page Directory isolé |
+| `src/kernel/thread.c` | Scheduler utilise `owner->cr3` pour les threads user |
+| `src/kernel/syscall.c` | `sys_exit()` appelle `thread_exit()` |
+| `src/kernel/thread.c` | Reaper libère Page Directory du processus |
+| `src/kernel/thread.c` | `thread_create_user()` pour threads Ring 3 |
+| `src/kernel/process.c` | `process_execute()` utilise `thread_create_user()` |
+| `src/arch/x86/switch.s` | Format unifié avec segments (DS/ES/FS/GS) |
+| `src/arch/x86/interrupts.s` | IRQ0 handler sauvegarde/restaure segments |
+
+### Prochaines Étapes (TODO)
+
+#### Phase 1 : Exec Non-Bloquant
+- [x] `sys_exit()` termine proprement le thread
+- [x] Reaper libère le Page Directory du processus
+- [x] Créer un `thread_t` dans `process_execute()` pour le processus user
+- [x] `thread_create_user()` pour créer des threads Ring 3
+- [x] **TESTÉ : /bin/server se lance et écoute sur port 8080 !**
+- [ ] Retirer `process_exec_and_wait()` ou le rendre non-bloquant
+- [ ] **BUG** : Crash à la 2ème exécution (nettoyage ressources)
+
+#### Phase 2 : waitpid()
+- [ ] Implémenter `linux_sys_waitpid()` dans `linux_compat.c`
+- [ ] Ajouter `find_process_by_pid()` dans `process.c`
+- [ ] Réveiller le parent dans `thread_exit()` via `wait_queue_wake_all()`
+
+#### Phase 3 : fork()
+- [ ] Implémenter `linux_sys_fork()` dans `linux_compat.c`
+- [ ] Cloner l'espace d'adressage avec `vmm_clone_directory()`
+- [ ] Copier le contexte CPU (registres) pour l'enfant
+- [ ] L'enfant retourne 0, le parent retourne le PID
+
+#### Phase 4 : Signaux (Optionnel)
+- [ ] Ajouter `signal_state_t` dans `process_t`
+- [ ] Implémenter `kill()` syscall
+- [ ] Implémenter `signal()` syscall
+- [ ] Délivrer les signaux au retour de syscall
 
 ## Fichiers Clés
 

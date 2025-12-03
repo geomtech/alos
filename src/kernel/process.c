@@ -3,15 +3,32 @@
 #include "thread.h"
 #include "console.h"
 #include "klog.h"
-#include "timer.h"
 #include "workqueue.h"
+#include "elf.h"
 #include "../mm/kheap.h"
-#include "../mm/pmm.h"
 #include "../mm/vmm.h"
+#include "../mm/pmm.h"
 #include "../include/string.h"
+#include "../fs/vfs.h"
+#include "../arch/x86/gdt.h"
+#include "../arch/x86/idt.h"
 #include "../arch/x86/tss.h"
 #include "../arch/x86/usermode.h"
-#include "elf.h"
+
+/* ========================================
+ * Constantes
+ * ======================================== */
+
+#define KERNEL_STACK_SIZE   4096    /* Taille de la stack kernel par thread (4 KiB) */
+
+/* Utiliser la définition de usermode.h si disponible, sinon définir ici */
+#ifndef USER_STACK_SIZE
+#define USER_STACK_SIZE     (16 * PAGE_SIZE)  /* 64 KiB */
+#endif
+#ifdef USER_STACK_SIZE
+#undef USER_STACK_SIZE
+#define USER_STACK_SIZE     (16 * PAGE_SIZE)  /* 64 KiB - Override pour le kernel */
+#endif
 
 /* ========================================
  * Variables globales
@@ -506,6 +523,11 @@ int process_execute(const char* filename)
         return -1;
     }
     
+    /* Initialiser la kernel stack à 0 pour éviter les problèmes de mémoire non initialisée */
+    for (uint32_t i = 0; i < KERNEL_STACK_SIZE; i++) {
+        ((uint8_t*)kernel_stack)[i] = 0;
+    }
+    
     /* Initialiser le processus */
     proc->pid = next_pid++;
     
@@ -519,9 +541,17 @@ int process_execute(const char* filename)
     proc->state = PROCESS_STATE_READY;
     proc->should_terminate = 0;
     
-    /* Pour l'instant, on utilise le même Page Directory que le kernel */
-    /* TODO: Créer un nouveau Page Directory pour l'isolation */
-    proc->page_directory = (uint32_t*)vmm_get_directory();
+    /* Créer un nouveau Page Directory pour l'isolation mémoire */
+    proc->page_directory = (uint32_t*)vmm_create_directory();
+    if (proc->page_directory == NULL) {
+        KLOG_ERROR("EXEC", "Failed to create page directory!");
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    proc->cr3 = (uint32_t)proc->page_directory;
+    
+    KLOG_INFO_HEX("EXEC", "Created page directory at: ", proc->cr3);
     
     /* Stack kernel */
     proc->stack_base = kernel_stack;
@@ -533,6 +563,7 @@ int process_execute(const char* filename)
     int err = elf_load_file(filename, proc, &elf_result);
     if (err != ELF_OK) {
         KLOG_ERROR("EXEC", "Failed to load ELF file");
+        vmm_free_directory((page_directory_t*)proc->page_directory);
         kfree(kernel_stack);
         kfree(proc);
         return -1;
@@ -540,81 +571,113 @@ int process_execute(const char* filename)
     
     KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
     
-    /* Allouer la stack utilisateur */
+    /* Allouer la stack utilisateur dans le Page Directory du processus */
     uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
     for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
-        if (!vmm_is_mapped(addr)) {
+        if (!vmm_is_mapped_in_dir((page_directory_t*)proc->page_directory, addr)) {
             void* phys_page = pmm_alloc_block();
             if (phys_page == NULL) {
                 KLOG_ERROR("EXEC", "Failed to allocate user stack!");
+                vmm_free_directory((page_directory_t*)proc->page_directory);
                 kfree(kernel_stack);
                 kfree(proc);
                 return -1;
             }
-            vmm_map_page((uint32_t)phys_page, addr, PAGE_PRESENT | PAGE_RW | PAGE_USER);
+            if (vmm_map_page_in_dir((page_directory_t*)proc->page_directory, 
+                                     (uint32_t)phys_page, addr, 
+                                     PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
+                KLOG_ERROR("EXEC", "Failed to map user stack page!");
+                pmm_free_block(phys_page);
+                vmm_free_directory((page_directory_t*)proc->page_directory);
+                kfree(kernel_stack);
+                kfree(proc);
+                return -1;
+            }
         }
     }
     
     KLOG_INFO_HEX("EXEC", "User stack top: ", USER_STACK_TOP);
     
     /* ========================================
-     * Préparer le saut en User Mode
+     * Préparer la stack utilisateur
      * ========================================
      * 
-     * On va créer une frame sur la kernel stack qui simule
-     * une entrée en mode kernel via interruption.
-     * Quand on fera IRET, on passera en Ring 3.
+     * La libc attend que _start() trouve argc et argv sur la stack:
+     *   popl %eax  // argc
+     *   popl %ebx  // argv
      * 
-     * Stack frame pour IRET vers User Mode:
-     * [ESP + 16] : SS (0x23 = User Data Segment avec RPL=3)
-     * [ESP + 12] : ESP utilisateur
-     * [ESP + 8]  : EFLAGS (avec IF=1)
-     * [ESP + 4]  : CS (0x1B = User Code Segment avec RPL=3)
-     * [ESP + 0]  : EIP (point d'entrée)
+     * Donc on doit mettre sur la stack user:
+     *   [ESP+0] = argc
+     *   [ESP+4] = argv
+     * 
+     * Pour l'instant, on met argc=0 et argv=NULL.
      */
+    uint32_t user_stack_data[2] = { 0, 0 };  /* argc=0, argv=NULL */
+    uint32_t user_esp = USER_STACK_TOP - 8;  /* Aligné, pointe vers argc */
     
-    uint32_t* kstack_top = (uint32_t*)((uint32_t)kernel_stack + KERNEL_STACK_SIZE);
+    if (vmm_copy_to_dir((page_directory_t*)proc->page_directory, 
+                        user_esp, user_stack_data, sizeof(user_stack_data)) != 0) {
+        KLOG_ERROR("EXEC", "Failed to initialize user stack!");
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
     
-    /* Frame pour IRET vers User Mode */
-    *(--kstack_top) = 0x23;                     /* SS */
-    *(--kstack_top) = USER_STACK_TOP - 16;     /* ESP utilisateur */
-    *(--kstack_top) = 0x202;                    /* EFLAGS (IF=1) */
-    *(--kstack_top) = 0x1B;                     /* CS */
-    *(--kstack_top) = elf_result.entry_point;  /* EIP */
-    
-    /* Simuler un pusha (pour que le retour soit cohérent) */
-    /* Ces valeurs seront chargées dans les registres avant iret */
-    *(--kstack_top) = 0;  /* EAX */
-    *(--kstack_top) = 0;  /* ECX */
-    *(--kstack_top) = 0;  /* EDX */
-    *(--kstack_top) = 0;  /* EBX */
-    *(--kstack_top) = 0;  /* ESP (ignoré par popa) */
-    *(--kstack_top) = 0;  /* EBP */
-    *(--kstack_top) = 0;  /* ESI */
-    *(--kstack_top) = 0;  /* EDI */
-    
-    /* Segments de données utilisateur */
-    *(--kstack_top) = 0x23;  /* DS */
-    *(--kstack_top) = 0x23;  /* ES */
-    *(--kstack_top) = 0x23;  /* FS */
-    *(--kstack_top) = 0x23;  /* GS */
-    
-    proc->esp = (uint32_t)kstack_top;
+    KLOG_INFO_HEX("EXEC", "User ESP: ", user_esp);
     
     /* ========================================
-     * Ajouter à la liste des processus
+     * Initialiser les champs du processus
      * ======================================== */
     
-    asm volatile("cli");
+    proc->main_thread = NULL;
+    proc->thread_list = NULL;
+    proc->thread_count = 0;
+    proc->exit_status = 0;
     
-    proc->next = current_process->next;
-    proc->prev = current_process;
-    current_process->next->prev = proc;
-    current_process->next = proc;
+    /* Initialiser la wait queue pour waitpid */
+    wait_queue_init(&proc->wait_queue);
     
-    asm volatile("sti");
+    /* Hiérarchie des processus */
+    proc->parent = current_process;
+    proc->first_child = NULL;
+    proc->sibling_next = NULL;
+    proc->sibling_prev = NULL;
+    
+    /* ========================================
+     * Créer le thread user mode
+     * ========================================
+     * 
+     * On utilise thread_create_user() qui prépare la stack
+     * pour un IRET vers Ring 3.
+     */
+    
+    thread_t* main_thread = thread_create_user(
+        proc,
+        proc->name,
+        elf_result.entry_point,
+        user_esp,  /* ESP utilisateur avec argc/argv */
+        kernel_stack,
+        KERNEL_STACK_SIZE
+    );
+    
+    if (main_thread == NULL) {
+        KLOG_ERROR("EXEC", "Failed to create user thread!");
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    
+    proc->main_thread = main_thread;
+    proc->thread_list = main_thread;
+    proc->thread_count = 1;
+    
+    /* Ne pas libérer kernel_stack ici, il appartient au thread maintenant */
+    proc->stack_base = NULL;  /* Le thread gère sa propre stack */
     
     KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
+    KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
     
     console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
     console_puts("Started process '");
@@ -647,51 +710,139 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         return -1;
     }
     
-    /* Charger le fichier ELF */
-    elf_load_result_t elf_result;
-    int err = elf_load_file(filename, NULL, &elf_result);
-    if (err != ELF_OK) {
-        KLOG_ERROR("EXEC", "Failed to load ELF file");
+    /* Allouer la structure du processus */
+    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
+    if (proc == NULL) {
+        KLOG_ERROR("EXEC", "Failed to allocate process structure!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to allocate process structure\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         return -1;
     }
     
-    /* Allouer la stack utilisateur */
+    /* Allouer une stack kernel pour ce processus (pour les syscalls) */
+    void* kernel_stack = kmalloc(KERNEL_STACK_SIZE);
+    if (kernel_stack == NULL) {
+        KLOG_ERROR("EXEC", "Failed to allocate kernel stack!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to allocate kernel stack\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kfree(proc);
+        return -1;
+    }
+    
+    /* Initialiser la kernel stack à 0 pour éviter les problèmes de mémoire non initialisée */
+    for (uint32_t i = 0; i < KERNEL_STACK_SIZE; i++) {
+        ((uint8_t*)kernel_stack)[i] = 0;
+    }
+    
+    /* Initialiser le processus */
+    proc->pid = next_pid++;
+    
+    /* Extraire le nom du fichier pour le nom du processus */
+    const char* name = filename;
+    for (const char* p = filename; *p; p++) {
+        if (*p == '/') name = p + 1;
+    }
+    safe_strcpy(proc->name, name, sizeof(proc->name));
+    
+    proc->state = PROCESS_STATE_READY;
+    proc->should_terminate = 0;
+    
+    /* Créer un nouveau Page Directory pour l'isolation mémoire */
+    proc->page_directory = (uint32_t*)vmm_create_directory();
+    if (proc->page_directory == NULL) {
+        KLOG_ERROR("EXEC", "Failed to create page directory!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to create page directory\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    proc->cr3 = (uint32_t)proc->page_directory;
+    
+    KLOG_INFO_HEX("EXEC", "Created page directory at: ", proc->cr3);
+    
+    /* Stack kernel */
+    proc->stack_base = kernel_stack;
+    proc->stack_size = KERNEL_STACK_SIZE;
+    proc->esp0 = (uint32_t)kernel_stack + KERNEL_STACK_SIZE;
+    
+    /* Charger le fichier ELF */
+    elf_load_result_t elf_result;
+    int err = elf_load_file(filename, proc, &elf_result);
+    if (err != ELF_OK) {
+        KLOG_ERROR("EXEC", "Failed to load ELF file");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to load ELF file (code ");
+        console_put_dec(err);
+        console_puts(")\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    
+    KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
+    
+    /* Allouer la stack utilisateur dans le Page Directory du processus */
     uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
     for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
-        if (!vmm_is_mapped(addr)) {
+        if (!vmm_is_mapped_in_dir((page_directory_t*)proc->page_directory, addr)) {
             void* phys_page = pmm_alloc_block();
             if (phys_page == NULL) {
                 KLOG_ERROR("EXEC", "Failed to allocate user stack!");
+                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                console_puts("Error: Failed to allocate user stack (phys memory)\n");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                vmm_free_directory((page_directory_t*)proc->page_directory);
+                kfree(kernel_stack);
+                kfree(proc);
                 return -1;
             }
-            vmm_map_page((uint32_t)phys_page, addr, PAGE_PRESENT | PAGE_RW | PAGE_USER);
+            if (vmm_map_page_in_dir((page_directory_t*)proc->page_directory, 
+                                     (uint32_t)phys_page, addr, 
+                                     PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
+                KLOG_ERROR("EXEC", "Failed to map user stack page!");
+                console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+                console_puts("Error: Failed to map user stack page\n");
+                console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+                pmm_free_block(phys_page);
+                vmm_free_directory((page_directory_t*)proc->page_directory);
+                kfree(kernel_stack);
+                kfree(proc);
+                return -1;
+            }
         }
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("Executing '");
-    console_puts(filename);
-    console_puts("'...\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO_HEX("EXEC", "User stack top: ", USER_STACK_TOP);
     
-    /* Configurer le TSS pour le retour en mode kernel */
-    /* Le TSS doit contenir l'ESP0 (kernel stack) pour les syscalls */
+    /* ========================================
+     * Préparer la stack utilisateur avec argc/argv
+     * ======================================== */
     
-    /* Préparer la stack utilisateur avec argc et argv */
-    /* Layout de la stack:
-     *   [argv strings...]   <- Chaînes copiées sur la stack
-     *   [argv[n] = NULL]    <- Terminateur
-     *   [argv[n-1]]         <- Pointeurs vers les chaînes
-     *   ...
-     *   [argv[0]]
-     *   [argv pointer]      <- Pointeur vers argv[0]
-     *   [argc]              <- Nombre d'arguments
-     *   <- ESP pointe ici
-     */
-    uint32_t* user_stack = (uint32_t*)(USER_STACK_TOP - 16);
+    /* Allouer un buffer pour la stack utilisateur dans le kernel */
+    uint32_t stack_buffer_size = 1024;  /* 1KB devrait être suffisant pour argc/argv */
+    uint8_t* stack_buffer = (uint8_t*)kmalloc(stack_buffer_size);
+    if (stack_buffer == NULL) {
+        KLOG_ERROR("EXEC", "Failed to allocate stack buffer!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to allocate stack buffer\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
     
-    /* D'abord, copier les chaînes d'arguments sur la stack */
-    char* string_ptr = (char*)(USER_STACK_TOP - 256);  /* Réserver de l'espace pour les chaînes */
+    /* Construire la stack utilisateur dans le buffer */
+    uint32_t user_esp = USER_STACK_TOP;
+    
+    /* D'abord, copier les chaînes d'arguments */
+    char* string_ptr = (char*)(stack_buffer + stack_buffer_size);  /* Commencer à la fin du buffer */
     char* argv_ptrs[16];  /* Max 16 arguments */
     
     for (int i = 0; i < argc && i < 16; i++) {
@@ -699,16 +850,27 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         while (argv[i][len]) len++;
         len++;  /* Inclure le null terminator */
         string_ptr -= len;
+        if ((uint8_t*)string_ptr < stack_buffer) {
+            KLOG_ERROR("EXEC", "Arguments too large for stack buffer!");
+            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+            console_puts("Error: Arguments too large for stack buffer\n");
+            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+            kfree(stack_buffer);
+            vmm_free_directory((page_directory_t*)proc->page_directory);
+            kfree(kernel_stack);
+            kfree(proc);
+            return -1;
+        }
         for (int j = 0; j < len; j++) {
             string_ptr[j] = argv[i][j];
         }
         argv_ptrs[i] = string_ptr;
     }
     
-    /* Aligner la stack sur 4 octets */
+    /* Aligner sur 4 octets */
     string_ptr = (char*)((uint32_t)string_ptr & ~3);
     
-    /* Construire le tableau argv sur la stack */
+    /* Construire le tableau argv */
     uint32_t* stack_ptr = (uint32_t*)string_ptr;
     stack_ptr--;  /* argv[argc] = NULL */
     *stack_ptr = 0;
@@ -728,10 +890,114 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     stack_ptr--;
     *stack_ptr = (uint32_t)argc;
     
-    /* Sauter directement en User Mode */
-    jump_to_usermode((void*)elf_result.entry_point, (void*)stack_ptr);
+    /* Calculer la taille des données à copier */
+    uint32_t data_size = stack_buffer_size - ((uint8_t*)stack_ptr - stack_buffer);
     
-    /* Ne devrait jamais arriver ici (sys_exit retourne au shell) */
+    /* Calculer l'ESP utilisateur final */
+    /* Les données doivent se terminer à USER_STACK_TOP */
+    user_esp = USER_STACK_TOP - data_size;
+    
+    /* Copier les données de la stack dans le Page Directory du processus */
+    if (vmm_copy_to_dir((page_directory_t*)proc->page_directory, 
+                        user_esp, stack_ptr, data_size) != 0) {
+        KLOG_ERROR("EXEC", "Failed to initialize user stack!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to initialize user stack (copy failed)\n");
+        console_puts("  User ESP: 0x");
+        console_put_hex(user_esp);
+        console_puts("\n  Data size: ");
+        console_put_dec(data_size);
+        console_puts("\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kfree(stack_buffer);
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    
+    /* Libérer le buffer temporaire */
+    kfree(stack_buffer);
+    
+    KLOG_INFO_HEX("EXEC", "User ESP: ", user_esp);
+    
+    /* ========================================
+     * Initialiser les champs du processus
+     * ======================================== */
+    
+    proc->main_thread = NULL;
+    proc->thread_list = NULL;
+    proc->thread_count = 0;
+    proc->exit_status = 0;
+    
+    /* Initialiser la wait queue pour waitpid */
+    wait_queue_init(&proc->wait_queue);
+    
+    /* Hiérarchie des processus */
+    proc->parent = current_process;
+    proc->first_child = NULL;
+    proc->sibling_next = NULL;
+    proc->sibling_prev = NULL;
+    
+    /* ========================================
+     * Créer le thread user mode
+     * ========================================
+     * 
+     * On utilise thread_create_user() qui prépare la stack
+     * pour un IRET vers Ring 3.
+     */
+    
+    thread_t* main_thread = thread_create_user(
+        proc,
+        proc->name,
+        elf_result.entry_point,
+        user_esp,  /* ESP utilisateur avec argc/argv */
+        kernel_stack,
+        KERNEL_STACK_SIZE
+    );
+    
+    if (main_thread == NULL) {
+        KLOG_ERROR("EXEC", "Failed to create user thread!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Failed to create user thread\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        vmm_free_directory((page_directory_t*)proc->page_directory);
+        kfree(kernel_stack);
+        kfree(proc);
+        return -1;
+    }
+    
+    proc->main_thread = main_thread;
+    proc->thread_list = main_thread;
+    proc->thread_count = 1;
+    
+    /* Ne pas libérer kernel_stack ici, il appartient au thread maintenant */
+    proc->stack_base = NULL;  /* Le thread gère sa propre stack */
+    
+    KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
+    KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
+    
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("Started process '");
+    console_puts(filename);
+    console_puts("' (PID ");
+    console_put_dec(proc->pid);
+    console_puts(")\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    
+    /* EXEC NON-BLOQUANT: On retourne immédiatement */
+    /* Le scheduler se chargera d'exécuter le nouveau thread */
+    /* Pas de wait loop ici ! */
+    
+    /* Note: On ne libère PAS le Page Directory ni la structure process */
+    /* Ils seront libérés par le reaper thread quand le processus se terminera */
+    
+    /* Céder le CPU pour donner une chance au nouveau thread de s'exécuter.
+     * C'est nécessaire car scheduler_preempt (IRQ timer) ne peut pas switcher
+     * vers un thread user - seul scheduler_schedule peut le faire.
+     */
+    thread_yield();
+    
     return 0;
 }
 

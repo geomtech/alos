@@ -31,8 +31,8 @@ ARCH_SRC = src/arch/x86/boot.s src/arch/x86/gdt.c src/arch/x86/idt.c src/arch/x8
 ARCH_OBJ = src/arch/x86/boot.o src/arch/x86/gdt.o src/arch/x86/idt.o src/arch/x86/interrupts.o src/arch/x86/switch.o src/arch/x86/tss.o src/arch/x86/usermode.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o
 
 # Memory management
 MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
@@ -49,8 +49,8 @@ NET_L2_OBJ = src/net/l2/ethernet.o src/net/l2/arp.o
 NET_L3_SRC = src/net/l3/ipv4.c src/net/l3/icmp.c src/net/l3/route.c
 NET_L3_OBJ = src/net/l3/ipv4.o src/net/l3/icmp.o src/net/l3/route.o
 
-NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c src/net/l4/dns.c src/net/l4/tcp.c
-NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o src/net/l4/dns.o src/net/l4/tcp.o
+NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c src/net/l4/dns.c src/net/l4/tcp.c src/net/l4/http.c
+NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o src/net/l4/dns.o src/net/l4/tcp.o src/net/l4/http.o
 
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
@@ -151,22 +151,15 @@ clean:
 # Test rapide avec QEMU (avec carte réseau AMD PCnet connectée en mode user)
 # SLIRP network: 10.0.2.0/24, gateway 10.0.2.2, DHCP range 10.0.2.15-10.0.2.31
 run: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M \
-		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
-		-device pcnet,netdev=net0 \
-		-drive file=disk.img,format=raw,index=0,media=disk
-
-# Run avec debug CPU (affiche les exceptions et interrupts dans le terminal)
-run-debug: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M \
-		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
-		-device pcnet,netdev=net0 \
+	qemu-system-i386 -kernel alos.bin -m 1024M \
+		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
 		-d int,cpu_reset -no-reboot \
+		-device pcnet,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M \
+	qemu-system-i386 -kernel alos.bin -m 1024M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15 \
 		-device pcnet,netdev=net0 \
 		-object filter-dump,id=dump0,netdev=net0,file=alos-network.pcap
@@ -175,7 +168,10 @@ run-pcap: alos.bin
 # Run avec TAP (paquets visibles sur l'hôte via Wireshark sur tap0)
 # Prérequis: sudo ip tuntap add dev tap0 mode tap user $USER && sudo ip link set tap0 up
 run-tap: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 1024M -netdev tap,id=net0,ifname=tap0,script=no,downscript=no -device pcnet,netdev=net0
+	qemu-system-i386 -kernel alos.bin -m 1024M \
+		-netdev tap,id=net0,ifname=tap0,script=no,downscript=no \
+		-device pcnet,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Run avec vmnet-shared (macOS uniquement - même réseau que l'hôte)
 # Nécessite: brew install qemu (version avec vmnet support)
@@ -189,12 +185,12 @@ run-vmnet: alos.bin
 
 # Run avec socket multicast (pour debug local sans réseau externe)
 run-socket: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M \
+	qemu-system-i386 -kernel alos.bin -m 1024M \
 		-netdev socket,id=net0,mcast=230.0.0.1:1234 \
 		-device pcnet,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: alos.bin
-	qemu-system-i386 -kernel alos.bin -m 128M -netdev user,id=net0 -device pcnet,netdev=net0 -s -S &
+	qemu-system-i386 -kernel alos.bin -m 1024M -netdev user,id=net0 -device pcnet,netdev=net0 -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"

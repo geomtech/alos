@@ -7,6 +7,21 @@
 #define VGA_CTRL_REG    0x3D4
 #define VGA_DATA_REG    0x3D5
 
+/* Helpers pour la gestion des interruptions */
+static inline uint32_t save_flags(void) {
+    uint32_t flags;
+    asm volatile("pushfl; popl %0" : "=r"(flags));
+    return flags;
+}
+
+static inline void restore_flags(uint32_t flags) {
+    asm volatile("pushl %0; popfl" : : "r"(flags) : "memory", "cc");
+}
+
+static inline void cli(void) {
+    asm volatile("cli");
+}
+
 /* Spinlock pour protéger l'accès concurrent à la console */
 static spinlock_t console_lock;
 
@@ -30,6 +45,11 @@ static uint8_t current_color = 0x0F; /* Blanc sur noir par défaut */
 static int cursor_visible = 1;       /* Curseur visible par défaut */
 static int cursor_char_saved = 0;    /* Caractère sous le curseur sauvegardé */
 static uint16_t saved_char = 0;      /* Caractère/couleur sauvegardé */
+
+/* Forward declaration */
+void console_update_cursor(void);
+void console_disable_hw_cursor(void);
+void console_refresh(void);
 
 /* Génère un octet de couleur */
 static inline uint8_t make_color(uint8_t fg, uint8_t bg)
@@ -66,6 +86,8 @@ void console_init(void)
 
 void console_clear(uint8_t bg_color)
 {
+    uint32_t flags = save_flags();
+    cli();
     spinlock_lock(&console_lock);
     
     uint8_t color = make_color(VGA_COLOR_WHITE, bg_color);
@@ -82,6 +104,7 @@ void console_clear(uint8_t bg_color)
     console_refresh();
     
     spinlock_unlock(&console_lock);
+    restore_flags(flags);
 }
 
 void console_set_color(uint8_t fg, uint8_t bg)
@@ -89,7 +112,8 @@ void console_set_color(uint8_t fg, uint8_t bg)
     current_color = make_color(fg, bg);
 }
 
-void console_putc(char c)
+/* Version interne sans locking */
+static void console_putc_unlocked(char c)
 {
     if (c == '\n') {
         write_col = 0;
@@ -137,14 +161,28 @@ void console_putc(char c)
     }
 }
 
+void console_putc(char c)
+{
+    uint32_t flags = save_flags();
+    cli();
+    spinlock_lock(&console_lock);
+    console_putc_unlocked(c);
+    /* Note: putc ne fait pas de refresh complet pour perf, juste buffer */
+    spinlock_unlock(&console_lock);
+    restore_flags(flags);
+}
+
 void console_puts(const char* str)
 {
+    uint32_t flags = save_flags();
+    cli();
     spinlock_lock(&console_lock);
     while (*str) {
-        console_putc(*str++);
+        console_putc_unlocked(*str++);
     }
     console_refresh();
     spinlock_unlock(&console_lock);
+    restore_flags(flags);
 }
 
 void console_put_hex(uint32_t value)

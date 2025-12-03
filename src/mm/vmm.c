@@ -381,13 +381,16 @@ page_directory_t* vmm_create_directory(void)
         new_dir[i] = 0;
     }
     
-    /* Copier les entrées kernel (premiers 16 Mo) depuis le kernel directory.
-     * Ces entrées pointent vers les mêmes Page Tables que le kernel,
-     * donc le code kernel est visible depuis tous les processus.
+    /* Copier SEULEMENT l'entrée 0 du kernel (0-4 Mo) qui contient le code kernel.
+     * 
+     * IMPORTANT: On ne copie PAS les entrées 1-3 car elles sont dans l'espace
+     * où les programmes ELF user seront chargés (typiquement à 0x00400000).
+     * Si on les copiait, vmm_is_mapped_in_dir retournerait true et le code
+     * ELF ne serait jamais mappé.
+     * 
+     * Le kernel est chargé dans les premiers 4 Mo, donc l'entrée 0 suffit.
      */
-    for (int i = 0; i < KERNEL_TABLES_COUNT; i++) {
-        new_dir[i] = kernel_page_directory[i];
-    }
+    new_dir[0] = kernel_page_directory[0];
     
     vmm_temp_unmap();
     
@@ -500,8 +503,22 @@ int vmm_map_page_in_dir(page_directory_t* dir, uint32_t phys, uint32_t virt, uin
     
     uint32_t table_phys;
     
-    /* Vérifier si la Page Table existe */
-    if (!(dir_entries[dir_index] & PAGE_PRESENT)) {
+    /* Vérifier si la Page Table existe et si elle est compatible avec les flags demandés.
+     * 
+     * IMPORTANT: Si on demande PAGE_USER mais que l'entrée existante pointe vers
+     * une Page Table kernel (sans PAGE_USER), on doit créer une nouvelle Page Table
+     * pour le processus user. Sinon, les pages user seront dans une table kernel
+     * qui n'a pas les bons flags.
+     */
+    bool need_new_table = !(dir_entries[dir_index] & PAGE_PRESENT);
+    
+    /* Si on demande USER mais que l'entrée existante n'a pas USER, 
+     * c'est une Page Table kernel - on doit en créer une nouvelle */
+    if (!need_new_table && (flags & PAGE_USER) && !(dir_entries[dir_index] & PAGE_USER)) {
+        need_new_table = true;
+    }
+    
+    if (need_new_table) {
         /* Allouer une nouvelle Page Table */
         void* new_table = pmm_alloc_block();
         if (new_table == NULL) {
@@ -634,4 +651,126 @@ page_directory_t* vmm_clone_directory(page_directory_t* src)
     KLOG_INFO("VMM", "Directory cloned successfully");
     
     return new_dir;
+}
+
+bool vmm_is_mapped_in_dir(page_directory_t* dir, uint32_t virt)
+{
+    if (dir == NULL) {
+        return false;
+    }
+    
+    /* Si c'est le kernel directory, utiliser le chemin rapide */
+    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
+        return vmm_is_mapped(virt);
+    }
+    
+    uint32_t phys = vmm_get_phys_addr(dir, virt);
+    /* vmm_get_phys_addr retourne 0 si non mappé, mais 0 peut être une adresse valide */
+    /* On vérifie donc explicitement l'entrée */
+    return (phys != 0 || virt == 0);
+}
+
+int vmm_copy_to_dir(page_directory_t* dir, uint32_t dst_virt, const void* src, uint32_t size)
+{
+    if (dir == NULL || src == NULL || size == 0) {
+        return -1;
+    }
+    
+    /* Si c'est le kernel directory courant, copie directe */
+    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
+        uint8_t* d = (uint8_t*)dst_virt;
+        const uint8_t* s = (const uint8_t*)src;
+        for (uint32_t i = 0; i < size; i++) {
+            d[i] = s[i];
+        }
+        return 0;
+    }
+    
+    const uint8_t* src_ptr = (const uint8_t*)src;
+    uint32_t remaining = size;
+    uint32_t current_virt = dst_virt;
+    
+    while (remaining > 0) {
+        /* Obtenir l'adresse physique de la page de destination */
+        uint32_t page_virt = PAGE_ALIGN_DOWN(current_virt);
+        uint32_t offset_in_page = current_virt - page_virt;
+        uint32_t phys_addr = vmm_get_phys_addr(dir, page_virt);
+        
+        if (phys_addr == 0 && page_virt != 0) {
+            KLOG_ERROR("VMM", "vmm_copy_to_dir: page not mapped");
+            return -1;
+        }
+        
+        /* Calculer combien on peut copier dans cette page */
+        uint32_t bytes_in_page = PAGE_SIZE - offset_in_page;
+        uint32_t to_copy = (remaining < bytes_in_page) ? remaining : bytes_in_page;
+        
+        /* Mapper temporairement la page physique */
+        uint8_t* mapped = (uint8_t*)vmm_temp_map(phys_addr);
+        
+        /* Copier les données */
+        for (uint32_t i = 0; i < to_copy; i++) {
+            mapped[offset_in_page + i] = src_ptr[i];
+        }
+        
+        vmm_temp_unmap();
+        
+        /* Avancer */
+        src_ptr += to_copy;
+        current_virt += to_copy;
+        remaining -= to_copy;
+    }
+    
+    return 0;
+}
+
+int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, uint32_t size)
+{
+    if (dir == NULL || size == 0) {
+        return -1;
+    }
+    
+    /* Si c'est le kernel directory courant, memset direct */
+    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
+        uint8_t* d = (uint8_t*)dst_virt;
+        for (uint32_t i = 0; i < size; i++) {
+            d[i] = value;
+        }
+        return 0;
+    }
+    
+    uint32_t remaining = size;
+    uint32_t current_virt = dst_virt;
+    
+    while (remaining > 0) {
+        /* Obtenir l'adresse physique de la page de destination */
+        uint32_t page_virt = PAGE_ALIGN_DOWN(current_virt);
+        uint32_t offset_in_page = current_virt - page_virt;
+        uint32_t phys_addr = vmm_get_phys_addr(dir, page_virt);
+        
+        if (phys_addr == 0 && page_virt != 0) {
+            KLOG_ERROR("VMM", "vmm_memset_in_dir: page not mapped");
+            return -1;
+        }
+        
+        /* Calculer combien on peut écrire dans cette page */
+        uint32_t bytes_in_page = PAGE_SIZE - offset_in_page;
+        uint32_t to_write = (remaining < bytes_in_page) ? remaining : bytes_in_page;
+        
+        /* Mapper temporairement la page physique */
+        uint8_t* mapped = (uint8_t*)vmm_temp_map(phys_addr);
+        
+        /* Mettre à zéro */
+        for (uint32_t i = 0; i < to_write; i++) {
+            mapped[offset_in_page + i] = value;
+        }
+        
+        vmm_temp_unmap();
+        
+        /* Avancer */
+        current_virt += to_write;
+        remaining -= to_write;
+    }
+    
+    return 0;
 }

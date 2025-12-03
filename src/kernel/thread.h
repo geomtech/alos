@@ -161,6 +161,7 @@ struct thread {
     volatile int should_terminate;  /* Flag pour demander l'arrêt */
     bool exited;                    /* Thread a appelé exit */
     int exit_status;                /* Code de sortie */
+    bool first_switch;              /* True si le thread n'a jamais été exécuté */
     
     /* Contexte CPU */
     uint32_t esp;                   /* Stack Pointer sauvegardé */
@@ -302,6 +303,22 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
 thread_t *thread_create_in_process(process_t *proc, const char *name,
                                    thread_entry_t entry, void *arg,
                                    uint32_t stack_size, thread_priority_t priority);
+
+/**
+ * Crée un thread user mode pour un processus.
+ * Le thread démarrera en Ring 3 à l'adresse entry_point avec la stack user_esp.
+ * 
+ * @param proc        Processus propriétaire
+ * @param name        Nom du thread
+ * @param entry_point Point d'entrée en user mode (EIP)
+ * @param user_esp    Stack pointer user mode (ESP)
+ * @param kernel_stack Stack kernel pré-allouée (pour les syscalls)
+ * @param kernel_stack_size Taille de la kernel stack
+ * @return Thread créé, ou NULL si erreur
+ */
+thread_t *thread_create_user(process_t *proc, const char *name,
+                             uint32_t entry_point, uint32_t user_esp,
+                             void *kernel_stack, uint32_t kernel_stack_size);
 
 /**
  * Termine le thread courant.

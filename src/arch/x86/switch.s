@@ -68,17 +68,128 @@ switch_context:
 ; void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp, uint32_t new_cr3)
 ; ============================================================
 ; 
-; LEGACY: Gardé pour compatibilité, appelle switch_context.
+; Context switch avec support optionnel de changement d'espace d'adressage.
+; Si new_cr3 != 0, change le Page Directory (CR3) pour l'isolation mémoire.
+;
+; Format de stack (sans segments):
+;   [SS]       <- seulement pour user (iretd vers Ring 3)
+;   [ESP_user] <- seulement pour user (iretd vers Ring 3)
+;   [EFLAGS]
+;   [CS]
+;   [EIP]
+;   [EAX] [ECX] [EDX] [EBX] [ESP_dummy] [EBP] [ESI] [EDI]  <- pusha/popa
+;
+; Paramètres:
+;   [ESP+4]  = old_esp_ptr : Pointeur où sauvegarder l'ESP actuel
+;   [ESP+8]  = new_esp     : Nouvel ESP à charger
+;   [ESP+12] = new_cr3     : Nouveau Page Directory (0 = pas de changement)
 ;
 global switch_task
 switch_task:
-    ; Ignorer new_cr3 (tous les threads kernel partagent le même espace)
-    ; Juste appeler switch_context
-    push dword [esp + 8]    ; new_esp
-    push dword [esp + 8]    ; old_esp_ptr (offset +4 car on a pushé)
-    call switch_context
-    add esp, 8
+    ; Désactiver les interruptions pendant le switch
+    cli
+    
+    ; Récupérer les arguments avant de modifier la stack
+    mov eax, [esp + 4]      ; EAX = old_esp_ptr
+    mov ecx, [esp + 8]      ; ECX = new_esp
+    mov edx, [esp + 12]     ; EDX = new_cr3
+    
+    ; Pousser ce qui sera restauré par iretd
+    pushf                   ; EFLAGS (avec IF=1 pour réactiver les interrupts)
+    push dword 0x08         ; CS = kernel code segment
+    push dword .return_point ; EIP = où continuer après le switch
+    
+    ; Pousser les registres (format pusha, mais dans le bon ordre pour popa)
+    push eax                ; EAX (sera écrasé)
+    push ecx                ; ECX (sera écrasé)
+    push edx                ; EDX (sera écrasé)
+    push ebx                ; EBX
+    push esp                ; ESP (ignoré par popa)
+    push ebp                ; EBP
+    push esi                ; ESI
+    push edi                ; EDI
+    
+    ; Sauvegarder ESP dans old_esp_ptr
+    ; EAX contient toujours old_esp_ptr
+    mov [eax], esp
+    
+    ; Changer le Page Directory si new_cr3 != 0
+    ; EDX contient new_cr3
+    test edx, edx
+    jz .skip_cr3_switch
+    
+    ; Charger le nouveau Page Directory
+    mov cr3, edx
+    
+.skip_cr3_switch:
+    ; Basculer vers la nouvelle stack
+    mov esp, ecx            ; ESP = new_esp
+    
+    ; Restaurer le contexte du nouveau thread
+    popa                    ; Restaure EDI, ESI, EBP, (skip ESP), EBX, EDX, ECX, EAX
+    
+    ; Vérifier si on retourne vers Ring 3 (CS sur la stack a RPL=3)
+    ; CS est à [ESP+4] après popa
+    test dword [esp + 4], 0x03
+    jz .kernel_return
+    
+    ; Retour vers user mode: charger les segments user
+    push eax
+    mov ax, 0x23            ; User data segment
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    pop eax
+    
+.kernel_return:
+    iretd                   ; Restaure EIP, CS, EFLAGS (et SS/ESP si Ring 3)
+
+.return_point:
+    ; On arrive ici quand ce thread est reschedulé
+    ; Les interruptions sont réactivées par iretd
     ret
+
+; ============================================================
+; void jump_to_user(uint32_t esp, uint32_t cr3)
+; ============================================================
+; 
+; Saute vers un thread user sans sauvegarder le contexte actuel.
+; Utilisé pour le PREMIER switch vers un thread user.
+;
+; Paramètres:
+;   [ESP+4]  = esp : ESP du thread user (pointe vers le frame initial)
+;   [ESP+8]  = cr3 : Page Directory du processus (0 = pas de changement)
+;
+global jump_to_user
+jump_to_user:
+    cli
+    
+    mov ecx, [esp + 4]      ; ECX = new_esp
+    mov edx, [esp + 8]      ; EDX = new_cr3
+    
+    ; Changer le Page Directory si cr3 != 0
+    test edx, edx
+    jz .skip_cr3_user
+    mov cr3, edx
+.skip_cr3_user:
+    
+    ; Charger la nouvelle stack
+    mov esp, ecx
+    
+    ; Restaurer les registres (le frame a été créé par thread_create_user)
+    popa
+    
+    ; Charger les segments user (on sait qu'on va vers Ring 3)
+    mov ax, 0x23
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    
+    ; Sauter en user mode
+    iretd
+
 ; void task_entry_point(void)
 ; ============================================================
 ;
