@@ -543,40 +543,45 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     thread->preempt_pending = false;
     
     /* ========================================
-     * Préparer la stack pour IRET vers User Mode (Ring 3)
+     * Préparer la stack pour IRETQ vers User Mode (Ring 3) - x86-64
      * ========================================
      * 
-     * Quand le scheduler fait switch_task vers ce thread, il fera:
-     *   popa; iretd
+     * En x86-64, IRETQ attend sur la stack (du haut vers le bas):
+     *   [SS]      <- segment stack user (0x1B = index 3 | RPL 3)
+     *   [RSP]     <- stack pointer user
+     *   [RFLAGS]  <- flags (avec IF=1)
+     *   [CS]      <- segment code user (0x23 = index 4 | RPL 3)
+     *   [RIP]     <- point d'entrée user
      * 
-     * Pour un retour vers Ring 3, iretd attend sur la stack:
-     *   [SS]      <- segment stack user (0x23)
-     *   [ESP]     <- stack pointer user
-     *   [EFLAGS]  <- flags (avec IF=1)
-     *   [CS]      <- segment code user (0x1B)
-     *   [EIP]     <- point d'entrée user
-     * 
-     * Et popa attend:
-     *   [EAX] [ECX] [EDX] [EBX] [ESP_dummy] [EBP] [ESI] [EDI]
+     * GDT layout:
+     *   Index 3: User Data Segment -> selector = 3*8 | 3 = 0x1B
+     *   Index 4: User Code Segment -> selector = 4*8 | 3 = 0x23
      */
     uint64_t *kstack_top = (uint64_t *)((uint64_t)kernel_stack + kernel_stack_size);
     
-    /* Frame pour IRET vers User Mode (Ring 3) */
-    *(--kstack_top) = 0x23;           /* SS: User Data Segment (RPL=3) */
-    *(--kstack_top) = user_rsp;       /* ESP: User stack pointer */
-    *(--kstack_top) = 0x202;          /* EFLAGS: IF=1 (interrupts enabled) */
-    *(--kstack_top) = 0x1B;           /* CS: User Code Segment (RPL=3) */
-    *(--kstack_top) = entry_point;    /* EIP: User entry point */
+    /* Frame pour IRETQ vers User Mode (Ring 3) */
+    *(--kstack_top) = 0x1B;           /* SS: User Data Segment (index 3, RPL=3) */
+    *(--kstack_top) = user_rsp;       /* RSP: User stack pointer */
+    *(--kstack_top) = 0x202;          /* RFLAGS: IF=1 (interrupts enabled) */
+    *(--kstack_top) = 0x23;           /* CS: User Code Segment (index 4, RPL=3) */
+    *(--kstack_top) = entry_point;    /* RIP: User entry point */
     
-    /* Simuler pusha (registres initialisés à 0) */
-    *(--kstack_top) = 0;              /* EAX */
-    *(--kstack_top) = 0;              /* ECX */
-    *(--kstack_top) = 0;              /* EDX */
-    *(--kstack_top) = 0;              /* EBX */
-    *(--kstack_top) = 0;              /* ESP (ignoré par popa) */
-    *(--kstack_top) = 0;              /* EBP */
-    *(--kstack_top) = 0;              /* ESI */
-    *(--kstack_top) = 0;              /* EDI */
+    /* Registres généraux (pour POP_ALL dans le scheduler) */
+    *(--kstack_top) = 0;              /* R15 */
+    *(--kstack_top) = 0;              /* R14 */
+    *(--kstack_top) = 0;              /* R13 */
+    *(--kstack_top) = 0;              /* R12 */
+    *(--kstack_top) = 0;              /* R11 */
+    *(--kstack_top) = 0;              /* R10 */
+    *(--kstack_top) = 0;              /* R9 */
+    *(--kstack_top) = 0;              /* R8 */
+    *(--kstack_top) = 0;              /* RDI */
+    *(--kstack_top) = 0;              /* RSI */
+    *(--kstack_top) = 0;              /* RBP */
+    *(--kstack_top) = 0;              /* RBX */
+    *(--kstack_top) = 0;              /* RDX */
+    *(--kstack_top) = 0;              /* RCX */
+    *(--kstack_top) = 0;              /* RAX */
     
     thread->rsp = (uint64_t)kstack_top;
     

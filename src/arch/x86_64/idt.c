@@ -264,63 +264,20 @@ void exception_handler(struct interrupt_frame *frame)
         return;
     }
     
-    /* Kernel panic for other exceptions */
+    /* Kernel panic for other exceptions - use serial only */
     cli();
     
-    /* Write directly to VGA memory for debugging */
-    volatile uint16_t *vga = (volatile uint16_t *)0xFFFFFFFF800B8000;
-    
-    /* Red background */
-    for (int i = 0; i < 80 * 25; i++) {
-        vga[i] = 0x4F20;
-    }
-    
-    /* Title */
-    const char *title = "=== KERNEL PANIC ===";
-    for (int i = 0; title[i]; i++) {
-        vga[i] = 0x4F00 | title[i];
-    }
-    
-    /* Exception name */
     const char *name = (int_no < 32) ? exception_names[int_no] : "Unknown";
-    vga += 80;
-    const char *prefix = "Exception: ";
-    for (int i = 0; prefix[i]; i++) {
-        vga[i] = 0x4F00 | prefix[i];
-    }
-    vga += 11;
-    for (int i = 0; name[i]; i++) {
-        vga[i] = 0x4F00 | name[i];
-    }
     
-    /* Details */
-    vga = (volatile uint16_t *)0xFFFFFFFF800B8000 + 160;
-    const char *hex = "0123456789ABCDEF";
-    
-    /* INT number */
-    const char *msg1 = "INT: 0x";
-    for (int i = 0; msg1[i]; i++) vga[i] = 0x4F00 | msg1[i];
-    vga += 7;
-    vga[0] = 0x4F00 | hex[(int_no >> 4) & 0xF];
-    vga[1] = 0x4F00 | hex[int_no & 0xF];
-    vga += 4;
-    
-    /* Error code */
-    const char *msg2 = "Error: 0x";
-    for (int i = 0; msg2[i]; i++) vga[i] = 0x4F00 | msg2[i];
-    vga += 9;
-    for (int i = 15; i >= 0; i--) {
-        vga[15 - i] = 0x4F00 | hex[(error_code >> (i * 4)) & 0xF];
-    }
-    
-    /* RIP */
-    vga = (volatile uint16_t *)0xFFFFFFFF800B8000 + 240;
-    const char *msg3 = "RIP: 0x";
-    for (int i = 0; msg3[i]; i++) vga[i] = 0x4F00 | msg3[i];
-    vga += 7;
-    for (int i = 15; i >= 0; i--) {
-        vga[15 - i] = 0x4F00 | hex[(frame->rip >> (i * 4)) & 0xF];
-    }
+    KLOG_ERROR("PANIC", "=== KERNEL PANIC ===");
+    KLOG_ERROR("PANIC", name);
+    KLOG_ERROR_HEX("PANIC", "INT: ", (uint32_t)int_no);
+    KLOG_ERROR_HEX("PANIC", "Error code: ", (uint32_t)error_code);
+    KLOG_ERROR_HEX("PANIC", "RIP (high): ", (uint32_t)(frame->rip >> 32));
+    KLOG_ERROR_HEX("PANIC", "RIP (low): ", (uint32_t)frame->rip);
+    KLOG_ERROR_HEX("PANIC", "RSP (high): ", (uint32_t)(frame->rsp >> 32));
+    KLOG_ERROR_HEX("PANIC", "RSP (low): ", (uint32_t)frame->rsp);
+    KLOG_ERROR("PANIC", "System halted.");
     
     /* Halt */
     while (1) {

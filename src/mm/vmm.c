@@ -294,38 +294,22 @@ void vmm_set_user_accessible(uint64_t start, uint64_t size)
 
 void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr)
 {
-    console_set_color(VGA_COLOR_RED, VGA_COLOR_BLACK);
-    console_puts("\n!!! PAGE FAULT !!!\n");
-    
-    console_puts("Faulting Address (CR2): 0x");
-    /* Print 64-bit address */
-    console_put_hex((uint32_t)(fault_addr >> 32));
-    console_put_hex((uint32_t)fault_addr);
-    console_puts("\n");
-    
-    console_puts("Error Code: 0x");
-    console_put_hex((uint32_t)error_code);
-    console_puts("\n");
-    
-    /* Décoder l'error code */
-    console_puts("  - ");
-    console_puts((error_code & 0x1) ? "Page-level protection violation" : "Non-present page");
-    console_puts("\n  - ");
-    console_puts((error_code & 0x2) ? "Write access" : "Read access");
-    console_puts("\n  - ");
-    console_puts((error_code & 0x4) ? "User mode" : "Supervisor mode");
+    /* Log to serial only to avoid recursive page faults on VGA */
+    KLOG_ERROR_HEX("VMM", "PAGE FAULT at (high): ", (uint32_t)(fault_addr >> 32));
+    KLOG_ERROR_HEX("VMM", "PAGE FAULT at (low): ", (uint32_t)fault_addr);
+    KLOG_ERROR_HEX("VMM", "Error code: ", (uint32_t)error_code);
+    KLOG_ERROR("VMM", (error_code & 0x1) ? "  - Page-level protection violation" : "  - Non-present page");
+    KLOG_ERROR("VMM", (error_code & 0x2) ? "  - Write access" : "  - Read access");
+    KLOG_ERROR("VMM", (error_code & 0x4) ? "  - User mode" : "  - Supervisor mode");
     if (error_code & 0x8) {
-        console_puts("\n  - Reserved bit set");
+        KLOG_ERROR("VMM", "  - Reserved bit set");
     }
     if (error_code & 0x10) {
-        console_puts("\n  - Instruction fetch");
+        KLOG_ERROR("VMM", "  - Instruction fetch");
     }
-    console_puts("\n");
-    
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_ERROR("VMM", "System halted.");
     
     /* Halt */
-    console_puts("System halted.\n");
     for (;;) {
         __asm__ volatile("hlt");
     }
@@ -446,6 +430,10 @@ int vmm_map_page_in_dir(page_directory_t* dir, uint64_t phys, uint64_t virt, uin
         return -1;
     }
     
+    KLOG_DEBUG_HEX("VMM", "map_page_in_dir: virt=", (uint32_t)virt);
+    KLOG_DEBUG_HEX("VMM", "  phys=", (uint32_t)phys);
+    KLOG_DEBUG_HEX("VMM", "  dir->pml4=", (uint32_t)(uint64_t)dir->pml4);
+    
     /* Sauvegarder le directory courant */
     page_directory_t* saved = current_directory;
     current_directory = dir;
@@ -524,6 +512,9 @@ int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, u
         return -1;
     }
     
+    KLOG_DEBUG_HEX("VMM", "memset_in_dir: dst_virt=", (uint32_t)dst_virt);
+    KLOG_DEBUG_HEX("VMM", "  size=", (uint32_t)size);
+    
     uint64_t remaining = size;
     uint64_t current_virt = dst_virt;
     
@@ -532,14 +523,22 @@ int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, u
         uint64_t offset = current_virt - page_virt;
         uint64_t phys = vmm_get_phys_addr(dir, page_virt);
         
+        KLOG_DEBUG_HEX("VMM", "  page_virt=", (uint32_t)page_virt);
+        KLOG_DEBUG_HEX("VMM", "  phys=", (uint32_t)phys);
+        
         if (phys == 0) {
+            KLOG_ERROR("VMM", "memset_in_dir: phys=0!");
             return -1;
         }
         
         uint64_t bytes_in_page = PAGE_SIZE - offset;
         uint64_t to_write = (remaining < bytes_in_page) ? remaining : bytes_in_page;
         
-        uint8_t* dst_ptr = (uint8_t*)phys_to_virt(phys) + offset;
+        void* virt_ptr = phys_to_virt(phys);
+        KLOG_DEBUG_HEX("VMM", "  virt_ptr (high)=", (uint32_t)((uint64_t)virt_ptr >> 32));
+        KLOG_DEBUG_HEX("VMM", "  virt_ptr (low)=", (uint32_t)(uint64_t)virt_ptr);
+        
+        uint8_t* dst_ptr = (uint8_t*)virt_ptr + offset;
         for (uint64_t i = 0; i < to_write; i++) {
             dst_ptr[i] = value;
         }

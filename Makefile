@@ -224,7 +224,7 @@ distclean: clean
 # SLIRP network: 10.0.2.0/24, gateway 10.0.2.2, DHCP range 10.0.2.15-10.0.2.31
 run: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 256M \
-		-device virtio-vga \
+		-vga std \
 		-boot d \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
 		-device virtio-net-pci,netdev=net0 \

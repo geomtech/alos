@@ -575,8 +575,8 @@ int process_execute(const char* filename)
     KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
     
     /* Allouer la stack utilisateur dans le Page Directory du processus */
-    uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-    for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
+    uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint64_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
         if (!vmm_is_mapped_in_dir((page_directory_t*)proc->pml4, addr)) {
             void* phys_page = pmm_alloc_block();
             if (phys_page == NULL) {
@@ -615,11 +615,11 @@ int process_execute(const char* filename)
      * 
      * Pour l'instant, on met argc=0 et argv=NULL.
      */
-    uint32_t user_stack_data[2] = { 0, 0 };  /* argc=0, argv=NULL */
-    uint32_t user_esp = USER_STACK_TOP - 8;  /* Aligné, pointe vers argc */
+    uint64_t user_stack_data[2] = { 0, 0 };  /* argc=0, argv=NULL */
+    uint64_t user_rsp = USER_STACK_TOP - 16;  /* Aligné sur 16 octets, pointe vers argc */
     
     if (vmm_copy_to_dir((page_directory_t*)proc->pml4, 
-                        user_esp, user_stack_data, sizeof(user_stack_data)) != 0) {
+                        user_rsp, user_stack_data, sizeof(user_stack_data)) != 0) {
         KLOG_ERROR("EXEC", "Failed to initialize user stack!");
         vmm_free_directory((page_directory_t*)proc->pml4);
         kfree(kernel_stack);
@@ -627,7 +627,7 @@ int process_execute(const char* filename)
         return -1;
     }
     
-    KLOG_INFO_HEX("EXEC", "User ESP: ", user_esp);
+    KLOG_INFO_HEX("EXEC", "User ESP: ", user_rsp);
     
     /* ========================================
      * Initialiser les champs du processus
@@ -659,7 +659,7 @@ int process_execute(const char* filename)
         proc,
         proc->name,
         elf_result.entry_point,
-        user_esp,  /* ESP utilisateur avec argc/argv */
+        user_rsp,  /* ESP utilisateur avec argc/argv */
         kernel_stack,
         KERNEL_STACK_SIZE
     );
@@ -791,8 +791,8 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
     
     /* Allouer la stack utilisateur dans le Page Directory du processus */
-    uint32_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-    for (uint32_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
+    uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint64_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
         if (!vmm_is_mapped_in_dir((page_directory_t*)proc->pml4, addr)) {
             void* phys_page = pmm_alloc_block();
             if (phys_page == NULL) {
@@ -828,7 +828,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
      * ======================================== */
     
     /* Allouer un buffer pour la stack utilisateur dans le kernel */
-    uint32_t stack_buffer_size = 1024;  /* 1KB devrait être suffisant pour argc/argv */
+    uint64_t stack_buffer_size = 1024;  /* 1KB devrait être suffisant pour argc/argv */
     uint8_t* stack_buffer = (uint8_t*)kmalloc(stack_buffer_size);
     if (stack_buffer == NULL) {
         KLOG_ERROR("EXEC", "Failed to allocate stack buffer!");
@@ -842,7 +842,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     }
     
     /* Construire la stack utilisateur dans le buffer */
-    uint32_t user_esp = USER_STACK_TOP;
+    uint64_t user_rsp = USER_STACK_TOP;
     
     /* D'abord, copier les chaînes d'arguments */
     char* string_ptr = (char*)(stack_buffer + stack_buffer_size);  /* Commencer à la fin du buffer */
@@ -883,7 +883,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         *stack_ptr = (uint64_t)argv_ptrs[i];
     }
     
-    uint32_t argv_addr = (uint64_t)stack_ptr;  /* Adresse de argv[0] */
+    uint64_t argv_addr = (uint64_t)stack_ptr;  /* Adresse de argv[0] */
     
     /* Pousser argv (pointeur vers argv[0]) */
     stack_ptr--;
@@ -894,20 +894,22 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     *stack_ptr = (uint64_t)argc;
     
     /* Calculer la taille des données à copier */
-    uint32_t data_size = stack_buffer_size - ((uint8_t*)stack_ptr - stack_buffer);
+    uint64_t data_size = stack_buffer_size - ((uint8_t*)stack_ptr - stack_buffer);
     
-    /* Calculer l'ESP utilisateur final */
+    /* Calculer le RSP utilisateur final */
     /* Les données doivent se terminer à USER_STACK_TOP */
-    user_esp = USER_STACK_TOP - data_size;
+    user_rsp = USER_STACK_TOP - data_size;
+    /* Aligner sur 16 octets (requis par x86-64 ABI) */
+    user_rsp &= ~0xFULL;
     
     /* Copier les données de la stack dans le Page Directory du processus */
     if (vmm_copy_to_dir((page_directory_t*)proc->pml4, 
-                        user_esp, stack_ptr, data_size) != 0) {
+                        user_rsp, stack_ptr, data_size) != 0) {
         KLOG_ERROR("EXEC", "Failed to initialize user stack!");
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("Error: Failed to initialize user stack (copy failed)\n");
         console_puts("  User ESP: 0x");
-        console_put_hex(user_esp);
+        console_put_hex(user_rsp);
         console_puts("\n  Data size: ");
         console_put_dec(data_size);
         console_puts("\n");
@@ -922,7 +924,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     /* Libérer le buffer temporaire */
     kfree(stack_buffer);
     
-    KLOG_INFO_HEX("EXEC", "User ESP: ", user_esp);
+    KLOG_INFO_HEX("EXEC", "User ESP: ", user_rsp);
     
     /* ========================================
      * Initialiser les champs du processus
@@ -954,7 +956,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         proc,
         proc->name,
         elf_result.entry_point,
-        user_esp,  /* ESP utilisateur avec argc/argv */
+        user_rsp,  /* ESP utilisateur avec argc/argv */
         kernel_stack,
         KERNEL_STACK_SIZE
     );
