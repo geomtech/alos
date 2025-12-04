@@ -55,8 +55,8 @@ MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
 
 # Drivers
-DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c src/drivers/virtio/virtio_pci_modern.c
-DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o src/drivers/virtio/virtio_mmio.o src/drivers/virtio/virtio_transport.o src/drivers/virtio/virtio_pci_modern.o
+DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/net/e1000e.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c src/drivers/virtio/virtio_pci_modern.c
+DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o src/drivers/net/e1000e.o src/drivers/virtio/virtio_mmio.o src/drivers/virtio/virtio_transport.o src/drivers/virtio/virtio_pci_modern.o
 
 # Network stack (par couche OSI)
 NET_L2_SRC = src/net/l2/ethernet.c src/net/l2/arp.c
@@ -178,6 +178,13 @@ run: alos.bin
 	qemu-system-i386 -kernel alos.bin -m 128M \
 		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
 		-device virtio-net-pci,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk \
+		-serial stdio
+
+run-e1000: alos.bin
+	qemu-system-i386 -kernel alos.bin -m 128M \
+		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
+		-device e1000,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk \
 		-serial stdio
 

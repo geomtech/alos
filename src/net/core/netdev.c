@@ -2,6 +2,7 @@
 #include "netdev.h"
 #include "../../drivers/net/pcnet.h"
 #include "../../drivers/net/virtio_net.h"
+#include "../../drivers/net/e1000e.h"
 #include "../../drivers/pci.h"
 #include "../netlog.h"
 
@@ -366,9 +367,52 @@ int netdev_init(void) {
     }
   }
 
-  /* === TODO: Détecter d'autres cartes ici === */
-  /* RTL8139: Vendor 0x10EC, Device 0x8139 */
-  /* E1000: Vendor 0x8086, Device 0x100E */
+  /* === Détecter les cartes Intel e1000/e1000e === */
+  /* Vendor: Intel (0x8086), Device: 82540EM (0x100E) - QEMU default */
+  net_puts("[NETDEV] Looking for Intel e1000 (0x8086:0x100E)...\n");
+  PCIDevice *e1000_pci = pci_get_device(E1000E_VENDOR_ID, E1000E_DEV_82540EM);
+  if (e1000_pci != NULL) {
+    net_puts("[NETDEV] Found e1000 PCI device, initializing...\n");
+    E1000Device *e1000_dev = e1000e_init(e1000_pci);
+    if (e1000_dev != NULL) {
+      /* Add to legacy array for compatibility */
+      if (netdev_count_val < MAX_NETDEVS) {
+        netdev_t *dev = &netdevs[netdev_count_val];
+
+        /* Dynamic naming */
+        if (netdev_count_val == 0) {
+          dev->name = "eth0";
+        } else if (netdev_count_val == 1) {
+          dev->name = "eth1";
+        } else {
+          dev->name = "eth2";
+        }
+
+        dev->type = NETDEV_TYPE_E1000;
+        dev->driver_data = e1000_dev;
+        dev->initialized = true;
+        dev->packets_tx = 0;
+        dev->packets_rx = 0;
+        dev->errors = 0;
+
+        /* Copy MAC */
+        e1000e_get_mac(e1000_dev, dev->mac);
+
+        /* Set as default if none yet */
+        if (default_netdev == NULL) {
+          default_netdev = dev;
+        }
+
+        netdev_count_val++;
+      }
+
+      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+      net_puts("[NETDEV] Found: Intel e1000 Network Device\n");
+      net_reset_color();
+    }
+  }
+
+  /* === Détecter les cartes VirtIO === */
   /* VirtIO: Vendor 0x1AF4, Device 0x1000 */
   PCIDevice *virtio_pci = pci_get_device(0x1AF4, 0x1000);
   if (virtio_pci != NULL) {
@@ -491,5 +535,11 @@ void network_irq_handler(void) {
   PCNetDevice *pcnet_dev = pcnet_get_device();
   if (pcnet_dev != NULL) {
     pcnet_irq_handler();
+  }
+
+  /* Poll e1000e */
+  E1000Device *e1000_dev = e1000e_get_device();
+  if (e1000_dev != NULL) {
+    e1000e_poll();
   }
 }

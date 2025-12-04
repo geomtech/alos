@@ -225,4 +225,26 @@ int vmm_copy_to_dir(page_directory_t* dir, uint32_t dst_virt, const void* src, u
  */
 int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, uint32_t size);
 
+/* ========================================
+ * MMIO Mapping
+ * ======================================== */
+
+/**
+ * Mappe une région MMIO physique dans l'espace virtuel.
+ * Les pages sont mappées avec le cache désactivé (PAGE_NOCACHE).
+ * 
+ * @param phys_addr  Adresse physique de la région MMIO
+ * @param size       Taille de la région en octets
+ * @return Adresse virtuelle, ou NULL si échec
+ */
+volatile void* vmm_map_mmio(uint32_t phys_addr, uint32_t size);
+
+/**
+ * Libère le mapping d'une région MMIO.
+ * 
+ * @param virt_addr  Adresse virtuelle retournée par vmm_map_mmio()
+ * @param size       Taille de la région en octets
+ */
+void vmm_unmap_mmio(volatile void* virt_addr, uint32_t size);
+
 #endif /* VMM_H */

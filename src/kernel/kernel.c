@@ -7,6 +7,7 @@
 #include "../config/config.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
+#include "../drivers/net/e1000e.h"
 #include "../drivers/pci.h"
 #include "mmio/mmio.h"
 #include "../fs/ext2.h"
@@ -222,6 +223,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
           if (dev->type == NETDEV_TYPE_PCNET) {
             PCNetDevice *pcnet_dev = (PCNetDevice *)dev->driver_data;
             if (pcnet_start(pcnet_dev)) {
+              net_ready = true;
+            }
+          } else if (dev->type == NETDEV_TYPE_E1000) {
+            E1000Device *e1000_dev = (E1000Device *)dev->driver_data;
+            if (e1000e_start(e1000_dev)) {
               net_ready = true;
             }
           } else if (dev->type == NETDEV_TYPE_VIRTIO) {

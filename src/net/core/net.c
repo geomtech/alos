@@ -2,6 +2,7 @@
 #include "net.h"
 #include "../../drivers/net/pcnet.h"
 #include "../../drivers/net/virtio_net.h"
+#include "../../drivers/net/e1000e.h"
 #include "../netlog.h"
 #include "netdev.h"
 
@@ -85,12 +86,22 @@ int mac_is_broadcast(const uint8_t *mac) {
  */
 void net_poll(void) {
   /* Appeler le polling des drivers */
-  pcnet_poll();
+  /* Poll PCnet if available */
+  PCNetDevice *pcnet_dev = pcnet_get_device();
+  if (pcnet_dev != NULL) {
+    pcnet_poll();
+  }
 
   /* Poll Virtio if available */
   VirtIONetDevice *virtio_dev = virtio_net_get_device();
   if (virtio_dev != NULL) {
     virtio_net_poll();
+  }
+
+  /* Poll e1000e if available */
+  E1000Device *e1000_dev = e1000e_get_device();
+  if (e1000_dev != NULL) {
+    e1000e_poll();
   }
 }
 

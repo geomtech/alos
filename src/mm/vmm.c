@@ -780,3 +780,68 @@ int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, u
     
     return 0;
 }
+
+/* ========================================
+ * MMIO Mapping
+ * ======================================== */
+
+/* Adresse de base pour les mappings MMIO dynamiques */
+#define MMIO_VIRT_BASE  0xE0000000
+#define MMIO_VIRT_END   0xF0000000
+
+/* Prochain slot MMIO disponible */
+static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+
+volatile void* vmm_map_mmio(uint32_t phys_addr, uint32_t size)
+{
+    /* Aligner l'adresse physique vers le bas */
+    uint32_t phys_aligned = PAGE_ALIGN_DOWN(phys_addr);
+    uint32_t offset = phys_addr - phys_aligned;
+    
+    /* Calculer le nombre de pages nécessaires */
+    uint32_t total_size = offset + size;
+    uint32_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    
+    /* Vérifier qu'on a assez d'espace */
+    if (mmio_next_virt + (num_pages * PAGE_SIZE) > MMIO_VIRT_END) {
+        KLOG_ERROR("VMM", "MMIO space exhausted!");
+        return NULL;
+    }
+    
+    /* Adresse virtuelle de base pour ce mapping */
+    uint32_t virt_base = mmio_next_virt;
+    
+    /* Mapper chaque page avec cache désactivé */
+    for (uint32_t i = 0; i < num_pages; i++) {
+        uint32_t phys = phys_aligned + (i * PAGE_SIZE);
+        uint32_t virt = virt_base + (i * PAGE_SIZE);
+        
+        /* Mapper avec PAGE_NOCACHE pour MMIO */
+        vmm_map_page(phys, virt, PAGE_PRESENT | PAGE_RW | PAGE_NOCACHE);
+    }
+    
+    /* Avancer le pointeur pour le prochain mapping */
+    mmio_next_virt += num_pages * PAGE_SIZE;
+    
+    KLOG_INFO_HEX("VMM", "MMIO mapped phys: ", phys_addr);
+    KLOG_INFO_HEX("VMM", "MMIO mapped virt: ", virt_base + offset);
+    
+    /* Retourner l'adresse virtuelle avec l'offset original */
+    return (volatile void*)(virt_base + offset);
+}
+
+void vmm_unmap_mmio(volatile void* virt_addr, uint32_t size)
+{
+    uint32_t virt = (uint32_t)(uintptr_t)virt_addr;
+    uint32_t virt_aligned = PAGE_ALIGN_DOWN(virt);
+    uint32_t offset = virt - virt_aligned;
+    uint32_t total_size = offset + size;
+    uint32_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    
+    /* Unmapper chaque page */
+    for (uint32_t i = 0; i < num_pages; i++) {
+        vmm_unmap_page(virt_aligned + (i * PAGE_SIZE));
+    }
+    
+    /* Note: On ne récupère pas l'espace dans mmio_next_virt pour simplifier */
+}
