@@ -8,6 +8,9 @@
 #include "../l4/dns.h"
 #include "../utils.h"
 #include "../../kernel/klog.h"
+#include "../../kernel/console.h"
+#include "../../kernel/keyboard.h"
+#include "../../kernel/timer.h"
 
 /* ========================================
  * Variables globales pour le ping
@@ -15,8 +18,21 @@
 
 static ping_state_t g_ping = {0};
 static uint16_t g_ping_id = 0x1234;  /* ID unique pour nos pings */
+static volatile bool g_ping_stop = false;  /* Flag pour arrêter le ping (CTRL+C) */
 
-/* Note: print_ip removed - using KLOG instead */
+/**
+ * Affiche une adresse IP en décimal (x.x.x.x)
+ */
+static void print_ip(const uint8_t* ip)
+{
+    console_put_dec(ip[0]);
+    console_putc('.');
+    console_put_dec(ip[1]);
+    console_putc('.');
+    console_put_dec(ip[2]);
+    console_putc('.');
+    console_put_dec(ip[3]);
+}
 
 /**
  * Traite un paquet ICMP reçu.
@@ -78,6 +94,10 @@ void icmp_handle_packet(NetInterface* netif, ethernet_header_t* eth,
                 uint16_t reply_seq = ntohs(icmp->sequence);
                 
                 if (reply_id == g_ping.identifier) {
+                    /* Calculer le temps de réponse */
+                    uint64_t now = timer_get_uptime_ms();
+                    g_ping.time = (uint32_t)(now - g_ping.send_time);
+                    g_ping.ttl = ip_hdr->ttl;
                     g_ping.received++;
                     g_ping.waiting = false;
                     
@@ -175,13 +195,85 @@ void icmp_send_echo_request(const uint8_t* dest_ip)
     /* Marquer comme en attente AVANT l'envoi (la réponse peut arriver très vite) */
     g_ping.sent++;
     g_ping.waiting = true;
+    g_ping.send_time = timer_get_uptime_ms();  /* Enregistrer le timestamp d'envoi */
     
     ipv4_send_packet(netif, dest_mac, (uint8_t*)dest_ip, IP_PROTO_ICMP,
                      buffer, ICMP_HEADER_SIZE + PING_DATA_SIZE);
 }
 
 /**
- * Ping une adresse IP
+ * Affiche une ligne de réponse ping
+ */
+static void print_ping_reply(void)
+{
+    console_puts("64 bytes from ");
+    print_ip(g_ping.dest_ip);
+    if (g_ping.hostname[0] != '\0') {
+        console_puts(" (");
+        console_puts(g_ping.hostname);
+        console_puts(")");
+    }
+    console_puts(": icmp_seq=");
+    console_put_dec(g_ping.sequence);
+    console_puts(" ttl=");
+    console_put_dec(g_ping.ttl);
+    console_puts(" time=");
+    console_put_dec(g_ping.time);
+    console_puts(" ms\n");
+}
+
+/**
+ * Affiche les statistiques finales du ping
+ */
+static void print_ping_stats(void)
+{
+    console_puts("\n--- ");
+    print_ip(g_ping.dest_ip);
+    console_puts(" ping statistics ---\n");
+    console_put_dec(g_ping.sent);
+    console_puts(" packets transmitted, ");
+    console_put_dec(g_ping.received);
+    console_puts(" received, ");
+    
+    /* Calculer le pourcentage de perte */
+    if (g_ping.sent > 0) {
+        uint32_t loss = ((g_ping.sent - g_ping.received) * 100) / g_ping.sent;
+        console_put_dec(loss);
+    } else {
+        console_puts("0");
+    }
+    console_puts("% packet loss\n");
+    
+    /* Afficher les temps si on a reçu des réponses */
+    if (g_ping.received > 0) {
+        console_puts("rtt min/avg/max = ");
+        console_put_dec(g_ping.min_time);
+        console_puts("/");
+        console_put_dec(g_ping.total_time / g_ping.received);
+        console_puts("/");
+        console_put_dec(g_ping.max_time);
+        console_puts(" ms\n");
+    }
+}
+
+/**
+ * Vérifie si l'utilisateur veut arrêter (CTRL+C ou 'q')
+ */
+static bool check_stop_request(void)
+{
+    char c = keyboard_getchar_nonblock();
+    if (c == 0) {
+        return false;  /* Pas de touche pressée */
+    }
+    /* CTRL+C = 0x03, ou 'q' pour quitter */
+    if (c == 0x03 || c == 'q' || c == 'Q') {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Ping une adresse IP (une seule fois)
  */
 int ping_ip(const uint8_t* dest_ip)
 {
@@ -193,12 +285,26 @@ int ping_ip(const uint8_t* dest_ip)
     g_ping.received = 0;
     g_ping.waiting = false;
     g_ping.active = true;
+    g_ping.min_time = 0xFFFFFFFF;
+    g_ping.max_time = 0;
+    g_ping.total_time = 0;
     g_ping.dest_ip[0] = dest_ip[0];
     g_ping.dest_ip[1] = dest_ip[1];
     g_ping.dest_ip[2] = dest_ip[2];
     g_ping.dest_ip[3] = dest_ip[3];
+    g_ping_stop = false;
     
-    KLOG_INFO("PING", "Starting ping");
+    /* Afficher l'en-tête */
+    console_puts("PING ");
+    print_ip(dest_ip);
+    if (g_ping.hostname[0] != '\0') {
+        console_puts(" (");
+        console_puts(g_ping.hostname);
+        console_puts(")");
+    }
+    console_puts(" ");
+    console_put_dec(PING_DATA_SIZE);
+    console_puts(" bytes of data.\n");
     
     /* Envoyer le premier ping (peut échouer si ARP pending) */
     icmp_send_echo_request(dest_ip);
@@ -227,9 +333,20 @@ int ping_ip(const uint8_t* dest_ip)
         }
     }
     
+    /* Mettre à jour les stats */
+    if (g_ping.received > 0) {
+        if (g_ping.time < g_ping.min_time) g_ping.min_time = g_ping.time;
+        if (g_ping.time > g_ping.max_time) g_ping.max_time = g_ping.time;
+        g_ping.total_time += g_ping.time;
+        print_ping_reply();
+    } else {
+        console_puts("Request timeout for icmp_seq ");
+        console_put_dec(g_ping.sequence);
+        console_puts("\n");
+    }
+    
     /* Afficher les statistiques */
-    KLOG_INFO_DEC("PING", "Sent: ", g_ping.sent);
-    KLOG_INFO_DEC("PING", "Received: ", g_ping.received);
+    print_ping_stats();
     
     g_ping.active = false;
     
@@ -237,18 +354,132 @@ int ping_ip(const uint8_t* dest_ip)
 }
 
 /**
- * Ping un hostname (résolution DNS puis ping)
+ * Ping continu une adresse IP (jusqu'à CTRL+C ou 'q')
  */
-int ping(const char* hostname)
+int ping_ip_continuous(const uint8_t* dest_ip)
 {
-    uint8_t ip[4];
+    /* Initialiser l'état du ping */
+    g_ping_id++;
+    g_ping.identifier = g_ping_id;
+    g_ping.sequence = 0;
+    g_ping.sent = 0;
+    g_ping.received = 0;
+    g_ping.waiting = false;
+    g_ping.active = true;
+    g_ping.min_time = 0xFFFFFFFF;
+    g_ping.max_time = 0;
+    g_ping.total_time = 0;
+    g_ping.dest_ip[0] = dest_ip[0];
+    g_ping.dest_ip[1] = dest_ip[1];
+    g_ping.dest_ip[2] = dest_ip[2];
+    g_ping.dest_ip[3] = dest_ip[3];
+    g_ping_stop = false;
     
+    /* Vider le buffer clavier */
+    keyboard_clear_buffer();
+    
+    /* Afficher l'en-tête */
+    console_puts("PING ");
+    print_ip(dest_ip);
+    if (g_ping.hostname[0] != '\0') {
+        console_puts(" (");
+        console_puts(g_ping.hostname);
+        console_puts(")");
+    }
+    console_puts(" ");
+    console_put_dec(PING_DATA_SIZE);
+    console_puts(" bytes of data.\n");
+    console_puts("Press 'q' or CTRL+C to stop.\n");
+    
+    /* Boucle de ping continue */
+    while (!g_ping_stop) {
+        g_ping.sequence++;
+        g_ping.waiting = false;
+        
+        /* Envoyer le ping */
+        icmp_send_echo_request(dest_ip);
+        
+        /* Attendre la réponse avec timeout */
+        int timeout_count = 0;
+        int retry_count = 0;
+        uint16_t seq_before = g_ping.sent;
+        
+        while (timeout_count < 30) {  /* ~3 secondes de timeout */
+            /* Vérifier CTRL+C */
+            if (check_stop_request()) {
+                g_ping_stop = true;
+                break;
+            }
+            
+            for (volatile int w = 0; w < 100000; w++);
+            asm volatile("sti");
+            asm volatile("hlt");
+            timeout_count++;
+            
+            /* Si pas encore envoyé (ARP était pending), réessayer */
+            if (g_ping.sent == seq_before && retry_count < 3) {
+                if (timeout_count == 5 || timeout_count == 15) {
+                    icmp_send_echo_request(dest_ip);
+                    retry_count++;
+                }
+            }
+            
+            /* Si envoyé et réponse reçue, on a fini */
+            if (g_ping.sent > seq_before && !g_ping.waiting) {
+                break;
+            }
+        }
+        
+        if (g_ping_stop) break;
+        
+        /* Afficher le résultat */
+        if (g_ping.sent > seq_before && !g_ping.waiting) {
+            /* Réponse reçue */
+            if (g_ping.time < g_ping.min_time) g_ping.min_time = g_ping.time;
+            if (g_ping.time > g_ping.max_time) g_ping.max_time = g_ping.time;
+            g_ping.total_time += g_ping.time;
+            print_ping_reply();
+        } else {
+            /* Timeout */
+            console_puts("Request timeout for icmp_seq ");
+            console_put_dec(g_ping.sequence);
+            console_puts("\n");
+        }
+        
+        /* Attendre 1 seconde avant le prochain ping */
+        for (int i = 0; i < 10 && !g_ping_stop; i++) {
+            if (check_stop_request()) {
+                g_ping_stop = true;
+                break;
+            }
+            for (volatile int w = 0; w < 500000; w++);
+            asm volatile("sti");
+            asm volatile("hlt");
+        }
+    }
+    
+    /* Afficher les statistiques finales */
+    print_ping_stats();
+    
+    g_ping.active = false;
+    
+    /* Vider le buffer clavier pour éviter les caractères parasites */
+    keyboard_clear_buffer();
+    
+    return (g_ping.received > 0) ? 0 : -2;
+}
+
+/**
+ * Résout un hostname et retourne l'IP
+ * @return true si résolu, false sinon
+ */
+static bool resolve_hostname(const char* hostname, uint8_t* ip)
+{
     KLOG_INFO("PING", "Resolving hostname...");
     
     /* Vérifier le cache DNS d'abord */
     if (dns_cache_lookup(hostname, ip)) {
-        icmp_str_copy(g_ping.hostname, hostname, sizeof(g_ping.hostname));
-        return ping_ip(ip);
+        return true;
     }
     
     /* Envoyer la requête DNS */
@@ -271,6 +502,20 @@ int ping(const char* hostname)
     /* Récupérer le résultat */
     if (!dns_get_result(ip)) {
         KLOG_ERROR("PING", "DNS resolution failed");
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Ping un hostname (résolution DNS puis ping, une seule fois)
+ */
+int ping(const char* hostname)
+{
+    uint8_t ip[4];
+    
+    if (!resolve_hostname(hostname, ip)) {
         return -1;
     }
     
@@ -279,6 +524,24 @@ int ping(const char* hostname)
     
     /* Pinger l'IP résolue */
     return ping_ip(ip);
+}
+
+/**
+ * Ping continu un hostname (résolution DNS puis ping continu jusqu'à CTRL+C)
+ */
+int ping_continuous(const char* hostname)
+{
+    uint8_t ip[4];
+    
+    if (!resolve_hostname(hostname, ip)) {
+        return -1;
+    }
+    
+    /* Stocker le hostname pour l'affichage */
+    icmp_str_copy(g_ping.hostname, hostname, sizeof(g_ping.hostname));
+    
+    /* Pinger l'IP résolue en continu */
+    return ping_ip_continuous(ip);
 }
 
 /**

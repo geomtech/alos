@@ -240,30 +240,48 @@ static int parse_ip(const char *str, uint8_t *ip) {
 }
 
 /**
- * Commande: ping <host>
+ * Commande: ping <host> [-c count]
  * Envoie un ping ICMP vers un hôte (IP ou hostname).
+ * Par défaut: ping continu jusqu'à CTRL+C ou 'q'
+ * Avec -c 1: un seul ping
  */
 static int cmd_ping(int argc, char **argv) {
   if (argc < 2) {
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    console_puts("Usage: ping <ip_address|hostname>\n");
+    console_puts("Usage: ping <ip_address|hostname> [-c count]\n");
     console_puts("Examples:\n");
-    console_puts("  ping 10.0.2.2\n");
-    console_puts("  ping google.com\n");
+    console_puts("  ping 10.0.2.2        (continuous, press 'q' to stop)\n");
+    console_puts("  ping google.com -c 1 (single ping)\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     return -1;
   }
 
   const char *target = argv[1];
   uint8_t ip[4];
+  bool single_ping = false;
+
+  /* Vérifier si -c 1 est spécifié */
+  if (argc >= 4 && argv[2][0] == '-' && argv[2][1] == 'c') {
+    if (argv[3][0] == '1' && argv[3][1] == '\0') {
+      single_ping = true;
+    }
+  }
 
   /* Essayer de parser comme une adresse IP */
   if (parse_ip(target, ip) == 0) {
     /* C'est une adresse IP */
-    return ping_ip(ip);
+    if (single_ping) {
+      return ping_ip(ip);
+    } else {
+      return ping_ip_continuous(ip);
+    }
   } else {
     /* C'est probablement un hostname - utiliser la résolution DNS */
-    return ping(target);
+    if (single_ping) {
+      return ping(target);
+    } else {
+      return ping_continuous(target);
+    }
   }
 }
 

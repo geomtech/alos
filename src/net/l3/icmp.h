@@ -61,6 +61,12 @@ typedef struct {
     uint16_t sequence;          /* Numéro de séquence actuel */
     uint16_t sent;              /* Nombre envoyés */
     uint16_t received;          /* Nombre reçus */
+    uint8_t ttl;                /* TTL de la réponse */
+    uint32_t time;              /* Temps de réponse en ms */
+    uint64_t send_time;         /* Timestamp d'envoi (pour calcul RTT) */
+    uint32_t min_time;          /* Temps min */
+    uint32_t max_time;          /* Temps max */
+    uint32_t total_time;        /* Temps total (pour moyenne) */
     bool waiting;               /* Attente d'une réponse */
     bool active;                /* Ping en cours */
 } ping_state_t;
@@ -99,6 +105,22 @@ int ping_ip(const uint8_t* dest_ip);
  * @return 0 si succès, -1 si erreur DNS, -2 si pas de réponse
  */
 int ping(const char* hostname);
+
+/**
+ * Ping une adresse IP de manière continue.
+ * 
+ * @param dest_ip Adresse IP de destination (4 bytes)
+ * @return 0 si succès, -1 si erreur
+ */
+int ping_ip_continuous(const uint8_t* dest_ip);
+
+/**
+ * Ping un hostname de manière continue (résolution DNS puis ping).
+ * 
+ * @param hostname Nom d'hôte à pinger (ex: "google.com")
+ * @return 0 si succès, -1 si erreur DNS, -2 si pas de réponse
+ */
+int ping_continuous(const char* hostname);
 
 /**
  * Vérifie si un ping est en attente de réponse.
