@@ -1,6 +1,6 @@
 /* src/kernel/timer.c - PIT Timer & RTC Driver Implementation */
 #include "timer.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "console.h"
 
 /* ===========================================
@@ -88,7 +88,7 @@ extern uint32_t scheduler_preempt(void *frame);
 void timer_tick(void)
 {
     g_timer_ticks++;
-    scheduler_tick();
+    /* DISABLED FOR DEBUGGING: scheduler_tick(); */
 }
 
 /**

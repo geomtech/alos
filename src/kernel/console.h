@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
+#include "../include/limine.h"
 
 /* Dimensions de l'écran VGA */
 #define VGA_WIDTH   80
@@ -84,6 +86,18 @@ void console_scroll_down(void);
  * Rafraîchit l'affichage VGA depuis le buffer.
  */
 void console_refresh(void);
+
+/**
+ * Configure l'offset HHDM pour l'adresse VGA.
+ * Doit être appelé avant toute utilisation de la console.
+ */
+void console_set_hhdm_offset(uint64_t hhdm_offset);
+
+/**
+ * Initialize framebuffer console (preferred over VGA text mode).
+ * If successful, all console output will use the framebuffer.
+ */
+void console_init_fb(struct limine_framebuffer *fb);
 
 /**
  * Retourne la ligne de vue actuelle.

@@ -133,7 +133,7 @@ static const keymap_t* current_keymap = &keymap_qwerty_us;
 
 /* Table des keymaps enregistrées */
 static const keymap_t* registered_keymaps[MAX_KEYMAPS];
-static int keymap_count = 0;
+static size_t keymap_count = 0;
 
 /* ========================================
  * Implémentation des fonctions
@@ -182,7 +182,7 @@ const keymap_t* keymap_find_by_name(const char* name)
         return NULL;
     }
     
-    for (int i = 0; i < keymap_count; i++) {
+    for (size_t i = 0; i < keymap_count; i++) {
         if (strcmp(registered_keymaps[i]->name, name) == 0) {
             return registered_keymaps[i];
         }
@@ -194,7 +194,7 @@ const keymap_t* keymap_find_by_name(const char* name)
 /**
  * Récupère la liste de toutes les keymaps disponibles.
  */
-const keymap_t** keymap_list_all(int* count)
+const keymap_t** keymap_list_all(size_t* count)
 {
     if (count != NULL) {
         *count = keymap_count;
@@ -212,7 +212,7 @@ bool keymap_register(const keymap_t* map)
     }
     
     /* Vérifier qu'elle n'est pas déjà enregistrée */
-    for (int i = 0; i < keymap_count; i++) {
+    for (size_t i = 0; i < keymap_count; i++) {
         if (registered_keymaps[i] == map) {
             return true;  /* Déjà enregistrée */
         }

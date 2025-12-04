@@ -25,16 +25,16 @@ static inline void cpu_sti(void)
     __asm__ volatile("sti");
 }
 
-static inline uint32_t cpu_save_flags(void)
+static inline uint64_t cpu_save_flags(void)
 {
-    uint32_t flags;
-    __asm__ volatile("pushfl; popl %0" : "=r"(flags));
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
     return flags;
 }
 
-static inline void cpu_restore_flags(uint32_t flags)
+static inline void cpu_restore_flags(uint64_t flags)
 {
-    __asm__ volatile("pushl %0; popfl" : : "r"(flags) : "memory", "cc");
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
 /* Get current timer tick count (from timer.c) */
@@ -99,7 +99,7 @@ int mutex_lock(mutex_t *mutex)
     thread_t *current = thread_current();
     if (!current) return -1;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&mutex->lock);
@@ -179,7 +179,7 @@ bool mutex_trylock(mutex_t *mutex)
     thread_t *current = thread_current();
     if (!current) return false;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&mutex->lock);
@@ -214,7 +214,7 @@ int mutex_unlock(mutex_t *mutex)
     thread_t *current = thread_current();
     if (!current) return -1;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&mutex->lock);
@@ -289,12 +289,18 @@ void semaphore_init(semaphore_t *sem, int32_t initial_count, uint32_t max_count)
 
 void sem_wait(semaphore_t *sem)
 {
-    if (!sem) return;
+    if (!sem) {
+        KLOG_ERROR("SEM", "sem_wait: sem is NULL!");
+        return;
+    }
     
     thread_t *current = thread_current();
-    if (!current) return;
+    if (!current) {
+        KLOG_ERROR("SEM", "sem_wait: thread_current() returned NULL!");
+        return;
+    }
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&sem->lock);
@@ -333,7 +339,7 @@ bool sem_trywait(semaphore_t *sem)
 {
     if (!sem) return false;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&sem->lock);
@@ -362,7 +368,7 @@ bool sem_timedwait(semaphore_t *sem, uint32_t timeout_ms)
     /* Assuming 1000 Hz timer (1 tick = 1 ms) */
     uint64_t timeout_ticks = timeout_ms;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&sem->lock);
@@ -413,7 +419,7 @@ int sem_post(semaphore_t *sem)
 {
     if (!sem) return -1;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&sem->lock);
@@ -473,7 +479,7 @@ void condvar_wait(condvar_t *cv, mutex_t *mutex)
     thread_t *current = thread_current();
     if (!current) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&cv->lock);
@@ -518,7 +524,7 @@ bool condvar_timedwait(condvar_t *cv, mutex_t *mutex, uint32_t timeout_ms)
     uint64_t start_tick = timer_get_ticks();
     uint64_t timeout_ticks = timeout_ms;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&cv->lock);
@@ -581,7 +587,7 @@ void condvar_signal(condvar_t *cv)
 {
     if (!cv) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&cv->lock);
@@ -609,7 +615,7 @@ void condvar_broadcast(condvar_t *cv)
 {
     if (!cv) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&cv->lock);
@@ -656,7 +662,7 @@ void rwlock_rdlock(rwlock_t *rwlock)
     thread_t *current = thread_current();
     if (!current) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -700,7 +706,7 @@ bool rwlock_tryrdlock(rwlock_t *rwlock)
 {
     if (!rwlock) return false;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -726,7 +732,7 @@ void rwlock_wrlock(rwlock_t *rwlock)
     thread_t *current = thread_current();
     if (!current) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -772,7 +778,7 @@ bool rwlock_trywrlock(rwlock_t *rwlock)
     thread_t *current = thread_current();
     if (!current) return false;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -794,7 +800,7 @@ void rwlock_rdunlock(rwlock_t *rwlock)
 {
     if (!rwlock) return;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -827,7 +833,7 @@ void rwlock_wrunlock(rwlock_t *rwlock)
         return;
     }
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -880,7 +886,7 @@ bool rwlock_upgrade(rwlock_t *rwlock)
     thread_t *current = thread_current();
     if (!current) return false;
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);
@@ -918,7 +924,7 @@ void rwlock_downgrade(rwlock_t *rwlock)
         return;
     }
     
-    uint32_t flags = cpu_save_flags();
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     spinlock_lock(&rwlock->lock);

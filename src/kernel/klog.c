@@ -4,7 +4,7 @@
 #include "console.h"
 #include "../fs/vfs.h"
 #include "../mm/kheap.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 
 /* ===========================================
  * Variables globales
@@ -20,7 +20,7 @@ static vfs_node_t* log_file = NULL;
 static uint32_t log_file_offset = 0;
 
 /* Niveau de log actuel */
-static klog_level_t current_level = LOG_INFO;
+static klog_level_t current_level = LOG_DEBUG;
 
 /* État d'initialisation */
 static int initialized = 0;

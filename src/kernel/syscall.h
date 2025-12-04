@@ -39,36 +39,46 @@
 #define MAX_SYSCALLS    256
 
 /* ========================================
- * Structure des registres pour syscall
+ * Structure des registres pour syscall (x86-64)
  * ======================================== */
 
 /* 
  * Structure passée au dispatcher depuis l'ASM.
- * Correspond à l'ordre des push sur la stack.
+ * Correspond à l'ordre des push sur la stack en x86-64.
+ * 
+ * Convention System V AMD64 pour syscalls:
+ * - RAX = numéro du syscall
+ * - RDI = arg1, RSI = arg2, RDX = arg3, R10 = arg4, R8 = arg5, R9 = arg6
+ * - Retour dans RAX
  */
 typedef struct {
-    /* Registres sauvegardés par pusha (ordre inverse) */
-    uint32_t edi;
-    uint32_t esi;
-    uint32_t ebp;
-    uint32_t esp_dummy;     /* ESP sauvegardé par pusha (pas utilisé) */
-    uint32_t ebx;           /* Argument 1 */
-    uint32_t edx;           /* Argument 3 */
-    uint32_t ecx;           /* Argument 2 */
-    uint32_t eax;           /* Numéro du syscall / Valeur de retour */
+    /* Registres sauvegardés (ordre inverse des push) */
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;           /* Argument 4 */
+    uint64_t r9;            /* Argument 6 */
+    uint64_t r8;            /* Argument 5 */
+    uint64_t rdi;           /* Argument 1 */
+    uint64_t rsi;           /* Argument 2 */
+    uint64_t rbp;
+    uint64_t rbx;
+    uint64_t rdx;           /* Argument 3 */
+    uint64_t rcx;
+    uint64_t rax;           /* Numéro du syscall / Valeur de retour */
     
-    /* Segments sauvegardés */
-    uint32_t ds;
-    uint32_t es;
-    uint32_t fs;
-    uint32_t gs;
+    /* Pushé par le stub ISR */
+    uint64_t int_no;
+    uint64_t error_code;
     
-    /* Pushé par le CPU lors de l'interruption (depuis Ring 3) */
-    uint32_t eip;
-    uint32_t cs;
-    uint32_t eflags;
-    uint32_t user_esp;      /* ESP utilisateur (seulement si changement de ring) */
-    uint32_t user_ss;       /* SS utilisateur (seulement si changement de ring) */
+    /* Pushé par le CPU lors de l'interruption */
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;           /* RSP utilisateur */
+    uint64_t ss;            /* SS utilisateur */
 } syscall_regs_t;
 
 /* ========================================
@@ -98,12 +108,12 @@ void syscall_dispatcher(syscall_regs_t* regs);
  * Ces fonctions sont des wrappers publics autour des implémentations internes.
  */
 void syscall_do_exit(int status);
-int syscall_do_read(int fd, void* buf, uint32_t count);
-int syscall_do_write(int fd, const void* buf, uint32_t count);
-int syscall_do_open(const char* path, uint32_t flags);
+int syscall_do_read(int fd, void* buf, uint64_t count);
+int syscall_do_write(int fd, const void* buf, uint64_t count);
+int syscall_do_open(const char* path, uint64_t flags);
 int syscall_do_close(int fd);
 int syscall_do_getpid(void);
-int syscall_do_getcwd(char* buf, uint32_t size);
+int syscall_do_getcwd(char* buf, uint64_t size);
 int syscall_do_chdir(const char* path);
 int syscall_do_mkdir(const char* path);
 

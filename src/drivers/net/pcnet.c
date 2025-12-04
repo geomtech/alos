@@ -8,8 +8,8 @@
  * n'importe quel registre général et bénéficie du pipelining CPU.
  */
 #include "pcnet.h"
-#include "../../arch/x86/idt.h"
-#include "../../arch/x86/io.h"
+#include "../../arch/x86_64/idt.h"
+#include "../../arch/x86_64/io.h"
 #include "../../kernel/mmio/mmio.h"
 #include "../../kernel/mmio/pci_mmio.h"
 #include "../../mm/kheap.h"
@@ -520,8 +520,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     /* Utiliser le wrapper ASM existant pour IRQ 11 car il fait ce qu'on veut
      * (EOI) */
     extern void irq11_handler(void);
-    idt_set_gate(32 + pci_dev->interrupt_line, (uint32_t)irq11_handler, 0x08,
-                 0x8E);
+    idt_set_gate(32 + pci_dev->interrupt_line, (uint64_t)irq11_handler, 0x08, 0x8E, 0);
   }
 
   /* Étape 1: Activer le Bus Mastering PCI */

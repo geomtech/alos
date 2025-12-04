@@ -32,29 +32,13 @@
 #define WORKER_SHUTDOWN_TIMEOUT_MS 5000
 
 /* ========================================
- * Interrupt Frame - Contexte CPU complet
- * Utilisé pour la préemption depuis IRQ
+ * Interrupt Frame - Contexte CPU complet (x86-64)
+ * Défini dans arch/x86_64/idt.h, on utilise un forward declaration
  * ======================================== */
 
-typedef struct interrupt_frame {
-    /* Registres poussés par pusha (ordre inverse) */
-    uint32_t edi;
-    uint32_t esi;
-    uint32_t ebp;
-    uint32_t esp_dummy;  /* ESP ignoré par popa */
-    uint32_t ebx;
-    uint32_t edx;
-    uint32_t ecx;
-    uint32_t eax;
-    
-    /* Poussés par le CPU lors de l'interruption */
-    uint32_t eip;
-    uint32_t cs;
-    uint32_t eflags;
-    /* Si changement de ring (Ring 3 → Ring 0) : */
-    uint32_t user_esp;
-    uint32_t user_ss;
-} __attribute__((packed)) interrupt_frame_t;
+/* Forward declaration - la structure complète est dans idt.h */
+struct interrupt_frame;
+typedef struct interrupt_frame interrupt_frame_t;
 
 /* ========================================
  * Types de priorité
@@ -134,6 +118,35 @@ static inline bool spinlock_trylock(spinlock_t *lock)
 }
 
 /* ========================================
+ * IRQ-safe Spinlock variants
+ * These disable interrupts to prevent deadlock when
+ * the same lock is used from both thread and IRQ context.
+ * ======================================== */
+
+static inline uint64_t spinlock_irqsave(spinlock_t *lock)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    __asm__ volatile("cli");
+    if (lock) {
+        while (__sync_lock_test_and_set(&lock->value, 1) != 0) {
+            while (lock->value) {
+                __asm__ volatile("pause");
+            }
+        }
+    }
+    return flags;
+}
+
+static inline void spinlock_irqrestore(spinlock_t *lock, uint64_t flags)
+{
+    if (lock) {
+        __sync_lock_release(&lock->value);
+    }
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+/* ========================================
  * Wait Queue - Synchronisation
  * ======================================== */
 
@@ -163,13 +176,13 @@ struct thread {
     int exit_status;                /* Code de sortie */
     bool first_switch;              /* True si le thread n'a jamais été exécuté */
     
-    /* Contexte CPU */
-    uint32_t esp;                   /* Stack Pointer sauvegardé */
-    uint32_t esp0;                  /* Kernel Stack top */
+    /* Contexte CPU (x86-64) */
+    uint64_t rsp;                   /* Stack Pointer sauvegardé */
+    uint64_t rsp0;                  /* Kernel Stack top (pour TSS) */
     
     /* Stack */
     void *stack_base;               /* Base de la stack allouée */
-    uint32_t stack_size;            /* Taille de la stack */
+    uint64_t stack_size;            /* Taille de la stack */
     
     /* Point d'entrée */
     thread_entry_t entry;           /* Fonction d'entrée */
@@ -317,8 +330,8 @@ thread_t *thread_create_in_process(process_t *proc, const char *name,
  * @return Thread créé, ou NULL si erreur
  */
 thread_t *thread_create_user(process_t *proc, const char *name,
-                             uint32_t entry_point, uint32_t user_esp,
-                             void *kernel_stack, uint32_t kernel_stack_size);
+                             uint64_t entry_point, uint64_t user_rsp,
+                             void *kernel_stack, uint64_t kernel_stack_size);
 
 /**
  * Termine le thread courant.
@@ -429,7 +442,7 @@ void scheduler_tick(void);
  * @param frame Pointeur vers les registres sauvegardés sur la stack
  * @return Nouveau ESP si préemption, 0 si pas de changement
  */
-uint32_t scheduler_preempt(interrupt_frame_t *frame);
+uint64_t scheduler_preempt(interrupt_frame_t *frame);
 
 /**
  * Force un context switch.

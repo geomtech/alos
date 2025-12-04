@@ -6,8 +6,8 @@
 #include "klog.h"
 #include "keyboard.h"
 #include "linux_compat.h"
-#include "../arch/x86/idt.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/idt.h"
+#include "../arch/x86_64/io.h"
 #include "../shell/shell.h"
 #include "../fs/file.h"
 #include "../fs/vfs.h"
@@ -42,18 +42,17 @@ static void fd_table_init(void)
     
     /* Allouer la table dynamiquement pour éviter les problèmes de .bss */
     if (fd_table == NULL) {
-        extern void* kmalloc(uint32_t size);
+        extern void* kmalloc(size_t size);
         fd_table = (file_descriptor_t*)kmalloc(sizeof(file_descriptor_t) * MAX_FD);
         if (fd_table == NULL) {
             console_puts("[SYSCALL] FATAL: Cannot allocate fd_table!\n");
             return;
         }
-        console_puts("[SYSCALL] fd_table allocated at ");
-        console_put_hex((uint32_t)fd_table);
-        console_puts("\n");
+
+        KLOG_INFO_HEX("SYSCALL", "fd_table allocated at address: ", (uint32_t)(uintptr_t)fd_table);
         
         /* Forcer le rechargement du TLB pour être sûr que les nouveaux mappings sont visibles */
-        __asm__ volatile("mov %%cr3, %%eax; mov %%eax, %%cr3" : : : "eax", "memory");
+        __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" : : : "rax", "memory");
     }
     
     for (int i = 0; i < MAX_FD; i++) {
@@ -168,31 +167,13 @@ static int sys_exit(int status)
  * @param buf     Pointeur vers la chaîne (dans EBX)
  * @param count   Nombre de caractères (dans ECX), 0 = null-terminated
  */
-static int sys_write(int fd, const char* buf, uint32_t count)
+static int sys_write(int fd, const char* buf, uint64_t count)
 {
-    (void)fd;  /* Ignoré pour l'instant */
+    (void)fd;
+    (void)buf;
+    (void)count;
     
-    if (buf == NULL) {
-        return -1;
-    }
-    
-    KLOG_INFO("SYSCALL", "sys_write called");
-    KLOG_INFO_HEX("SYSCALL", "  Buffer at: ", (uint32_t)buf);
-    
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    
-    if (count == 0) {
-        /* Null-terminated string */
-        console_puts(buf);
-    } else {
-        /* Écrire exactement count caractères */
-        for (uint32_t i = 0; i < count && buf[i] != '\0'; i++) {
-            console_putc(buf[i]);
-        }
-    }
-    
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
+    /* COMPLETELY DISABLED FOR DEBUGGING */
     return 0;
 }
 
@@ -212,18 +193,13 @@ static int sys_open(const char* path, int flags)
     }
     
     KLOG_INFO("SYSCALL", "sys_open called");
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] open: ");
-    console_puts(path);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO("SYSCALL", "[SYSCALL] open:");
+    KLOG_INFO("SYSCALL", path);
     
     /* Ouvrir le fichier via VFS */
     vfs_node_t* node = vfs_open(path, flags);
     if (node == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[SYSCALL] open: file not found\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        KLOG_ERROR("SYSCALL", "[SYSCALL] open: file not found");
         return -1;
     }
     
@@ -231,7 +207,7 @@ static int sys_open(const char* path, int flags)
     int fd = fd_alloc();
     if (fd < 0) {
         vfs_close(node);
-        console_puts("[SYSCALL] open: no free file descriptors\n");
+        KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
         return -1;
     }
     
@@ -241,13 +217,8 @@ static int sys_open(const char* path, int flags)
     fd_table[fd].position = 0;
     fd_table[fd].vfs_node = node;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] open: fd=");
-    console_put_dec(fd);
-    console_puts(", size=");
-    console_put_dec(node->size);
-    console_puts(" bytes\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO_DEC("SYSCALL", "[SYSCALL] open: fd=", fd);
+    KLOG_INFO_DEC("SYSCALL", "file size=", node->size);
     
     return fd;
 }
@@ -260,7 +231,7 @@ static int sys_open(const char* path, int flags)
  * @param count  Nombre de bytes à lire
  * @return Nombre de bytes lus, ou -1 si erreur
  */
-static int sys_read(int fd, void* buf, uint32_t count)
+static int sys_read(int fd, void* buf, uint64_t count)
 {
     fd_table_init();
     
@@ -332,7 +303,7 @@ static char current_working_dir[VFS_MAX_PATH] = "/";
  * @param size  Taille du buffer
  * @return 0 si succès, -1 si erreur
  */
-static int sys_getcwd(char* buf, uint32_t size)
+static int sys_getcwd(char* buf, uint64_t size)
 {
     if (buf == NULL || size == 0) {
         return -1;
@@ -707,6 +678,7 @@ static int sys_listen(int fd, int backlog)
     
     KLOG_DEBUG_DEC("SYSCALL", "sys_listen: listening on port ", sock->local_port);
     
+    KLOG_INFO("SYSCALL", "sys_listen returning 0");
     return 0;
 }
 
@@ -739,11 +711,27 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     uint16_t port = listen_sock->local_port;
     tcp_socket_t* client_sock = NULL;
     
-    /* Attendre qu'un socket client soit prêt (ESTABLISHED) - polling sans délai */
+    /* Attendre qu'un socket client soit prêt (ESTABLISHED).
+     * On utilise une condition variable pour bloquer efficacement
+     * jusqu'à ce que tcp_handle_packet() signale une nouvelle connexion.
+     * 
+     * Note: Les interruptions DOIVENT être activées pendant l'attente
+     * pour que l'IRQ réseau puisse traiter le handshake TCP.
+     */
+    KLOG_DEBUG("SYSCALL", "sys_accept: waiting for connection...");
+    
+    /* Acquérir le mutex avant de vérifier/attendre */
+    mutex_lock(&listen_sock->accept_mutex);
+    
     while ((client_sock = tcp_find_ready_client(port)) == NULL) {
-        /* Juste céder le CPU, pas de délai */
-        thread_yield();
+        /* Attendre sur la condition variable - libère le mutex et bloque.
+         * Sera réveillé par tcp_handle_packet() quand un client passe à ESTABLISHED. */
+        condvar_wait(&listen_sock->accept_cv, &listen_sock->accept_mutex);
     }
+    
+    mutex_unlock(&listen_sock->accept_mutex);
+    
+    KLOG_DEBUG("SYSCALL", "sys_accept: connection ready!");
     
     /* Allouer un nouveau FD pour le socket client */
     int client_fd = fd_alloc();
@@ -794,20 +782,20 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
         return 0;
     }
     
-    net_lock();
-    
-    /* Attente des données - yield sans délai */
+    /* Attente des données avec sleep pour permettre aux IRQ de s'exécuter.
+     * On ne prend PAS le lock pendant l'attente pour éviter les deadlocks
+     * avec l'IRQ réseau qui traite les paquets entrants.
+     */
     while (tcp_available(sock) == 0) {
         if (sock->state != TCP_STATE_ESTABLISHED) {
-            net_unlock();
             return 0;
         }
-        /* Relâcher le lock, yield, reprendre */
-        net_unlock();
-        thread_yield();
-        net_lock();
+        /* Sleep 1ms pour permettre aux IRQ de traiter les paquets */
+        thread_sleep_ms(1);
     }
     
+    /* Prendre le lock seulement pour la lecture des données */
+    net_lock();
     int n = tcp_recv(sock, buf, len);
     net_unlock();
     
@@ -907,39 +895,44 @@ static int sys_close(int fd)
 
 void syscall_dispatcher(syscall_regs_t* regs)
 {
-    uint32_t syscall_num = regs->eax;
+    uint32_t syscall_num = regs->rax;
     int result = -1;
     
-    /* DEBUG: Afficher le syscall reçu */
-    KLOG_INFO("SYSCALL", "=== Syscall Dispatcher ===");
-    KLOG_INFO_HEX("SYSCALL", "Syscall number (EAX): ", syscall_num);
-    KLOG_INFO_HEX("SYSCALL", "Arg1 (EBX): ", regs->ebx);
-    KLOG_INFO_HEX("SYSCALL", "Arg2 (ECX): ", regs->ecx);
-    KLOG_INFO_HEX("SYSCALL", "Arg3 (EDX): ", regs->edx);
+    /* DEBUG: Vérification de sanité du RIP */
+    uint64_t entry_rip_low = regs->rip & 0xFFFFFFFF;
+    if (entry_rip_low >= 0xBFFF0000 && entry_rip_low <= 0xC0000000) {
+        KLOG_ERROR("SYSCALL", "FATAL: Entry RIP corrupted (points to stack)!");
+        KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
+        KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
+        KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
+        KLOG_ERROR_HEX("SYSCALL", "  RSP (low): ", (uint32_t)regs->rsp);
+        KLOG_ERROR_HEX("SYSCALL", "  RFLAGS: ", (uint32_t)regs->rflags);
+        for (;;) __asm__ volatile("hlt");
+    }
     
     /* Vérifier si le mode compatibilité Linux est actif */
     if (linux_compat_is_active()) {
         /* Déléguer au handler Linux */
         result = linux_syscall_handler(regs);
-        regs->eax = (uint32_t)result;
+        regs->rax = (uint32_t)result;
         return;
     }
     
     switch (syscall_num) {
         case SYS_EXIT:
-            result = sys_exit((int)regs->ebx);
+            result = sys_exit((int)regs->rdi);
             break;
         
         case SYS_READ:
-            result = sys_read((int)regs->ebx, (void*)regs->ecx, regs->edx);
+            result = sys_read((int)regs->rdi, (void*)regs->rsi, regs->rdx);
             break;
             
         case SYS_WRITE:
-            result = sys_write((int)regs->ebx, (const char*)regs->ecx, regs->edx);
+            result = sys_write((int)regs->rdi, (const char*)regs->rsi, regs->rdx);
             break;
         
         case SYS_OPEN:
-            result = sys_open((const char*)regs->ebx, (int)regs->ecx);
+            result = sys_open((const char*)regs->rdi, (int)regs->rsi);
             break;
             
         case SYS_GETPID:
@@ -948,33 +941,36 @@ void syscall_dispatcher(syscall_regs_t* regs)
         
         /* Socket syscalls */
         case SYS_SOCKET:
-            result = sys_socket((int)regs->ebx, (int)regs->ecx, (int)regs->edx);
+            result = sys_socket((int)regs->rdi, (int)regs->rsi, (int)regs->rdx);
             break;
             
         case SYS_BIND:
-            result = sys_bind((int)regs->ebx, (sockaddr_in_t*)regs->ecx, (int)regs->edx);
+            result = sys_bind((int)regs->rdi, (sockaddr_in_t*)regs->rsi, (int)regs->rdx);
             break;
             
         case SYS_LISTEN:
-            result = sys_listen((int)regs->ebx, (int)regs->ecx);
+            result = sys_listen((int)regs->rdi, (int)regs->rsi);
             break;
             
         case SYS_ACCEPT:
-            result = sys_accept((int)regs->ebx, (sockaddr_in_t*)regs->ecx, (int*)regs->edx);
+            result = sys_accept((int)regs->rdi, (sockaddr_in_t*)regs->rsi, (int*)regs->rdx);
+            KLOG_INFO_HEX("SYSCALL", "sys_accept returned: ", (uint32_t)result);
+            KLOG_INFO_HEX("SYSCALL", "Post-accept RIP: ", regs->rip);
+            KLOG_INFO_HEX("SYSCALL", "Post-accept RSP: ", regs->rsp);
             break;
             
         case SYS_RECV:
             /* recv(fd, buf, len, flags) - EDI contient flags */
-            result = sys_recv((int)regs->ebx, (uint8_t*)regs->ecx, (int)regs->edx, (int)regs->edi);
+            result = sys_recv((int)regs->rdi, (uint8_t*)regs->rsi, (int)regs->rdx, (int)regs->r8);
             break;
             
         case SYS_SEND:
             /* send(fd, buf, len, flags) - EDI contient flags */
-            result = sys_send((int)regs->ebx, (const uint8_t*)regs->ecx, (int)regs->edx, (int)regs->edi);
+            result = sys_send((int)regs->rdi, (const uint8_t*)regs->rsi, (int)regs->rdx, (int)regs->r8);
             break;
             
         case SYS_CLOSE:
-            result = sys_close((int)regs->ebx);
+            result = sys_close((int)regs->rdi);
             break;
             
         case SYS_KBHIT:
@@ -983,23 +979,23 @@ void syscall_dispatcher(syscall_regs_t* regs)
         
         /* Filesystem syscalls */
         case SYS_GETCWD:
-            result = sys_getcwd((char*)regs->ebx, regs->ecx);
+            result = sys_getcwd((char*)regs->rdi, regs->rsi);
             break;
             
         case SYS_CHDIR:
-            result = sys_chdir((const char*)regs->ebx);
+            result = sys_chdir((const char*)regs->rdi);
             break;
             
         case SYS_READDIR:
-            result = sys_readdir((const char*)regs->ebx, regs->ecx, (userspace_dirent_t*)regs->edx);
+            result = sys_readdir((const char*)regs->rdi, regs->rsi, (userspace_dirent_t*)regs->rdx);
             break;
             
         case SYS_MKDIR:
-            result = sys_mkdir((const char*)regs->ebx);
+            result = sys_mkdir((const char*)regs->rdi);
             break;
             
         case SYS_CREATE:
-            result = sys_create((const char*)regs->ebx);
+            result = sys_create((const char*)regs->rdi);
             break;
         
         /* System syscalls */
@@ -1008,7 +1004,7 @@ void syscall_dispatcher(syscall_regs_t* regs)
             break;
             
         case SYS_MEMINFO:
-            result = sys_meminfo((meminfo_t*)regs->ebx);
+            result = sys_meminfo((meminfo_t*)regs->rdi);
             break;
             
         default:
@@ -1018,7 +1014,9 @@ void syscall_dispatcher(syscall_regs_t* regs)
     }
     
     /* Retourner le résultat dans EAX */
-    regs->eax = (uint32_t)result;
+    regs->rax = (uint32_t)result;
+    
+    KLOG_INFO("SYSCALL", "syscall_dispatcher returning");
 }
 
 /* ========================================
@@ -1041,10 +1039,10 @@ void syscall_init(void)
      *   
      *   0x80 | 0x60 | 0x0E = 0xEE
      */
-    extern void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags);
-    
-    /* 0x08 = Kernel Code Segment, 0xEE = Present | DPL=3 | 32-bit Interrupt Gate */
-    idt_set_gate(0x80, (uint32_t)syscall_handler_asm, 0x08, 0xEE);
+    /* 0x08 = Kernel Code Segment, 0x8E = Present | DPL=0 | Interrupt Gate
+     * Pour permettre l'appel depuis Ring 3, on utilise 0xEE (DPL=3)
+     * IST=0 pour utiliser la stack normale */
+    idt_set_gate(0x80, (uint64_t)syscall_handler_asm, 0x08, 0xEE, 0);
     
     KLOG_INFO("SYSCALL", "INT 0x80 registered (DPL=3)");
     
@@ -1062,15 +1060,15 @@ void syscall_do_exit(int status) {
     sys_exit(status);
 }
 
-int syscall_do_read(int fd, void* buf, uint32_t count) {
+int syscall_do_read(int fd, void* buf, uint64_t count) {
     return sys_read(fd, buf, count);
 }
 
-int syscall_do_write(int fd, const void* buf, uint32_t count) {
+int syscall_do_write(int fd, const void* buf, uint64_t count) {
     return sys_write(fd, buf, count);
 }
 
-int syscall_do_open(const char* path, uint32_t flags) {
+int syscall_do_open(const char* path, uint64_t flags) {
     return sys_open(path, flags);
 }
 
@@ -1082,7 +1080,7 @@ int syscall_do_getpid(void) {
     return sys_getpid();
 }
 
-int syscall_do_getcwd(char* buf, uint32_t size) {
+int syscall_do_getcwd(char* buf, uint64_t size) {
     return sys_getcwd(buf, size);
 }
 

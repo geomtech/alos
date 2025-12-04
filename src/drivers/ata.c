@@ -1,6 +1,6 @@
 /* src/drivers/ata.c - ATA PIO Mode Driver Implementation */
 #include "ata.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "../kernel/klog.h"
 
 /* Flag indiquant si un disque a été détecté */

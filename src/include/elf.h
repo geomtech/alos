@@ -146,13 +146,66 @@ typedef struct {
 } __attribute__((packed)) Elf32_Shdr;
 
 /* ========================================
+ * ELF64 Header Structure
+ * ======================================== */
+
+typedef struct {
+    uint8_t     e_ident[EI_NIDENT]; /* ELF identification */
+    uint16_t    e_type;             /* Object file type */
+    uint16_t    e_machine;          /* Machine type */
+    uint32_t    e_version;          /* Object file version */
+    uint64_t    e_entry;            /* Entry point address */
+    uint64_t    e_phoff;            /* Program header offset */
+    uint64_t    e_shoff;            /* Section header offset */
+    uint32_t    e_flags;            /* Processor-specific flags */
+    uint16_t    e_ehsize;           /* ELF header size */
+    uint16_t    e_phentsize;        /* Size of program header entry */
+    uint16_t    e_phnum;            /* Number of program header entries */
+    uint16_t    e_shentsize;        /* Size of section header entry */
+    uint16_t    e_shnum;            /* Number of section header entries */
+    uint16_t    e_shstrndx;         /* Section name string table index */
+} __attribute__((packed)) Elf64_Ehdr;
+
+/* ========================================
+ * ELF64 Program Header Structure
+ * ======================================== */
+
+typedef struct {
+    uint32_t    p_type;             /* Segment type */
+    uint32_t    p_flags;            /* Segment flags */
+    uint64_t    p_offset;           /* Offset in file */
+    uint64_t    p_vaddr;            /* Virtual address in memory */
+    uint64_t    p_paddr;            /* Physical address (ignored) */
+    uint64_t    p_filesz;           /* Size in file */
+    uint64_t    p_memsz;            /* Size in memory */
+    uint64_t    p_align;            /* Alignment */
+} __attribute__((packed)) Elf64_Phdr;
+
+/* ========================================
+ * ELF64 Section Header Structure
+ * ======================================== */
+
+typedef struct {
+    uint32_t    sh_name;            /* Section name (index into string table) */
+    uint32_t    sh_type;            /* Section type */
+    uint64_t    sh_flags;           /* Section flags */
+    uint64_t    sh_addr;            /* Address in memory */
+    uint64_t    sh_offset;          /* Offset in file */
+    uint64_t    sh_size;            /* Size of section */
+    uint32_t    sh_link;            /* Link to another section */
+    uint32_t    sh_info;            /* Additional section info */
+    uint64_t    sh_addralign;       /* Alignment */
+    uint64_t    sh_entsize;         /* Entry size if section holds table */
+} __attribute__((packed)) Elf64_Shdr;
+
+/* ========================================
  * Error Codes
  * ======================================== */
 
 #define ELF_OK              0       /* Success */
 #define ELF_ERR_FILE        -1      /* File not found or read error */
 #define ELF_ERR_MAGIC       -2      /* Invalid magic number */
-#define ELF_ERR_CLASS       -3      /* Wrong class (not 32-bit) */
+#define ELF_ERR_CLASS       -3      /* Wrong class */
 #define ELF_ERR_MACHINE     -4      /* Wrong machine type */
 #define ELF_ERR_TYPE        -5      /* Not an executable */
 #define ELF_ERR_MEMORY      -6      /* Memory allocation failed */

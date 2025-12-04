@@ -1,4 +1,4 @@
-/* src/arch/x86/tss.h - Task State Segment */
+/* src/arch/x86_64/gdt.h - Task State Segment */
 #ifndef TSS_H
 #define TSS_H
 

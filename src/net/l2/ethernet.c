@@ -29,8 +29,15 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
     int payload_len = len - ETHERNET_HEADER_SIZE;
     
     /* Dispatcher selon le type de protocole */
-    /* Protection globale de la stack réseau */
-    net_lock();
+    /* NOTE: Pas de net_lock() ici car cette fonction peut être appelée depuis
+     * un contexte IRQ. Les mutex ne peuvent pas être utilisés dans les IRQ
+     * car ils peuvent causer un deadlock si le thread qui tient le mutex
+     * est interrompu par l'IRQ qui essaie de prendre le même mutex.
+     * 
+     * Les handlers individuels (ARP, IPv4) doivent gérer leur propre
+     * synchronisation si nécessaire, en utilisant des spinlocks avec
+     * interruptions désactivées.
+     */
     
     switch (ethertype) {
         case ETH_TYPE_ARP:
@@ -51,8 +58,6 @@ void ethernet_handle_packet_netif(NetInterface* netif, uint8_t* data, int len)
             /* Type inconnu - ignorer silencieusement */
             break;
     }
-    
-    net_unlock();
 }
 
 /**

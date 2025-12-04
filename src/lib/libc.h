@@ -10,13 +10,13 @@
  * Type Definitions
  * ======================================== */
 
-typedef int32_t ssize_t;
-typedef int32_t off_t;
+typedef int64_t ssize_t;
+typedef int64_t off_t;
 typedef uint32_t mode_t;
 typedef int32_t pid_t;
 typedef uint32_t uid_t;
 typedef uint32_t gid_t;
-typedef int32_t time_t;
+typedef int64_t time_t;
 
 /* ========================================
  * Boolean Type
@@ -250,57 +250,63 @@ static inline uint32_t ntohl(uint32_t x)
 }
 
 /* ========================================
- * Syscall Wrapper (inline assembly)
+ * Syscall Wrapper (inline assembly) - x86-64
  * ======================================== */
 
 /**
  * Generic syscall with 3 arguments
  * 
- * Convention:
- *   EAX = syscall number
- *   EBX = arg1
- *   ECX = arg2
- *   EDX = arg3
- *   Return value in EAX
+ * x86-64 Linux syscall convention:
+ *   RAX = syscall number
+ *   RDI = arg1
+ *   RSI = arg2
+ *   RDX = arg3
+ *   R10 = arg4
+ *   R8  = arg5
+ *   R9  = arg6
+ *   Return value in RAX
  */
-static inline int syscall3(int num, int arg1, int arg2, int arg3)
+static inline long syscall3(long num, long arg1, long arg2, long arg3)
 {
-    int result;
+    long result;
     __asm__ volatile (
         "int $0x80"
         : "=a" (result)
-        : "a" (num), "b" (arg1), "c" (arg2), "d" (arg3)
-        : "memory"
+        : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3)
+        : "memory", "rcx", "r11"
     );
     return result;
 }
 
 /**
- * Syscall with 4 arguments (uses ESI for 4th arg)
+ * Syscall with 4 arguments
  */
-static inline int syscall4(int num, int arg1, int arg2, int arg3, int arg4)
+static inline long syscall4(long num, long arg1, long arg2, long arg3, long arg4)
 {
-    int result;
+    long result;
+    register long r10 __asm__("r10") = arg4;
     __asm__ volatile (
         "int $0x80"
         : "=a" (result)
-        : "a" (num), "b" (arg1), "c" (arg2), "d" (arg3), "S" (arg4)
-        : "memory"
+        : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3), "r" (r10)
+        : "memory", "rcx", "r11"
     );
     return result;
 }
 
 /**
- * Syscall with 5 arguments (uses ESI and EDI)
+ * Syscall with 5 arguments
  */
-static inline int syscall5(int num, int arg1, int arg2, int arg3, int arg4, int arg5)
+static inline long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5)
 {
-    int result;
+    long result;
+    register long r10 __asm__("r10") = arg4;
+    register long r8 __asm__("r8") = arg5;
     __asm__ volatile (
         "int $0x80"
         : "=a" (result)
-        : "a" (num), "b" (arg1), "c" (arg2), "d" (arg3), "S" (arg4), "D" (arg5)
-        : "memory"
+        : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3), "r" (r10), "r" (r8)
+        : "memory", "rcx", "r11"
     );
     return result;
 }
@@ -313,11 +319,12 @@ static inline int syscall5(int num, int arg1, int arg2, int arg3, int arg4, int 
 int main(int argc, char *argv[]);
 
 /**
- * Entry point for userland programs.
+ * Entry point for userland programs (x86-64).
  * This is called by the kernel and calls main(), then exit().
  * 
+ * x86-64 ABI: arguments passed in RDI, RSI, RDX, RCX, R8, R9
  * Stack layout when _start is called:
- *   [argc]      <- ESP points here
+ *   [argc]      <- RSP points here
  *   [argv]      <- Pointer to argv array
  *   ...
  */
@@ -326,27 +333,26 @@ void _start(void)
 {
     __asm__ volatile (
         /* Get argc from stack */
-        "popl %%eax\n"          /* EAX = argc */
+        "popq %%rdi\n"          /* RDI = argc (1st arg to main) */
         /* Get argv from stack */
-        "popl %%ebx\n"          /* EBX = argv */
+        "popq %%rsi\n"          /* RSI = argv (2nd arg to main) */
         
-        /* Push arguments for main(argc, argv) */
-        "pushl %%ebx\n"         /* Push argv */
-        "pushl %%eax\n"         /* Push argc */
+        /* Align stack to 16 bytes (required by x86-64 ABI) */
+        "andq $-16, %%rsp\n"
         
-        /* Call main */
+        /* Call main(argc, argv) */
         "call main\n"
         
-        /* main returned in EAX, call exit(EAX) */
-        "movl %%eax, %%ebx\n"   /* EBX = return value */
-        "movl $1, %%eax\n"      /* EAX = SYS_EXIT (1) */
+        /* main returned in RAX, call exit(RAX) */
+        "movq %%rax, %%rdi\n"   /* RDI = return value (1st arg to syscall) */
+        "movq $1, %%rax\n"      /* RAX = SYS_EXIT (1) */
         "int $0x80\n"           /* syscall */
         
         /* Should never reach here */
         "1: jmp 1b\n"
         :
         :
-        : "eax", "ebx", "memory"
+        : "rax", "rdi", "rsi", "memory"
     );
 }
 
@@ -365,7 +371,7 @@ static inline void __attribute__((noreturn)) exit(int status)
  */
 static inline ssize_t write(int fd, const void* buf, size_t count)
 {
-    return syscall3(SYS_WRITE, fd, (int)buf, (int)count);
+    return syscall3(SYS_WRITE, fd, (long)buf, (long)count);
 }
 
 /**
@@ -373,7 +379,7 @@ static inline ssize_t write(int fd, const void* buf, size_t count)
  */
 static inline ssize_t read(int fd, void* buf, size_t count)
 {
-    return syscall3(SYS_READ, fd, (int)buf, (int)count);
+    return syscall3(SYS_READ, fd, (long)buf, (long)count);
 }
 
 /**
@@ -397,7 +403,7 @@ static inline int close(int fd)
  */
 static inline int open(const char* path, int flags, ...)
 {
-    return syscall3(SYS_OPEN, (int)path, flags, 0);
+    return syscall3(SYS_OPEN, (long)path, flags, 0);
 }
 
 /**
@@ -410,7 +416,7 @@ static inline int open(const char* path, int flags, ...)
  */
 static inline off_t lseek(int fd, off_t offset, int whence)
 {
-    return syscall3(SYS_LSEEK, fd, (int)offset, whence);
+    return syscall3(SYS_LSEEK, fd, (long)offset, whence);
 }
 
 /**
@@ -538,7 +544,7 @@ static inline int socket(int domain, int type, int protocol)
  */
 static inline int bind(int sockfd, const struct sockaddr* addr, int addrlen)
 {
-    return syscall3(SYS_BIND, sockfd, (int)addr, addrlen);
+    return syscall3(SYS_BIND, sockfd, (long)addr, addrlen);
 }
 
 /**
@@ -570,7 +576,7 @@ static inline int listen(int sockfd, int backlog)
  */
 static inline int accept(int sockfd, struct sockaddr* addr, int* addrlen)
 {
-    return syscall3(SYS_ACCEPT, sockfd, (int)addr, (int)addrlen);
+    return syscall3(SYS_ACCEPT, sockfd, (long)addr, (long)addrlen);
 }
 
 /**
@@ -588,7 +594,7 @@ static inline int accept(int sockfd, struct sockaddr* addr, int* addrlen)
  */
 static inline int recv(int sockfd, void* buf, size_t len, int flags)
 {
-    return syscall4(SYS_RECV, sockfd, (int)buf, (int)len, flags);
+    return syscall4(SYS_RECV, sockfd, (long)buf, (long)len, flags);
 }
 
 /**
@@ -606,7 +612,7 @@ static inline int recv(int sockfd, void* buf, size_t len, int flags)
  */
 static inline ssize_t send(int sockfd, const void* buf, size_t len, int flags)
 {
-    return syscall4(SYS_SEND, sockfd, (int)buf, (int)len, flags);
+    return syscall4(SYS_SEND, sockfd, (long)buf, (long)len, flags);
 }
 
 /**
@@ -619,7 +625,7 @@ static inline ssize_t send(int sockfd, const void* buf, size_t len, int flags)
  */
 static inline int connect(int sockfd, const struct sockaddr* addr, int addrlen)
 {
-    return syscall3(SYS_CONNECT, sockfd, (int)addr, addrlen);
+    return syscall3(SYS_CONNECT, sockfd, (long)addr, addrlen);
 }
 
 /**
@@ -849,7 +855,7 @@ static inline int printf(const char* fmt, ...)
             case 'p': {
                 void* p = va_arg(args, void*);
                 write(STDOUT_FILENO, "0x", 2);
-                itoa((uint32_t)p, buf, 16);
+                itoa((uint64_t)p, buf, 16);
                 size_t len = strlen(buf);
                 write(STDOUT_FILENO, buf, len);
                 written += 2 + len;
@@ -971,7 +977,7 @@ typedef struct {
  */
 static inline int getcwd(char* buf, size_t size)
 {
-    return syscall3(SYS_GETCWD, (int)buf, (int)size, 0);
+    return syscall3(SYS_GETCWD, (long)buf, (long)size, 0);
 }
 
 /**
@@ -982,7 +988,7 @@ static inline int getcwd(char* buf, size_t size)
  */
 static inline int chdir(const char* path)
 {
-    return syscall3(SYS_CHDIR, (int)path, 0, 0);
+    return syscall3(SYS_CHDIR, (long)path, 0, 0);
 }
 
 /**
@@ -995,7 +1001,7 @@ static inline int chdir(const char* path)
  */
 static inline int readdir(const char* path, int index, dirent_t* entry)
 {
-    return syscall3(SYS_READDIR, (int)path, index, (int)entry);
+    return syscall3(SYS_READDIR, (long)path, index, (long)entry);
 }
 
 /**
@@ -1006,7 +1012,7 @@ static inline int readdir(const char* path, int index, dirent_t* entry)
  */
 static inline int mkdir(const char* path)
 {
-    return syscall3(SYS_MKDIR, (int)path, 0, 0);
+    return syscall3(SYS_MKDIR, (long)path, 0, 0);
 }
 
 /**
@@ -1017,7 +1023,7 @@ static inline int mkdir(const char* path)
  */
 static inline int creat(const char* path)
 {
-    return syscall3(SYS_CREATE, (int)path, 0, 0);
+    return syscall3(SYS_CREATE, (long)path, 0, 0);
 }
 
 /* ========================================
@@ -1050,7 +1056,7 @@ typedef struct {
  */
 static inline int meminfo(meminfo_t* info)
 {
-    return syscall3(SYS_MEMINFO, (int)info, 0, 0);
+    return syscall3(SYS_MEMINFO, (long)info, 0, 0);
 }
 
 /* ========================================

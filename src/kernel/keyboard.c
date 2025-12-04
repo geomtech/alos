@@ -2,11 +2,17 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "console.h"
 #include "keyboard.h"
 #include "keymap.h"
 #include "thread.h"
+#include "sync.h"
+#include "klog.h"
+
+/* Sémaphore pour synchronisation avec l'IRQ clavier */
+semaphore_t keyboard_sem;
+static bool keyboard_sem_initialized = false;
 
 /* Scancodes spéciaux */
 #define SCANCODE_UP_ARROW    0x48
@@ -45,20 +51,27 @@ static volatile unsigned char pending_dead_key = 0;
 
 /* Buffer circulaire pour les caractères */
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
-static volatile int kb_head = 0;  /* Position d'écriture */
-static volatile int kb_tail = 0;  /* Position de lecture */
+static volatile size_t kb_head = 0;  /* Position d'écriture */
+static volatile size_t kb_tail = 0;  /* Position de lecture */
 
 /**
  * Ajoute un caractère dans le buffer circulaire.
+ * Signale le sémaphore pour réveiller les threads en attente.
  */
 static void keyboard_buffer_put(char c)
 {
-    int next_head = (kb_head + 1) % KEYBOARD_BUFFER_SIZE;
+    size_t next_head = (kb_head + 1) % KEYBOARD_BUFFER_SIZE;
     
     /* Si le buffer est plein, on ignore le caractère */
     if (next_head != kb_tail) {
         keyboard_buffer[kb_head] = c;
         kb_head = next_head;
+        
+        /* Signaler qu'une touche est disponible.
+         * sem_post() est safe depuis IRQ context. */
+        if (keyboard_sem_initialized) {
+            sem_post(&keyboard_sem);
+        }
     }
 }
 
@@ -96,20 +109,24 @@ void keyboard_clear_buffer(void)
 
 /**
  * Lit un caractère du buffer (bloquant).
- * Attend avec hlt jusqu'à ce qu'un caractère soit disponible.
+ * Bloque le thread jusqu'à ce qu'une touche soit disponible.
+ * Utilise un sémaphore pour une synchronisation efficace avec l'IRQ.
  */
 char keyboard_getchar(void)
 {
-    while (!keyboard_has_char()) {
-        /* Activer les interruptions pour recevoir l'IRQ clavier */
-        asm volatile("sti");
-        
-        /* Céder le CPU aux autres threads au lieu de bloquer le CPU */
-        thread_yield();
-        
-        /* Petite pause pour éviter de spammer le scheduler si on est le seul thread */
-        asm volatile("hlt");
+    /* Initialiser le sémaphore si pas encore fait.
+     * On ne peut pas le faire dans keyboard_init() car sync n'est pas encore prêt. */
+    if (!keyboard_sem_initialized) {
+        semaphore_init(&keyboard_sem, 0, KEYBOARD_BUFFER_SIZE);
+        keyboard_sem_initialized = true;
     }
+    
+    /* Attendre qu'une touche soit disponible.
+     * sem_wait() bloque le thread et libère le CPU aux autres threads.
+     * L'IRQ clavier appellera sem_post() pour nous réveiller. */
+    sem_wait(&keyboard_sem);
+    
+    /* Une touche est maintenant disponible */
     return keyboard_buffer_get();
 }
 
@@ -161,12 +178,14 @@ void keyboard_handler_c(void)
 {
     /* 1. Lire le scancode */
     uint8_t scancode = inb(0x60);
+    
+    /* Debug: log keyboard IRQ (disabled to reduce spam) */
+    /* KLOG_INFO_HEX("KBD", "IRQ scancode: ", scancode); */
 
     /* 2. Gérer le préfixe E0 (touches étendues: AltGr, flèches, etc.) */
     if (scancode == SCANCODE_E0_PREFIX) {
         e0_prefix = true;
-        outb(0x20, 0x20);
-        return;
+        return;  /* EOI sent by irq_handler */
     }
 
     /* 3. Gérer les modificateurs (appui et relâchement) */
@@ -195,8 +214,7 @@ void keyboard_handler_c(void)
                     break;
             }
         }
-        /* Acquitter et sortir */
-        outb(0x20, 0x20);
+        /* EOI sent by irq_handler */
         return;
     }
     
@@ -207,8 +225,7 @@ void keyboard_handler_c(void)
         if (scancode == SCANCODE_LALT) {
             altgr_pressed = true;
             e0_prefix = false;
-            outb(0x20, 0x20);
-            return;
+            return;  /* EOI sent by irq_handler */
         }
         /* Autres touches étendues (flèches, etc.) */
         e0_prefix = false;
@@ -312,6 +329,5 @@ void keyboard_handler_c(void)
             break;
     }
 
-    /* 3. Acquitter l'interruption (EOI au PIC) */
-    outb(0x20, 0x20);
+    /* Note: EOI is sent by irq_handler() in idt.c, not here */
 }

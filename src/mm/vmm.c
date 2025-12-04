@@ -1,81 +1,112 @@
-/* src/mm/vmm.c - Virtual Memory Manager Implementation */
+/* src/mm/vmm.c - Virtual Memory Manager for x86-64 */
 #include "vmm.h"
 #include "pmm.h"
 #include "../kernel/console.h"
 #include "../kernel/klog.h"
+#include "../arch/x86_64/cpu.h"
 
 /* ========================================
  * Variables globales
  * ======================================== */
 
-/* 
- * On alloue statiquement les structures de paging pour éviter
- * les problèmes de poule et oeuf avec le heap/pmm.
- * 
- * Ces structures DOIVENT être alignées sur 4 KiB.
- */
+/* HHDM offset (fourni par Limine) */
+static uint64_t hhdm_offset = 0;
 
-/* Page Directory du kernel - aligné sur 4 KiB */
-static page_entry_t kernel_page_directory[TABLES_PER_DIR] __attribute__((aligned(PAGE_SIZE)));
+/* Kernel page directory */
+static page_directory_t kernel_directory;
 
-/* Page Tables pour identity mapping des premiers 16 Mo (4 tables nécessaires) */
-static page_entry_t kernel_page_tables[4][PAGES_PER_TABLE] __attribute__((aligned(PAGE_SIZE)));
-
-/* Pointeurs vers les Page Tables (pour usage kernel) */
-static page_entry_t* page_tables[TABLES_PER_DIR];
-
-/* Page Directory courant (adresse physique) */
-static uint32_t current_directory_phys = 0;
+/* Current page directory */
+static page_directory_t *current_directory = NULL;
 
 /* ========================================
- * Fonctions inline pour manipuler CR0/CR3
+ * Fonctions internes
  * ======================================== */
 
 /**
- * Charge une adresse dans CR3 (Page Directory Base Register).
+ * Convertit une adresse physique en virtuelle via HHDM.
  */
-static inline void vmm_load_cr3(uint32_t addr)
+static inline void* phys_to_virt(uint64_t phys)
 {
-    asm volatile("mov %0, %%cr3" : : "r"(addr) : "memory");
+    return (void*)(phys + hhdm_offset);
 }
 
 /**
- * Lit la valeur de CR3.
+ * Convertit une adresse virtuelle en physique.
  */
-static inline uint32_t vmm_read_cr3(void)
+static inline uint64_t virt_to_phys(void* virt)
 {
-    uint32_t val;
-    asm volatile("mov %%cr3, %0" : "=r"(val));
-    return val;
+    return (uint64_t)virt - hhdm_offset;
 }
 
 /**
- * Active le paging en mettant le bit PG (31) de CR0.
+ * Alloue une table de pages (4 KiB, alignée).
+ * Retourne l'adresse virtuelle (via HHDM).
  */
-static inline void vmm_enable_paging(void)
+static page_entry_t* alloc_table(void)
 {
-    uint32_t cr0;
-    asm volatile("mov %%cr0, %0" : "=r"(cr0));
-    cr0 |= 0x80000000;  /* Set bit 31 (PG) */
-    asm volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
+    void* table = pmm_alloc_block();
+    if (table == NULL) {
+        return NULL;
+    }
+    
+    /* Mettre à zéro */
+    uint64_t *p = (uint64_t*)table;
+    for (int i = 0; i < 512; i++) {
+        p[i] = 0;
+    }
+    
+    return (page_entry_t*)table;
 }
 
 /**
- * Lit la valeur de CR2 (adresse de page fault).
+ * Libère une table de pages.
  */
-static inline uint32_t vmm_read_cr2(void)
+static void free_table(page_entry_t* table)
 {
-    uint32_t val;
-    asm volatile("mov %%cr2, %0" : "=r"(val));
-    return val;
+    pmm_free_block(table);
 }
 
 /**
- * Invalide une entrée TLB pour une adresse virtuelle.
+ * Obtient ou crée une entrée de table.
+ * Retourne l'adresse virtuelle de la table suivante.
  */
-static inline void vmm_invlpg(uint32_t addr)
+static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, uint64_t flags)
 {
-    asm volatile("invlpg (%0)" : : "r"(addr) : "memory");
+    if (table[index] & PAGE_PRESENT) {
+        /* Table existe déjà - ajouter PAGE_USER si demandé */
+        if (flags & PAGE_USER) {
+            table[index] |= PAGE_USER;
+        }
+        uint64_t phys = table[index] & PAGE_FRAME_MASK;
+        return (page_entry_t*)phys_to_virt(phys);
+    }
+    
+    /* Créer une nouvelle table */
+    page_entry_t* new_table = alloc_table();
+    if (new_table == NULL) {
+        KLOG_ERROR("VMM", "get_or_create_table: alloc_table failed!");
+        return NULL;
+    }
+    
+    /* Ajouter l'entrée */
+    uint64_t phys = virt_to_phys(new_table);
+    table[index] = phys | PAGE_PRESENT | PAGE_RW | (flags & PAGE_USER);
+    
+    KLOG_DEBUG_HEX("VMM", "  Created table at phys=", (uint32_t)phys);
+    
+    return new_table;
+}
+
+/**
+ * Obtient une table existante (sans créer).
+ */
+static page_entry_t* get_table(page_entry_t* table, uint64_t index)
+{
+    if (!(table[index] & PAGE_PRESENT)) {
+        return NULL;
+    }
+    uint64_t phys = table[index] & PAGE_FRAME_MASK;
+    return (page_entry_t*)phys_to_virt(phys);
 }
 
 /* ========================================
@@ -84,123 +115,102 @@ static inline void vmm_invlpg(uint32_t addr)
 
 void vmm_init(void)
 {
-    KLOG_INFO("VMM", "=== Virtual Memory Manager ===");
+    KLOG_INFO("VMM", "=== Virtual Memory Manager (x86-64) ===");
     
-    /* Initialiser le Page Directory */
-    for (int i = 0; i < TABLES_PER_DIR; i++) {
-        kernel_page_directory[i] = 0;
-        page_tables[i] = NULL;
-    }
+    /* Obtenir l'offset HHDM depuis le kernel */
+    extern uint64_t get_hhdm_offset(void);
+    hhdm_offset = get_hhdm_offset();
     
-    /* ========================================
-     * Identity Mapping des premiers 16 Mo
-     * ========================================
-     * Cela couvre :
-     * - 0x00000000 - 0x000FFFFF : BIOS, IVT, BDA, VGA (1 Mo)
-     * - 0x00100000 - 0x00FFFFFF : Kernel code, heap, etc. (15 Mo)
-     * 
-     * 16 Mo = 4096 pages = 4 Page Tables
-     */
+    KLOG_INFO_HEX("VMM", "HHDM offset (high): ", (uint32_t)(hhdm_offset >> 32));
+    KLOG_INFO_HEX("VMM", "HHDM offset (low): ", (uint32_t)hhdm_offset);
     
-    KLOG_INFO("VMM", "Identity mapping first 16 MB...");
+    /* Lire le PML4 actuel (configuré par Limine) */
+    uint64_t cr3 = read_cr3();
+    kernel_directory.pml4_phys = cr3 & PAGE_FRAME_MASK;
+    kernel_directory.pml4 = (page_entry_t*)phys_to_virt(kernel_directory.pml4_phys);
     
-    /* Configurer les 4 Page Tables pour 16 Mo */
-    for (int table = 0; table < 4; table++) {
-        /* Initialiser chaque Page Table */
-        for (int page = 0; page < PAGES_PER_TABLE; page++) {
-            uint32_t phys_addr = (table * PAGES_PER_TABLE + page) * PAGE_SIZE;
-            /* Identity map: virtuelle = physique */
-            kernel_page_tables[table][page] = phys_addr | PAGE_PRESENT | PAGE_RW;
-        }
-        
-        /* Ajouter la Page Table au Page Directory */
-        kernel_page_directory[table] = ((uint32_t)&kernel_page_tables[table]) | PAGE_PRESENT | PAGE_RW;
-        page_tables[table] = kernel_page_tables[table];
-    }
+    current_directory = &kernel_directory;
     
-    KLOG_INFO_HEX("VMM", "Page Directory at: ", (uint32_t)kernel_page_directory);
-    KLOG_INFO("VMM", "Mapped 4096 pages (16 MB)");
-    
-    /* Sauvegarder l'adresse physique du Page Directory */
-    current_directory_phys = (uint32_t)kernel_page_directory;
-    
-    /* Charger le Page Directory dans CR3 */
-    KLOG_INFO("VMM", "Loading Page Directory into CR3...");
-    vmm_load_cr3(current_directory_phys);
-    
-    /* Activer le paging ! */
-    KLOG_INFO("VMM", "Enabling paging...");
-    vmm_enable_paging();
-    
-    KLOG_INFO("VMM", "Paging enabled successfully!");
+    KLOG_INFO_HEX("VMM", "Kernel PML4 phys: ", (uint32_t)kernel_directory.pml4_phys);
+    KLOG_INFO("VMM", "VMM initialized (using Limine paging)");
 }
 
-void vmm_map_page(uint32_t phys, uint32_t virt, uint32_t flags)
+/**
+ * Retourne l'adresse physique du PML4 du kernel.
+ * Utilisé par le scheduler pour restaurer le CR3 du kernel.
+ */
+uint64_t vmm_get_kernel_cr3(void)
 {
-    /* S'assurer que les adresses sont alignées */
+    return kernel_directory.pml4_phys;
+}
+
+void vmm_map_page(uint64_t phys, uint64_t virt, uint64_t flags)
+{
+    /* Aligner les adresses */
     phys = PAGE_ALIGN_DOWN(phys);
     virt = PAGE_ALIGN_DOWN(virt);
     
-    uint32_t dir_index = PAGE_DIR_INDEX(virt);
-    uint32_t table_index = PAGE_TABLE_INDEX(virt);
+    /* Extraire les index */
+    uint64_t pml4_idx = PML4_INDEX(virt);
+    uint64_t pdpt_idx = PDPT_INDEX(virt);
+    uint64_t pd_idx = PD_INDEX(virt);
+    uint64_t pt_idx = PT_INDEX(virt);
     
-    /* Vérifier si la Page Table existe, sinon la créer */
-    if (page_tables[dir_index] == NULL) {
-        /* Allouer une nouvelle Page Table */
-        void* new_table = pmm_alloc_block();
-        if (new_table == NULL) {
-            KLOG_ERROR("VMM", "Failed to allocate page table!");
-            return;
-        }
-        
-        /* Mettre la table à zéro */
-        page_entry_t* table = (page_entry_t*)new_table;
-        for (int i = 0; i < PAGES_PER_TABLE; i++) {
-            table[i] = 0;
-        }
-        
-        /* Enregistrer la table */
-        page_tables[dir_index] = table;
-        
-        /* Ajouter au Page Directory avec flags USER si demandé */
-        uint32_t dir_flags = PAGE_PRESENT | PAGE_RW;
-        if (flags & PAGE_USER) {
-            dir_flags |= PAGE_USER;
-        }
-        kernel_page_directory[dir_index] = ((uint32_t)new_table & PAGE_FRAME_MASK) | dir_flags;
-        
-        KLOG_INFO_HEX("VMM", "Created page table for addr: ", virt);
-    } else {
-        /* Si la table existe mais qu'on veut des flags USER, mettre à jour le PDE */
-        if (flags & PAGE_USER) {
-            kernel_page_directory[dir_index] |= PAGE_USER;
-        }
-    }
+    /* Traverser/créer les tables */
+    page_entry_t* pml4 = current_directory->pml4;
     
-    /* Mapper la page */
-    page_tables[dir_index][table_index] = (phys & PAGE_FRAME_MASK) | (flags & 0xFFF) | PAGE_PRESENT;
-    
-    /* Invalider l'entrée TLB pour cette adresse */
-    vmm_invlpg(virt);
-}
-
-void vmm_unmap_page(uint32_t virt)
-{
-    virt = PAGE_ALIGN_DOWN(virt);
-    
-    uint32_t dir_index = PAGE_DIR_INDEX(virt);
-    uint32_t table_index = PAGE_TABLE_INDEX(virt);
-    
-    /* Vérifier que la Page Table existe */
-    if (page_tables[dir_index] == NULL) {
+    page_entry_t* pdpt = get_or_create_table(pml4, pml4_idx, flags);
+    if (pdpt == NULL) {
+        KLOG_ERROR("VMM", "Failed to allocate PDPT");
         return;
     }
     
-    /* Effacer l'entrée */
-    page_tables[dir_index][table_index] = 0;
+    page_entry_t* pd = get_or_create_table(pdpt, pdpt_idx, flags);
+    if (pd == NULL) {
+        KLOG_ERROR("VMM", "Failed to allocate PD");
+        return;
+    }
+    
+    page_entry_t* pt = get_or_create_table(pd, pd_idx, flags);
+    if (pt == NULL) {
+        KLOG_ERROR("VMM", "Failed to allocate PT");
+        return;
+    }
+    
+    /* Mapper la page */
+    pt[pt_idx] = phys | (flags & 0xFFF) | PAGE_PRESENT;
     
     /* Invalider le TLB */
-    vmm_invlpg(virt);
+    invlpg(virt);
+}
+
+void vmm_unmap_page(uint64_t virt)
+{
+    virt = PAGE_ALIGN_DOWN(virt);
+    
+    /* Extraire les index */
+    uint64_t pml4_idx = PML4_INDEX(virt);
+    uint64_t pdpt_idx = PDPT_INDEX(virt);
+    uint64_t pd_idx = PD_INDEX(virt);
+    uint64_t pt_idx = PT_INDEX(virt);
+    
+    /* Traverser les tables */
+    page_entry_t* pml4 = current_directory->pml4;
+    
+    page_entry_t* pdpt = get_table(pml4, pml4_idx);
+    if (pdpt == NULL) return;
+    
+    page_entry_t* pd = get_table(pdpt, pdpt_idx);
+    if (pd == NULL) return;
+    
+    page_entry_t* pt = get_table(pd, pd_idx);
+    if (pt == NULL) return;
+    
+    /* Effacer l'entrée */
+    pt[pt_idx] = 0;
+    
+    /* Invalider le TLB */
+    invlpg(virt);
 }
 
 int vmm_switch_directory(page_directory_t* dir)
@@ -209,373 +219,257 @@ int vmm_switch_directory(page_directory_t* dir)
         return -1;
     }
     
-    current_directory_phys = (uint32_t)dir;
-    vmm_load_cr3(current_directory_phys);
+    current_directory = dir;
+    write_cr3(dir->pml4_phys);
     
     return 0;
 }
 
 page_directory_t* vmm_get_directory(void)
 {
-    return (page_directory_t*)current_directory_phys;
+    return current_directory;
 }
 
-uint32_t vmm_get_physical(uint32_t virt)
+uint64_t vmm_get_physical(uint64_t virt)
 {
     virt = PAGE_ALIGN_DOWN(virt);
     
-    uint32_t dir_index = PAGE_DIR_INDEX(virt);
-    uint32_t table_index = PAGE_TABLE_INDEX(virt);
+    /* Extraire les index */
+    uint64_t pml4_idx = PML4_INDEX(virt);
+    uint64_t pdpt_idx = PDPT_INDEX(virt);
+    uint64_t pd_idx = PD_INDEX(virt);
+    uint64_t pt_idx = PT_INDEX(virt);
     
-    /* Vérifier que la Page Table existe */
-    if (page_tables[dir_index] == NULL) {
+    /* Traverser les tables */
+    page_entry_t* pml4 = current_directory->pml4;
+    
+    page_entry_t* pdpt = get_table(pml4, pml4_idx);
+    if (pdpt == NULL) return 0;
+    
+    page_entry_t* pd = get_table(pdpt, pdpt_idx);
+    if (pd == NULL) return 0;
+    
+    /* Vérifier si c'est une huge page (2MB) */
+    if (pd[pd_idx] & PAGE_HUGE) {
+        return (pd[pd_idx] & PAGE_FRAME_MASK) + (virt & 0x1FFFFF);
+    }
+    
+    page_entry_t* pt = get_table(pd, pd_idx);
+    if (pt == NULL) return 0;
+    
+    if (!(pt[pt_idx] & PAGE_PRESENT)) {
         return 0;
     }
     
-    page_entry_t entry = page_tables[dir_index][table_index];
-    
-    if (!(entry & PAGE_PRESENT)) {
-        return 0;
-    }
-    
-    return entry & PAGE_FRAME_MASK;
+    return (pt[pt_idx] & PAGE_FRAME_MASK) + PAGE_OFFSET(virt);
 }
 
-bool vmm_is_mapped(uint32_t virt)
+bool vmm_is_mapped(uint64_t virt)
 {
-    return vmm_get_physical(virt) != 0 || virt == 0;  /* 0 est mappé mais retourne 0 */
+    return vmm_get_physical(virt) != 0;
 }
 
-void vmm_set_user_accessible(uint32_t start, uint32_t size)
+void vmm_set_user_accessible(uint64_t start, uint64_t size)
 {
     start = PAGE_ALIGN_DOWN(start);
-    uint32_t end = PAGE_ALIGN_UP(start + size);
+    uint64_t end = PAGE_ALIGN_UP(start + size);
     
-    KLOG_INFO("VMM", "Setting user access for range:");
-    KLOG_INFO_HEX("VMM", "  Start: ", start);
-    KLOG_INFO_HEX("VMM", "  End:   ", end);
-    
-    for (uint32_t addr = start; addr < end; addr += PAGE_SIZE) {
-        uint32_t dir_index = PAGE_DIR_INDEX(addr);
-        uint32_t table_index = PAGE_TABLE_INDEX(addr);
+    for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
+        /* Extraire les index */
+        uint64_t pml4_idx = PML4_INDEX(addr);
+        uint64_t pdpt_idx = PDPT_INDEX(addr);
+        uint64_t pd_idx = PD_INDEX(addr);
+        uint64_t pt_idx = PT_INDEX(addr);
         
-        /* Vérifier que la Page Table existe */
-        if (page_tables[dir_index] == NULL) {
-            continue;
+        page_entry_t* pml4 = current_directory->pml4;
+        
+        /* Ajouter USER flag à tous les niveaux */
+        if (pml4[pml4_idx] & PAGE_PRESENT) {
+            pml4[pml4_idx] |= PAGE_USER;
+            
+            page_entry_t* pdpt = get_table(pml4, pml4_idx);
+            if (pdpt && (pdpt[pdpt_idx] & PAGE_PRESENT)) {
+                pdpt[pdpt_idx] |= PAGE_USER;
+                
+                page_entry_t* pd = get_table(pdpt, pdpt_idx);
+                if (pd && (pd[pd_idx] & PAGE_PRESENT)) {
+                    pd[pd_idx] |= PAGE_USER;
+                    
+                    page_entry_t* pt = get_table(pd, pd_idx);
+                    if (pt && (pt[pt_idx] & PAGE_PRESENT)) {
+                        pt[pt_idx] |= PAGE_USER;
+                    }
+                }
+            }
         }
         
-        /* Ajouter le flag USER à la page */
-        page_tables[dir_index][table_index] |= PAGE_USER;
-        
-        /* Ajouter aussi le flag USER au Page Directory entry */
-        kernel_page_directory[dir_index] |= PAGE_USER;
-        
-        /* Invalider le TLB */
-        vmm_invlpg(addr);
+        invlpg(addr);
     }
-    
-    KLOG_INFO("VMM", "User access granted");
 }
 
-void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr)
+void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr)
 {
-    console_set_color(VGA_COLOR_RED, VGA_COLOR_BLACK);
-    console_puts("\n!!! PAGE FAULT !!!\n");
+    /* Get current RSP for debugging */
+    uint64_t current_rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(current_rsp));
     
-    console_puts("Faulting Address (CR2): 0x");
-    console_put_hex(fault_addr);
-    console_puts("\n");
+    /* Log to serial only to avoid recursive page faults on VGA */
+    KLOG_ERROR_HEX("VMM", "PAGE FAULT at (high): ", (uint32_t)(fault_addr >> 32));
+    KLOG_ERROR_HEX("VMM", "PAGE FAULT at (low): ", (uint32_t)fault_addr);
+    KLOG_ERROR_HEX("VMM", "Error code: ", (uint32_t)error_code);
+    KLOG_ERROR("VMM", (error_code & 0x1) ? "  - Page-level protection violation" : "  - Non-present page");
+    KLOG_ERROR("VMM", (error_code & 0x2) ? "  - Write access" : "  - Read access");
+    KLOG_ERROR("VMM", (error_code & 0x4) ? "  - User mode" : "  - Supervisor mode");
+    if (error_code & 0x8) {
+        KLOG_ERROR("VMM", "  - Reserved bit set");
+    }
+    if (error_code & 0x10) {
+        KLOG_ERROR("VMM", "  - Instruction fetch");
+    }
+    KLOG_ERROR_HEX("VMM", "Current RSP (high): ", (uint32_t)(current_rsp >> 32));
+    KLOG_ERROR_HEX("VMM", "Current RSP (low): ", (uint32_t)current_rsp);
+    KLOG_ERROR("VMM", "System halted.");
     
-    console_puts("Error Code: 0x");
-    console_put_hex(error_code);
-    console_puts("\n");
-    
-    /* Décoder l'error code */
-    console_puts("  - ");
-    console_puts((error_code & 0x1) ? "Page-level protection violation" : "Non-present page");
-    console_puts("\n  - ");
-    console_puts((error_code & 0x2) ? "Write access" : "Read access");
-    console_puts("\n  - ");
-    console_puts((error_code & 0x4) ? "User mode" : "Supervisor mode");
-    console_puts("\n");
-    
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
-    /* Halt - on ne peut pas continuer après un page fault non géré */
-    console_puts("System halted.\n");
+    /* Halt */
     for (;;) {
-        asm volatile("hlt");
+        __asm__ volatile("hlt");
     }
 }
 
 /* ========================================
  * Fonctions multi-espaces d'adressage
- * ========================================
- * 
- * Pour modifier un Page Directory qui n'est pas le courant,
- * on utilise une "fenêtre temporaire" : une page réservée
- * dans l'espace kernel qui est remappée temporairement vers
- * la page table cible.
- */
-
-/* Adresse de la fenêtre temporaire (une page dans l'espace kernel) */
-#define TEMP_MAP_ADDR  0x00FF0000  /* Juste avant 16 Mo */
-
-/* Nombre d'entrées kernel à copier 
- * Zone kernel: 0-16 Mo (entrées 0-3)
- * Zone MMIO:   16-256 Mo (entrées 4-63)
- * On copie jusqu'à l'entrée 64 pour inclure toute la zone MMIO
- */
-#define KERNEL_TABLES_COUNT  64
-
-/**
- * Mappe temporairement une page physique pour y accéder.
- * Utilise la fenêtre temporaire à TEMP_MAP_ADDR.
- */
-static void* vmm_temp_map(uint32_t phys_addr)
-{
-    /* Mapper la page physique dans la fenêtre temporaire */
-    uint32_t dir_index = PAGE_DIR_INDEX(TEMP_MAP_ADDR);
-    uint32_t table_index = PAGE_TABLE_INDEX(TEMP_MAP_ADDR);
-    
-    /* La page table pour TEMP_MAP_ADDR devrait exister (c'est dans les 16 Mo) */
-    if (page_tables[dir_index] != NULL) {
-        page_tables[dir_index][table_index] = (phys_addr & PAGE_FRAME_MASK) | PAGE_PRESENT | PAGE_RW;
-        vmm_invlpg(TEMP_MAP_ADDR);
-    }
-    
-    return (void*)TEMP_MAP_ADDR;
-}
-
-/**
- * Annule le mapping temporaire.
- */
-static void vmm_temp_unmap(void)
-{
-    uint32_t dir_index = PAGE_DIR_INDEX(TEMP_MAP_ADDR);
-    uint32_t table_index = PAGE_TABLE_INDEX(TEMP_MAP_ADDR);
-    
-    if (page_tables[dir_index] != NULL) {
-        page_tables[dir_index][table_index] = 0;
-        vmm_invlpg(TEMP_MAP_ADDR);
-    }
-}
+ * ======================================== */
 
 page_directory_t* vmm_get_kernel_directory(void)
 {
-    return (page_directory_t*)kernel_page_directory;
+    return &kernel_directory;
 }
 
 page_directory_t* vmm_create_directory(void)
 {
-    /* Allouer un bloc pour le Page Directory (4 Ko aligné) */
-    void* dir_phys = pmm_alloc_block();
-    if (dir_phys == NULL) {
-        KLOG_ERROR("VMM", "Failed to allocate page directory");
+    /* Allouer la structure */
+    page_directory_t* dir = (page_directory_t*)pmm_alloc_block();
+    if (dir == NULL) {
         return NULL;
     }
     
-    KLOG_INFO_HEX("VMM", "Creating new page directory at: ", (uint32_t)dir_phys);
-    
-    /* Mapper temporairement le nouveau directory pour l'initialiser */
-    page_entry_t* new_dir = (page_entry_t*)vmm_temp_map((uint32_t)dir_phys);
-    
-    /* Initialiser toutes les entrées à 0 */
-    for (int i = 0; i < TABLES_PER_DIR; i++) {
-        new_dir[i] = 0;
+    /* Allouer le PML4 */
+    page_entry_t* pml4 = alloc_table();
+    if (pml4 == NULL) {
+        pmm_free_block(dir);
+        return NULL;
     }
     
-    /* Copier les entrées kernel SAUF l'entrée 1 (4-8 Mo) où l'ELF est chargé.
-     * 
-     * Entrée 0 (0-4 Mo)   : Kernel code/data + Heap
-     * Entrée 1 (4-8 Mo)   : User ELF (ne pas copier !)
-     * Entrée 2 (8-12 Mo)  : Libre
-     * Entrée 3 (12-16 Mo) : TEMP_MAP_ADDR (nécessaire pour VMM)
-     * Entrées 4-63 (16-256 Mo) : Zone MMIO (doit être copiée !)
-     */
-    for (int i = 0; i < KERNEL_TABLES_COUNT; i++) {
-        if (i == 1) continue; /* Sauter l'espace ELF user */
-        new_dir[i] = kernel_page_directory[i];
+    dir->pml4 = pml4;
+    dir->pml4_phys = virt_to_phys(pml4);
+    
+    /* Copier les entrées kernel (higher half: indices 256-511) */
+    for (int i = 256; i < 512; i++) {
+        pml4[i] = kernel_directory.pml4[i];
     }
     
-    vmm_temp_unmap();
+    /* Copier l'entrée PML4[0] qui contient les mappings MMIO (0x01000000 - 0x10000000).
+     * Ces mappings sont nécessaires pour que le kernel puisse accéder aux périphériques
+     * même quand on exécute du code kernel avec le CR3 d'un processus user (syscalls). */
+    if (kernel_directory.pml4[0] & PAGE_PRESENT) {
+        pml4[0] = kernel_directory.pml4[0];
+    }
     
-    KLOG_INFO("VMM", "New directory created with kernel mappings");
+    KLOG_INFO_HEX("VMM", "Created new PML4 at: ", (uint32_t)dir->pml4_phys);
     
-    return (page_directory_t*)dir_phys;
+    return dir;
 }
 
 void vmm_free_directory(page_directory_t* dir)
 {
-    if (dir == NULL) {
+    if (dir == NULL || dir == &kernel_directory) {
         return;
     }
     
-    /* Ne pas libérer le kernel directory ! */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        KLOG_ERROR("VMM", "Attempted to free kernel directory!");
-        return;
-    }
+    /* Libérer les tables user (indices 0-255) */
+    page_entry_t* pml4 = dir->pml4;
     
-    KLOG_INFO_HEX("VMM", "Freeing page directory at: ", (uint32_t)dir);
-    
-    /* Mapper temporairement le directory pour lire ses entrées */
-    page_entry_t* dir_entries = (page_entry_t*)vmm_temp_map((uint32_t)dir);
-    
-    /* Libérer les Page Tables utilisateur (après les entrées kernel) */
-    for (int i = KERNEL_TABLES_COUNT; i < TABLES_PER_DIR; i++) {
-        if (dir_entries[i] & PAGE_PRESENT) {
-            uint32_t table_phys = dir_entries[i] & PAGE_FRAME_MASK;
-            pmm_free_block((void*)table_phys);
+    for (int i = 0; i < 256; i++) {
+        if (!(pml4[i] & PAGE_PRESENT)) continue;
+        
+        page_entry_t* pdpt = get_table(pml4, i);
+        if (pdpt == NULL) continue;
+        
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & PAGE_PRESENT)) continue;
+            
+            page_entry_t* pd = get_table(pdpt, j);
+            if (pd == NULL) continue;
+            
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & PAGE_PRESENT)) continue;
+                if (pd[k] & PAGE_HUGE) continue; /* Skip huge pages */
+                
+                page_entry_t* pt = get_table(pd, k);
+                if (pt != NULL) {
+                    free_table(pt);
+                }
+            }
+            free_table(pd);
         }
+        free_table(pdpt);
     }
     
-    vmm_temp_unmap();
-    
-    /* Libérer le Page Directory lui-même */
-    pmm_free_block((void*)dir);
-    
-    KLOG_INFO("VMM", "Directory freed");
+    free_table(pml4);
+    pmm_free_block(dir);
 }
 
-uint32_t vmm_get_phys_addr(page_directory_t* dir, uint32_t virt_addr)
+uint64_t vmm_get_phys_addr(page_directory_t* dir, uint64_t virt_addr)
 {
     if (dir == NULL) {
         return 0;
     }
     
-    uint32_t dir_index = PAGE_DIR_INDEX(virt_addr);
-    uint32_t table_index = PAGE_TABLE_INDEX(virt_addr);
-    uint32_t offset = PAGE_OFFSET(virt_addr);
+    virt_addr = PAGE_ALIGN_DOWN(virt_addr);
     
-    /* Si c'est le kernel directory actif, utiliser le chemin rapide */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        if (page_tables[dir_index] == NULL) {
-            return 0;
-        }
-        page_entry_t entry = page_tables[dir_index][table_index];
-        if (!(entry & PAGE_PRESENT)) {
-            return 0;
-        }
-        return (entry & PAGE_FRAME_MASK) + offset;
+    uint64_t pml4_idx = PML4_INDEX(virt_addr);
+    uint64_t pdpt_idx = PDPT_INDEX(virt_addr);
+    uint64_t pd_idx = PD_INDEX(virt_addr);
+    uint64_t pt_idx = PT_INDEX(virt_addr);
+    
+    page_entry_t* pdpt = get_table(dir->pml4, pml4_idx);
+    if (pdpt == NULL) return 0;
+    
+    page_entry_t* pd = get_table(pdpt, pdpt_idx);
+    if (pd == NULL) return 0;
+    
+    if (pd[pd_idx] & PAGE_HUGE) {
+        return (pd[pd_idx] & PAGE_FRAME_MASK) + (virt_addr & 0x1FFFFF);
     }
     
-    /* Mapper temporairement le directory */
-    page_entry_t* dir_entries = (page_entry_t*)vmm_temp_map((uint32_t)dir);
+    page_entry_t* pt = get_table(pd, pd_idx);
+    if (pt == NULL) return 0;
     
-    /* Vérifier si la Page Table existe */
-    if (!(dir_entries[dir_index] & PAGE_PRESENT)) {
-        vmm_temp_unmap();
+    if (!(pt[pt_idx] & PAGE_PRESENT)) {
         return 0;
     }
     
-    uint32_t table_phys = dir_entries[dir_index] & PAGE_FRAME_MASK;
-    vmm_temp_unmap();
-    
-    /* Mapper temporairement la Page Table */
-    page_entry_t* table_entries = (page_entry_t*)vmm_temp_map(table_phys);
-    
-    page_entry_t entry = table_entries[table_index];
-    vmm_temp_unmap();
-    
-    if (!(entry & PAGE_PRESENT)) {
-        return 0;
-    }
-    
-    return (entry & PAGE_FRAME_MASK) + offset;
+    return pt[pt_idx] & PAGE_FRAME_MASK;
 }
 
-int vmm_map_page_in_dir(page_directory_t* dir, uint32_t phys, uint32_t virt, uint32_t flags)
+int vmm_map_page_in_dir(page_directory_t* dir, uint64_t phys, uint64_t virt, uint64_t flags)
 {
     if (dir == NULL) {
         return -1;
     }
     
-    /* Aligner les adresses */
-    phys = PAGE_ALIGN_DOWN(phys);
-    virt = PAGE_ALIGN_DOWN(virt);
+    KLOG_DEBUG_HEX("VMM", "map_page_in_dir: virt=", (uint32_t)virt);
+    KLOG_DEBUG_HEX("VMM", "  phys=", (uint32_t)phys);
+    KLOG_DEBUG_HEX("VMM", "  dir->pml4=", (uint32_t)(uint64_t)dir->pml4);
     
-    uint32_t dir_index = PAGE_DIR_INDEX(virt);
-    uint32_t table_index = PAGE_TABLE_INDEX(virt);
+    /* Sauvegarder le directory courant */
+    page_directory_t* saved = current_directory;
+    current_directory = dir;
     
-    /* Si c'est le kernel directory, utiliser vmm_map_page normal */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        vmm_map_page(phys, virt, flags);
-        return 0;
-    }
+    vmm_map_page(phys, virt, flags);
     
-    /* Mapper temporairement le directory */
-    page_entry_t* dir_entries = (page_entry_t*)vmm_temp_map((uint32_t)dir);
-    
-    uint32_t table_phys;
-    
-    /* Vérifier si la Page Table existe et si elle est compatible avec les flags demandés.
-     * 
-     * IMPORTANT: Si on demande PAGE_USER mais que l'entrée existante pointe vers
-     * une Page Table kernel (sans PAGE_USER), on doit créer une nouvelle Page Table
-     * pour le processus user. Sinon, les pages user seront dans une table kernel
-     * qui n'a pas les bons flags.
-     */
-    bool need_new_table = !(dir_entries[dir_index] & PAGE_PRESENT);
-    
-    /* Si on demande USER mais que l'entrée existante n'a pas USER, 
-     * c'est une Page Table kernel - on doit en créer une nouvelle */
-    if (!need_new_table && (flags & PAGE_USER) && !(dir_entries[dir_index] & PAGE_USER)) {
-        need_new_table = true;
-    }
-    
-    if (need_new_table) {
-        /* Allouer une nouvelle Page Table */
-        void* new_table = pmm_alloc_block();
-        if (new_table == NULL) {
-            vmm_temp_unmap();
-            KLOG_ERROR("VMM", "Failed to allocate page table");
-            return -1;
-        }
-        
-        /* Initialiser la nouvelle Page Table à zéro */
-        /* D'abord sauvegarder l'entrée dir */
-        vmm_temp_unmap();
-        
-        page_entry_t* new_table_entries = (page_entry_t*)vmm_temp_map((uint32_t)new_table);
-        for (int i = 0; i < PAGES_PER_TABLE; i++) {
-            new_table_entries[i] = 0;
-        }
-        vmm_temp_unmap();
-        
-        /* Re-mapper le directory pour ajouter l'entrée */
-        dir_entries = (page_entry_t*)vmm_temp_map((uint32_t)dir);
-        
-        /* Ajouter la nouvelle Page Table au directory */
-        uint32_t dir_flags = PAGE_PRESENT | PAGE_RW;
-        if (flags & PAGE_USER) {
-            dir_flags |= PAGE_USER;
-        }
-        dir_entries[dir_index] = ((uint32_t)new_table & PAGE_FRAME_MASK) | dir_flags;
-        
-        table_phys = (uint32_t)new_table;
-    } else {
-        /* Mettre à jour les flags si nécessaire */
-        if (flags & PAGE_USER) {
-            dir_entries[dir_index] |= PAGE_USER;
-        }
-        table_phys = dir_entries[dir_index] & PAGE_FRAME_MASK;
-    }
-    
-    vmm_temp_unmap();
-    
-    /* Mapper temporairement la Page Table pour ajouter l'entrée */
-    page_entry_t* table_entries = (page_entry_t*)vmm_temp_map(table_phys);
-    
-    /* Ajouter l'entrée de page */
-    table_entries[table_index] = (phys & PAGE_FRAME_MASK) | (flags & 0xFFF) | PAGE_PRESENT;
-    
-    vmm_temp_unmap();
-    
-    /* Si ce directory est le courant, invalider le TLB */
-    if ((uint32_t)dir == current_directory_phys) {
-        vmm_invlpg(virt);
-    }
+    /* Restaurer */
+    current_directory = saved;
     
     return 0;
 }
@@ -586,142 +480,52 @@ page_directory_t* vmm_clone_directory(page_directory_t* src)
         return NULL;
     }
     
-    /* Créer un nouveau directory avec les mappings kernel */
-    page_directory_t* new_dir = vmm_create_directory();
-    if (new_dir == NULL) {
+    page_directory_t* dst = vmm_create_directory();
+    if (dst == NULL) {
         return NULL;
     }
     
-    KLOG_INFO("VMM", "Cloning page directory...");
-    
-    /* Mapper le source directory */
-    page_entry_t* src_entries = (page_entry_t*)vmm_temp_map((uint32_t)src);
-    
-    /* Copier les entrées utilisateur (on copie les références, pas les données)
-     * Note: Pour un vrai fork COW, il faudrait marquer les pages read-only
-     * et les copier sur écriture. Pour l'instant, on fait une copie simple.
-     */
-    uint32_t user_entries[TABLES_PER_DIR - KERNEL_TABLES_COUNT];
-    for (int i = KERNEL_TABLES_COUNT; i < TABLES_PER_DIR; i++) {
-        user_entries[i - KERNEL_TABLES_COUNT] = src_entries[i];
-    }
-    vmm_temp_unmap();
-    
-    /* Mapper le nouveau directory */
-    page_entry_t* dst_entries = (page_entry_t*)vmm_temp_map((uint32_t)new_dir);
-    
-    /* Pour chaque Page Table utilisateur présente, créer une copie */
-    for (int i = KERNEL_TABLES_COUNT; i < TABLES_PER_DIR; i++) {
-        uint32_t src_entry = user_entries[i - KERNEL_TABLES_COUNT];
-        
-        if (src_entry & PAGE_PRESENT) {
-            /* Allouer une nouvelle Page Table */
-            void* new_table = pmm_alloc_block();
-            if (new_table == NULL) {
-                vmm_temp_unmap();
-                vmm_free_directory(new_dir);
-                KLOG_ERROR("VMM", "Clone failed: out of memory");
-                return NULL;
-            }
-            
-            /* Sauvegarder et copier le contenu de la table source */
-            uint32_t src_table_phys = src_entry & PAGE_FRAME_MASK;
-            vmm_temp_unmap();
-            
-            /* Lire la table source */
-            page_entry_t* src_table = (page_entry_t*)vmm_temp_map(src_table_phys);
-            uint32_t table_copy[PAGES_PER_TABLE];
-            for (int j = 0; j < PAGES_PER_TABLE; j++) {
-                table_copy[j] = src_table[j];
-            }
-            vmm_temp_unmap();
-            
-            /* Écrire dans la nouvelle table */
-            page_entry_t* dst_table = (page_entry_t*)vmm_temp_map((uint32_t)new_table);
-            for (int j = 0; j < PAGES_PER_TABLE; j++) {
-                dst_table[j] = table_copy[j];
-            }
-            vmm_temp_unmap();
-            
-            /* Re-mapper le directory destination */
-            dst_entries = (page_entry_t*)vmm_temp_map((uint32_t)new_dir);
-            
-            /* Ajouter l'entrée avec les mêmes flags */
-            uint32_t entry_flags = src_entry & 0xFFF;
-            dst_entries[i] = ((uint32_t)new_table & PAGE_FRAME_MASK) | entry_flags;
-        }
+    /* Copier les mappings user (indices 0-255) */
+    /* Pour l'instant, copie simple des entrées (pas COW) */
+    for (int i = 0; i < 256; i++) {
+        dst->pml4[i] = src->pml4[i];
     }
     
-    vmm_temp_unmap();
-    
-    KLOG_INFO("VMM", "Directory cloned successfully");
-    
-    return new_dir;
+    return dst;
 }
 
-bool vmm_is_mapped_in_dir(page_directory_t* dir, uint32_t virt)
+bool vmm_is_mapped_in_dir(page_directory_t* dir, uint64_t virt)
 {
-    if (dir == NULL) {
-        return false;
-    }
-    
-    /* Si c'est le kernel directory, utiliser le chemin rapide */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        return vmm_is_mapped(virt);
-    }
-    
-    uint32_t phys = vmm_get_phys_addr(dir, virt);
-    /* vmm_get_phys_addr retourne 0 si non mappé, mais 0 peut être une adresse valide */
-    /* On vérifie donc explicitement l'entrée */
-    return (phys != 0 || virt == 0);
+    return vmm_get_phys_addr(dir, virt) != 0;
 }
 
-int vmm_copy_to_dir(page_directory_t* dir, uint32_t dst_virt, const void* src, uint32_t size)
+int vmm_copy_to_dir(page_directory_t* dir, uint64_t dst_virt, const void* src, uint64_t size)
 {
     if (dir == NULL || src == NULL || size == 0) {
         return -1;
     }
     
-    /* Si c'est le kernel directory courant, copie directe */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        uint8_t* d = (uint8_t*)dst_virt;
-        const uint8_t* s = (const uint8_t*)src;
-        for (uint32_t i = 0; i < size; i++) {
-            d[i] = s[i];
-        }
-        return 0;
-    }
-    
     const uint8_t* src_ptr = (const uint8_t*)src;
-    uint32_t remaining = size;
-    uint32_t current_virt = dst_virt;
+    uint64_t remaining = size;
+    uint64_t current_virt = dst_virt;
     
     while (remaining > 0) {
-        /* Obtenir l'adresse physique de la page de destination */
-        uint32_t page_virt = PAGE_ALIGN_DOWN(current_virt);
-        uint32_t offset_in_page = current_virt - page_virt;
-        uint32_t phys_addr = vmm_get_phys_addr(dir, page_virt);
+        uint64_t page_virt = PAGE_ALIGN_DOWN(current_virt);
+        uint64_t offset = current_virt - page_virt;
+        uint64_t phys = vmm_get_phys_addr(dir, page_virt);
         
-        if (phys_addr == 0 && page_virt != 0) {
-            KLOG_ERROR("VMM", "vmm_copy_to_dir: page not mapped");
+        if (phys == 0) {
             return -1;
         }
         
-        /* Calculer combien on peut copier dans cette page */
-        uint32_t bytes_in_page = PAGE_SIZE - offset_in_page;
-        uint32_t to_copy = (remaining < bytes_in_page) ? remaining : bytes_in_page;
+        uint64_t bytes_in_page = PAGE_SIZE - offset;
+        uint64_t to_copy = (remaining < bytes_in_page) ? remaining : bytes_in_page;
         
-        /* Mapper temporairement la page physique */
-        uint8_t* mapped = (uint8_t*)vmm_temp_map(phys_addr);
-        
-        /* Copier les données */
-        for (uint32_t i = 0; i < to_copy; i++) {
-            mapped[offset_in_page + i] = src_ptr[i];
+        uint8_t* dst_ptr = (uint8_t*)phys_to_virt(phys) + offset;
+        for (uint64_t i = 0; i < to_copy; i++) {
+            dst_ptr[i] = src_ptr[i];
         }
         
-        vmm_temp_unmap();
-        
-        /* Avancer */
         src_ptr += to_copy;
         current_virt += to_copy;
         remaining -= to_copy;
@@ -730,50 +534,43 @@ int vmm_copy_to_dir(page_directory_t* dir, uint32_t dst_virt, const void* src, u
     return 0;
 }
 
-int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, uint32_t size)
+int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, uint64_t size)
 {
     if (dir == NULL || size == 0) {
         return -1;
     }
     
-    /* Si c'est le kernel directory courant, memset direct */
-    if ((uint32_t)dir == (uint32_t)kernel_page_directory) {
-        uint8_t* d = (uint8_t*)dst_virt;
-        for (uint32_t i = 0; i < size; i++) {
-            d[i] = value;
-        }
-        return 0;
-    }
+    KLOG_DEBUG_HEX("VMM", "memset_in_dir: dst_virt=", (uint32_t)dst_virt);
+    KLOG_DEBUG_HEX("VMM", "  size=", (uint32_t)size);
     
-    uint32_t remaining = size;
-    uint32_t current_virt = dst_virt;
+    uint64_t remaining = size;
+    uint64_t current_virt = dst_virt;
     
     while (remaining > 0) {
-        /* Obtenir l'adresse physique de la page de destination */
-        uint32_t page_virt = PAGE_ALIGN_DOWN(current_virt);
-        uint32_t offset_in_page = current_virt - page_virt;
-        uint32_t phys_addr = vmm_get_phys_addr(dir, page_virt);
+        uint64_t page_virt = PAGE_ALIGN_DOWN(current_virt);
+        uint64_t offset = current_virt - page_virt;
+        uint64_t phys = vmm_get_phys_addr(dir, page_virt);
         
-        if (phys_addr == 0 && page_virt != 0) {
-            KLOG_ERROR("VMM", "vmm_memset_in_dir: page not mapped");
+        KLOG_DEBUG_HEX("VMM", "  page_virt=", (uint32_t)page_virt);
+        KLOG_DEBUG_HEX("VMM", "  phys=", (uint32_t)phys);
+        
+        if (phys == 0) {
+            KLOG_ERROR("VMM", "memset_in_dir: phys=0!");
             return -1;
         }
         
-        /* Calculer combien on peut écrire dans cette page */
-        uint32_t bytes_in_page = PAGE_SIZE - offset_in_page;
-        uint32_t to_write = (remaining < bytes_in_page) ? remaining : bytes_in_page;
+        uint64_t bytes_in_page = PAGE_SIZE - offset;
+        uint64_t to_write = (remaining < bytes_in_page) ? remaining : bytes_in_page;
         
-        /* Mapper temporairement la page physique */
-        uint8_t* mapped = (uint8_t*)vmm_temp_map(phys_addr);
+        void* virt_ptr = phys_to_virt(phys);
+        KLOG_DEBUG_HEX("VMM", "  virt_ptr (high)=", (uint32_t)((uint64_t)virt_ptr >> 32));
+        KLOG_DEBUG_HEX("VMM", "  virt_ptr (low)=", (uint32_t)(uint64_t)virt_ptr);
         
-        /* Mettre à zéro */
-        for (uint32_t i = 0; i < to_write; i++) {
-            mapped[offset_in_page + i] = value;
+        uint8_t* dst_ptr = (uint8_t*)virt_ptr + offset;
+        for (uint64_t i = 0; i < to_write; i++) {
+            dst_ptr[i] = value;
         }
         
-        vmm_temp_unmap();
-        
-        /* Avancer */
         current_virt += to_write;
         remaining -= to_write;
     }
@@ -786,62 +583,61 @@ int vmm_memset_in_dir(page_directory_t* dir, uint32_t dst_virt, uint8_t value, u
  * ======================================== */
 
 /* Adresse de base pour les mappings MMIO dynamiques */
-#define MMIO_VIRT_BASE  0xE0000000
-#define MMIO_VIRT_END   0xF0000000
+#define MMIO_VIRT_BASE  0xFFFFFFFF00000000ULL
+#define MMIO_VIRT_END   0xFFFFFFFF80000000ULL
 
-/* Prochain slot MMIO disponible */
-static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+static uint64_t mmio_next_virt = MMIO_VIRT_BASE;
 
-volatile void* vmm_map_mmio(uint32_t phys_addr, uint32_t size)
+volatile void* vmm_map_mmio(uint64_t phys_addr, uint64_t size)
 {
-    /* Aligner l'adresse physique vers le bas */
-    uint32_t phys_aligned = PAGE_ALIGN_DOWN(phys_addr);
-    uint32_t offset = phys_addr - phys_aligned;
+    uint64_t phys_aligned = PAGE_ALIGN_DOWN(phys_addr);
+    uint64_t offset = phys_addr - phys_aligned;
     
-    /* Calculer le nombre de pages nécessaires */
-    uint32_t total_size = offset + size;
-    uint32_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint64_t total_size = offset + size;
+    uint64_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
     
-    /* Vérifier qu'on a assez d'espace */
     if (mmio_next_virt + (num_pages * PAGE_SIZE) > MMIO_VIRT_END) {
         KLOG_ERROR("VMM", "MMIO space exhausted!");
         return NULL;
     }
     
-    /* Adresse virtuelle de base pour ce mapping */
-    uint32_t virt_base = mmio_next_virt;
+    uint64_t virt_base = mmio_next_virt;
     
-    /* Mapper chaque page avec cache désactivé */
-    for (uint32_t i = 0; i < num_pages; i++) {
-        uint32_t phys = phys_aligned + (i * PAGE_SIZE);
-        uint32_t virt = virt_base + (i * PAGE_SIZE);
+    for (uint64_t i = 0; i < num_pages; i++) {
+        uint64_t phys = phys_aligned + (i * PAGE_SIZE);
+        uint64_t virt = virt_base + (i * PAGE_SIZE);
         
-        /* Mapper avec PAGE_NOCACHE pour MMIO */
         vmm_map_page(phys, virt, PAGE_PRESENT | PAGE_RW | PAGE_NOCACHE);
     }
     
-    /* Avancer le pointeur pour le prochain mapping */
     mmio_next_virt += num_pages * PAGE_SIZE;
     
-    KLOG_INFO_HEX("VMM", "MMIO mapped phys: ", phys_addr);
-    KLOG_INFO_HEX("VMM", "MMIO mapped virt: ", virt_base + offset);
-    
-    /* Retourner l'adresse virtuelle avec l'offset original */
     return (volatile void*)(virt_base + offset);
 }
 
-void vmm_unmap_mmio(volatile void* virt_addr, uint32_t size)
+void vmm_unmap_mmio(volatile void* virt_addr, uint64_t size)
 {
-    uint32_t virt = (uint32_t)(uintptr_t)virt_addr;
-    uint32_t virt_aligned = PAGE_ALIGN_DOWN(virt);
-    uint32_t offset = virt - virt_aligned;
-    uint32_t total_size = offset + size;
-    uint32_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint64_t virt = (uint64_t)virt_addr;
+    uint64_t virt_aligned = PAGE_ALIGN_DOWN(virt);
+    uint64_t offset = virt - virt_aligned;
+    uint64_t total_size = offset + size;
+    uint64_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
     
-    /* Unmapper chaque page */
-    for (uint32_t i = 0; i < num_pages; i++) {
+    for (uint64_t i = 0; i < num_pages; i++) {
         vmm_unmap_page(virt_aligned + (i * PAGE_SIZE));
     }
-    
-    /* Note: On ne récupère pas l'espace dans mmio_next_virt pour simplifier */
+}
+
+/* ========================================
+ * Helpers HHDM (exports)
+ * ======================================== */
+
+void* vmm_phys_to_virt(uint64_t phys)
+{
+    return phys_to_virt(phys);
+}
+
+uint64_t vmm_virt_to_phys(void* virt)
+{
+    return virt_to_phys(virt);
 }

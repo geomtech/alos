@@ -7,6 +7,7 @@
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "../include/elf.h"
+#include "../include/string.h"
 
 /* ========================================
  * Fonctions utilitaires locales
@@ -38,28 +39,28 @@ static void elf_memset(void* dst, uint8_t val, uint32_t n)
 /**
  * Vérifie le magic number ELF.
  */
-static int elf_check_magic(Elf32_Ehdr* ehdr)
+static int elf_check_magic(uint8_t* e_ident)
 {
-    return (ehdr->e_ident[EI_MAG0] == ELF_MAGIC_0 &&
-            ehdr->e_ident[EI_MAG1] == ELF_MAGIC_1 &&
-            ehdr->e_ident[EI_MAG2] == ELF_MAGIC_2 &&
-            ehdr->e_ident[EI_MAG3] == ELF_MAGIC_3);
+    return (e_ident[EI_MAG0] == ELF_MAGIC_0 &&
+            e_ident[EI_MAG1] == ELF_MAGIC_1 &&
+            e_ident[EI_MAG2] == ELF_MAGIC_2 &&
+            e_ident[EI_MAG3] == ELF_MAGIC_3);
 }
 
 /**
- * Valide un header ELF pour notre système (32-bit i386).
+ * Valide un header ELF64 pour notre système (x86-64).
  */
-static int elf_validate_header(Elf32_Ehdr* ehdr)
+static int elf_validate_header64(Elf64_Ehdr* ehdr)
 {
     /* Vérifier le magic number */
-    if (!elf_check_magic(ehdr)) {
+    if (!elf_check_magic(ehdr->e_ident)) {
         KLOG_ERROR("ELF", "Invalid magic number");
         return ELF_ERR_MAGIC;
     }
     
-    /* Vérifier la classe (32-bit) */
-    if (ehdr->e_ident[EI_CLASS] != ELFCLASS32) {
-        KLOG_ERROR("ELF", "Not a 32-bit ELF");
+    /* Vérifier la classe (64-bit) */
+    if (ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+        KLOG_ERROR("ELF", "Not a 64-bit ELF");
         return ELF_ERR_CLASS;
     }
     
@@ -75,9 +76,9 @@ static int elf_validate_header(Elf32_Ehdr* ehdr)
         return ELF_ERR_TYPE;
     }
     
-    /* Vérifier la machine (i386) */
-    if (ehdr->e_machine != EM_386) {
-        KLOG_ERROR("ELF", "Not for i386 architecture");
+    /* Vérifier la machine (x86-64) */
+    if (ehdr->e_machine != EM_X86_64) {
+        KLOG_ERROR("ELF", "Not for x86-64 architecture");
         return ELF_ERR_MACHINE;
     }
     
@@ -90,13 +91,13 @@ static int elf_validate_header(Elf32_Ehdr* ehdr)
 
 int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* result)
 {
-    KLOG_INFO("ELF", "=== Loading ELF ===");
+    KLOG_INFO("ELF", "=== Loading ELF64 ===");
     KLOG_INFO("ELF", filename);
     
     /* Déterminer le Page Directory cible */
     page_directory_t* target_dir = NULL;
-    if (proc != NULL && proc->page_directory != NULL) {
-        target_dir = (page_directory_t*)proc->page_directory;
+    if (proc != NULL && proc->pml4 != NULL) {
+        target_dir = (page_directory_t*)proc->pml4;
         KLOG_INFO("ELF", "Loading into process-specific page directory");
     } else {
         target_dir = vmm_get_kernel_directory();
@@ -110,17 +111,17 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
         return ELF_ERR_FILE;
     }
     
-    /* Lire le header ELF */
-    Elf32_Ehdr ehdr;
-    int bytes_read = vfs_read(file, 0, sizeof(Elf32_Ehdr), (uint8_t*)&ehdr);
-    if (bytes_read != (int)sizeof(Elf32_Ehdr)) {
+    /* Lire le header ELF64 */
+    Elf64_Ehdr ehdr;
+    int bytes_read = vfs_read(file, 0, sizeof(Elf64_Ehdr), (uint8_t*)&ehdr);
+    if (bytes_read != (int)sizeof(Elf64_Ehdr)) {
         KLOG_ERROR("ELF", "Failed to read ELF header");
         vfs_close(file);
         return ELF_ERR_FILE;
     }
     
     /* Valider le header */
-    int err = elf_validate_header(&ehdr);
+    int err = elf_validate_header64(&ehdr);
     if (err != ELF_OK) {
         vfs_close(file);
         return err;
@@ -132,14 +133,14 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
     /* Initialiser le résultat */
     if (result != NULL) {
         result->entry_point = ehdr.e_entry;
-        result->base_addr = 0xFFFFFFFF;
+        result->base_addr = 0xFFFFFFFFFFFFFFFF;
         result->top_addr = 0;
         result->num_segments = 0;
     }
     
     /* Allouer un buffer pour les Program Headers */
-    uint32_t phdr_size = ehdr.e_phnum * ehdr.e_phentsize;
-    Elf32_Phdr* phdrs = (Elf32_Phdr*)kmalloc(phdr_size);
+    uint64_t phdr_size = ehdr.e_phnum * ehdr.e_phentsize;
+    Elf64_Phdr* phdrs = (Elf64_Phdr*)kmalloc(phdr_size);
     if (phdrs == NULL) {
         KLOG_ERROR("ELF", "Failed to allocate phdr buffer");
         vfs_close(file);
@@ -157,7 +158,7 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
     
     /* Parcourir les Program Headers */
     for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
-        Elf32_Phdr* phdr = &phdrs[i];
+        Elf64_Phdr* phdr = &phdrs[i];
         
         /* On ne charge que les segments PT_LOAD */
         if (phdr->p_type != PT_LOAD) {
@@ -171,49 +172,47 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
         KLOG_INFO_HEX("ELF", "  Flags:  ", phdr->p_flags);
         
         /* Calculer les pages nécessaires */
-        uint32_t vaddr_start = PAGE_ALIGN_DOWN(phdr->p_vaddr);
-        uint32_t vaddr_end = PAGE_ALIGN_UP(phdr->p_vaddr + phdr->p_memsz);
-        uint32_t num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
+        uint64_t vaddr_start = PAGE_ALIGN_DOWN(phdr->p_vaddr);
+        uint64_t vaddr_end = PAGE_ALIGN_UP(phdr->p_vaddr + phdr->p_memsz);
+        uint64_t num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
         
         KLOG_INFO_DEC("ELF", "  Pages needed: ", num_pages);
         
         /* Allouer et mapper les pages */
-        for (uint32_t page = 0; page < num_pages; page++) {
-            uint32_t virt_addr = vaddr_start + (page * PAGE_SIZE);
+        for (uint64_t page = 0; page < num_pages; page++) {
+            uint64_t virt_addr = vaddr_start + (page * PAGE_SIZE);
             
             /* Vérifier si la page n'est pas déjà mappée */
             if (!vmm_is_mapped_in_dir(target_dir, virt_addr)) {
-                /* Allouer une page physique */
-                void* phys_page = pmm_alloc_block();
-                if (phys_page == NULL) {
+                /* Allouer une page physique (retourne adresse virtuelle HHDM) */
+                void* page_virt = pmm_alloc_block();
+                if (page_virt == NULL) {
                     KLOG_ERROR("ELF", "Out of physical memory!");
                     kfree(phdrs);
                     vfs_close(file);
                     return ELF_ERR_MEMORY;
                 }
                 
+                /* Convertir en adresse physique pour le mapping */
+                uint64_t page_phys = pmm_virt_to_phys(page_virt);
+                
                 /* Déterminer les flags de la page */
-                uint32_t page_flags = PAGE_PRESENT | PAGE_USER;
+                uint64_t page_flags = PAGE_PRESENT | PAGE_USER;
                 if (phdr->p_flags & PF_W) {
                     page_flags |= PAGE_RW;
                 }
                 
                 /* Mapper la page dans le directory cible */
-                if (vmm_map_page_in_dir(target_dir, (uint32_t)phys_page, virt_addr, page_flags) != 0) {
+                if (vmm_map_page_in_dir(target_dir, page_phys, virt_addr, page_flags) != 0) {
                     KLOG_ERROR("ELF", "Failed to map page!");
-                    pmm_free_block(phys_page);
+                    pmm_free_block(page_virt);
                     kfree(phdrs);
                     vfs_close(file);
                     return ELF_ERR_MEMORY;
                 }
                 
-                /* Mettre la page à zéro */
-                if (vmm_memset_in_dir(target_dir, virt_addr, 0, PAGE_SIZE) != 0) {
-                    KLOG_ERROR("ELF", "Failed to zero page!");
-                    kfree(phdrs);
-                    vfs_close(file);
-                    return ELF_ERR_MEMORY;
-                }
+                /* Mettre la page à zéro via l'adresse virtuelle HHDM */
+                memset(page_virt, 0, PAGE_SIZE);
             }
         }
         
@@ -283,15 +282,15 @@ int elf_is_valid(const char* filename)
         return 0;
     }
     
-    Elf32_Ehdr ehdr;
-    int bytes_read = vfs_read(file, 0, sizeof(Elf32_Ehdr), (uint8_t*)&ehdr);
+    Elf64_Ehdr ehdr;
+    int bytes_read = vfs_read(file, 0, sizeof(Elf64_Ehdr), (uint8_t*)&ehdr);
     vfs_close(file);
     
-    if (bytes_read != (int)sizeof(Elf32_Ehdr)) {
+    if (bytes_read != (int)sizeof(Elf64_Ehdr)) {
         return 0;
     }
     
-    return (elf_validate_header(&ehdr) == ELF_OK);
+    return (elf_validate_header64(&ehdr) == ELF_OK);
 }
 
 void elf_info(const char* filename)
@@ -302,9 +301,9 @@ void elf_info(const char* filename)
         return;
     }
     
-    Elf32_Ehdr ehdr;
-    int bytes_read = vfs_read(file, 0, sizeof(Elf32_Ehdr), (uint8_t*)&ehdr);
-    if (bytes_read != (int)sizeof(Elf32_Ehdr)) {
+    Elf64_Ehdr ehdr;
+    int bytes_read = vfs_read(file, 0, sizeof(Elf64_Ehdr), (uint8_t*)&ehdr);
+    if (bytes_read != (int)sizeof(Elf64_Ehdr)) {
         console_puts("Error: Could not read ELF header\n");
         vfs_close(file);
         return;
@@ -317,7 +316,7 @@ void elf_info(const char* filename)
     
     /* Magic */
     console_puts("Magic: ");
-    if (elf_check_magic(&ehdr)) {
+    if (elf_check_magic(ehdr.e_ident)) {
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         console_puts("Valid (0x7F ELF)\n");
     } else {
