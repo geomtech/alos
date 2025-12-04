@@ -1447,6 +1447,7 @@ void scheduler_schedule(void)
         return;
     }
     
+    /* debug sched 
     KLOG_INFO("SCHED", "Context switch:");
     if (current) {
         KLOG_INFO("SCHED", "  From:");
@@ -1456,6 +1457,7 @@ void scheduler_schedule(void)
     KLOG_INFO("SCHED", "  To:");
     KLOG_INFO("SCHED", next->name);
     KLOG_INFO_HEX("SCHED", "  New ESP: ", next->esp);
+    */
 
     uint64_t now = timer_get_ticks();
 

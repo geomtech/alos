@@ -321,8 +321,12 @@ void vmm_page_fault_handler(uint32_t error_code, uint32_t fault_addr)
 /* Adresse de la fenêtre temporaire (une page dans l'espace kernel) */
 #define TEMP_MAP_ADDR  0x00FF0000  /* Juste avant 16 Mo */
 
-/* Nombre d'entrées kernel à copier (16 Mo = 4 tables) */
-#define KERNEL_TABLES_COUNT  4
+/* Nombre d'entrées kernel à copier 
+ * Zone kernel: 0-16 Mo (entrées 0-3)
+ * Zone MMIO:   16-256 Mo (entrées 4-63)
+ * On copie jusqu'à l'entrée 64 pour inclure toute la zone MMIO
+ */
+#define KERNEL_TABLES_COUNT  64
 
 /**
  * Mappe temporairement une page physique pour y accéder.
@@ -387,6 +391,7 @@ page_directory_t* vmm_create_directory(void)
      * Entrée 1 (4-8 Mo)   : User ELF (ne pas copier !)
      * Entrée 2 (8-12 Mo)  : Libre
      * Entrée 3 (12-16 Mo) : TEMP_MAP_ADDR (nécessaire pour VMM)
+     * Entrées 4-63 (16-256 Mo) : Zone MMIO (doit être copiée !)
      */
     for (int i = 0; i < KERNEL_TABLES_COUNT; i++) {
         if (i == 1) continue; /* Sauter l'espace ELF user */

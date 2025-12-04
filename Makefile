@@ -55,8 +55,8 @@ MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
 
 # Drivers
-DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c
-DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o src/drivers/virtio/virtio_mmio.o src/drivers/virtio/virtio_transport.o
+DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c src/drivers/virtio/virtio_pci_modern.c
+DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o src/drivers/virtio/virtio_mmio.o src/drivers/virtio/virtio_transport.o src/drivers/virtio/virtio_pci_modern.o
 
 # Network stack (par couche OSI)
 NET_L2_SRC = src/net/l2/ethernet.c src/net/l2/arp.c

@@ -21,6 +21,7 @@
 typedef enum {
     VIRTIO_TRANSPORT_NONE = 0,
     VIRTIO_TRANSPORT_PCI_LEGACY,    /* VirtIO sur PCI (legacy, via PIO) */
+    VIRTIO_TRANSPORT_PCI_MODERN,    /* VirtIO sur PCI (modern, via MMIO) */
     VIRTIO_TRANSPORT_MMIO           /* VirtIO MMIO natif (VirtIO 1.0) */
 } virtio_transport_type_t;
 
@@ -109,6 +110,9 @@ typedef struct {
     uint16_t num_free;          /* Nombre de descriptors libres */
     uint16_t last_used_idx;     /* Dernier index used traité */
     
+    /* Pour PCI Modern: offset de notification (caché lors du setup) */
+    uint16_t notify_offset;
+    
     /* Buffers associés aux descriptors */
     void **buffers;
 } VirtQueue;
@@ -164,11 +168,22 @@ typedef struct virtio_device {
     union {
         struct {
             PCIDevice *pci_dev;
-            uint32_t io_base;           /* Pour PIO */
-            volatile void *mmio_base;   /* Pour MMIO du BAR */
+            uint32_t io_base;           /* Pour PIO (Legacy) */
+            volatile void *mmio_base;   /* Pour MMIO du BAR (unused in Legacy) */
             uint32_t mmio_phys;
             uint32_t mmio_size;
-            bool use_mmio;              /* true si on utilise le BAR MMIO */
+            bool use_mmio;              /* true si on utilise MMIO (Modern) */
+            
+            /* Modern MMIO pointers */
+            volatile void *common_cfg;  /* Common configuration */
+            volatile void *notify_base; /* Notification area */
+            volatile void *isr;         /* ISR status */
+            volatile void *device_cfg;  /* Device-specific config */
+            uint32_t notify_off_multiplier;
+            
+            /* BAR mappings for cleanup */
+            volatile void *bar_mapped[6];
+            uint32_t bar_size[6];
         } pci;
         
         struct {

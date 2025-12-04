@@ -140,6 +140,10 @@ static void virtio_net_irq_handler_internal(void) {
         return;
     }
     
+    if (g_driver->vdev->ops == NULL || g_driver->vdev->ops->ack_interrupt == NULL) {
+        return;
+    }
+    
     /* Acquitter l'interruption */
     uint32_t isr = g_driver->vdev->ops->ack_interrupt(g_driver->vdev);
     
@@ -149,8 +153,7 @@ static void virtio_net_irq_handler_internal(void) {
     }
     
     if (isr & 2) {
-        /* Config change interrupt */
-        KLOG_INFO("VIRTIO_NET", "Config change interrupt");
+        /* Config change interrupt - ignoré pour l'instant */
     }
 }
 

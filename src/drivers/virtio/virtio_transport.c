@@ -6,6 +6,7 @@
 
 #include "virtio_transport.h"
 #include "virtio_mmio.h"
+#include "virtio_pci_modern.h"
 #include "../../kernel/mmio/mmio.h"
 #include "../../kernel/mmio/pci_mmio.h"
 #include "../../mm/kheap.h"
@@ -35,18 +36,6 @@
 #define VIRTIO_PCI_CAP_ISR_CFG      3
 #define VIRTIO_PCI_CAP_DEVICE_CFG   4
 #define VIRTIO_PCI_CAP_PCI_CFG      5
-
-/* Structure de capability PCI générique */
-typedef struct {
-    uint8_t cap_vndr;    /* Generic PCI field: PCI_CAP_ID_VNDR */
-    uint8_t cap_next;    /* Generic PCI field: next ptr. */
-    uint8_t cap_len;     /* Generic PCI field: capability length */
-    uint8_t cfg_type;    /* Identifies the structure. */
-    uint8_t bar;         /* Where to find it. */
-    uint8_t padding[3];  /* Pad to full dword. */
-    uint32_t offset;     /* Offset within bar. */
-    uint32_t length;     /* Length of the structure, in bytes. */
-} __attribute__((packed)) virtio_pci_cap_t;
 
 /* Lecture PIO */
 static uint8_t pci_pio_read8(VirtioDevice *dev, uint16_t offset) {
@@ -113,6 +102,7 @@ static int pci_setup_queue(VirtioDevice *dev, VirtQueue *vq, uint16_t index) {
     vq->free_head = 0;
     vq->num_free = queue_size;
     vq->last_used_idx = 0;
+    vq->notify_offset = 0;  /* Non utilisé en mode Legacy */
     
     /* Calculer les tailles */
     uint32_t desc_size = queue_size * sizeof(VirtqDesc);
@@ -269,6 +259,243 @@ static const VirtioTransportOps pci_mmio_ops = {
     .read_config16 = pci_read_config16,
     .read_config32 = pci_read_config32,
     .ack_interrupt = pci_ack_interrupt,
+};
+
+/* ============================================ */
+/*           PCI Modern Transport (MMIO)        */
+/* ============================================ */
+
+/* Accès aux registres via common_cfg MMIO */
+static uint8_t pci_modern_read8(VirtioDevice *dev, uint16_t offset) {
+    return mmio_read8_off(dev->transport.pci.common_cfg, offset);
+}
+
+static uint16_t pci_modern_read16(VirtioDevice *dev, uint16_t offset) {
+    return mmio_read16_off(dev->transport.pci.common_cfg, offset);
+}
+
+static uint32_t pci_modern_read32(VirtioDevice *dev, uint16_t offset) {
+    return mmio_read32_off(dev->transport.pci.common_cfg, offset);
+}
+
+static void pci_modern_write8(VirtioDevice *dev, uint16_t offset, uint8_t val) {
+    mmio_write8_off(dev->transport.pci.common_cfg, offset, val);
+    mmiowb();
+}
+
+static void pci_modern_write16(VirtioDevice *dev, uint16_t offset, uint16_t val) {
+    mmio_write16_off(dev->transport.pci.common_cfg, offset, val);
+    mmiowb();
+}
+
+static void pci_modern_write32(VirtioDevice *dev, uint16_t offset, uint32_t val) {
+    mmio_write32_off(dev->transport.pci.common_cfg, offset, val);
+    mmiowb();
+}
+
+/* Opérations de haut niveau pour Modern */
+static uint32_t pci_modern_get_features(VirtioDevice *dev) {
+    volatile void *cfg = dev->transport.pci.common_cfg;
+    /* Sélectionner le mot 0 des features */
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_DFSELECT, 0);
+    mmiowb();
+    return mmio_read32_off(cfg, VIRTIO_PCI_COMMON_DF);
+}
+
+static void pci_modern_set_features(VirtioDevice *dev, uint32_t features) {
+    volatile void *cfg = dev->transport.pci.common_cfg;
+    /* Sélectionner le mot 0 des features */
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_GFSELECT, 0);
+    mmiowb();
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_GF, features);
+    mmiowb();
+}
+
+static uint8_t pci_modern_get_status(VirtioDevice *dev) {
+    return mmio_read8_off(dev->transport.pci.common_cfg, VIRTIO_PCI_COMMON_STATUS);
+}
+
+static void pci_modern_set_status(VirtioDevice *dev, uint8_t status) {
+    mmio_write8_off(dev->transport.pci.common_cfg, VIRTIO_PCI_COMMON_STATUS, status);
+    mmiowb();
+}
+
+static void pci_modern_reset(VirtioDevice *dev) {
+    mmio_write8_off(dev->transport.pci.common_cfg, VIRTIO_PCI_COMMON_STATUS, 0);
+    mmiowb();
+    /* Attendre que le reset soit effectif */
+    while (mmio_read8_off(dev->transport.pci.common_cfg, VIRTIO_PCI_COMMON_STATUS) != 0) {
+        /* Busy wait */
+    }
+}
+
+static int pci_modern_setup_queue(VirtioDevice *dev, VirtQueue *vq, uint16_t index) {
+    volatile void *cfg = dev->transport.pci.common_cfg;
+    
+    /* Sélectionner la queue */
+    mmio_write16_off(cfg, VIRTIO_PCI_COMMON_Q_SELECT, index);
+    mmiowb();
+    
+    /* Lire la taille max */
+    uint16_t max_size = mmio_read16_off(cfg, VIRTIO_PCI_COMMON_Q_SIZE);
+    if (max_size == 0) {
+        KLOG_ERROR("VIRTIO_MODERN", "Queue not available");
+        return -1;
+    }
+    
+    uint16_t queue_size = (max_size < 256) ? max_size : 256;
+    
+    /* Initialiser la structure */
+    vq->index = index;
+    vq->size = queue_size;
+    vq->free_head = 0;
+    vq->num_free = queue_size;
+    vq->last_used_idx = 0;
+    
+    /* Calculer les tailles */
+    uint32_t desc_size = queue_size * sizeof(VirtqDesc);
+    uint32_t avail_size = sizeof(VirtqAvail) + queue_size * sizeof(uint16_t) + sizeof(uint16_t);
+    uint32_t used_size = sizeof(VirtqUsed) + queue_size * sizeof(VirtqUsedElem) + sizeof(uint16_t);
+    
+    uint32_t avail_offset = desc_size;
+    uint32_t used_offset = (avail_offset + avail_size + 4095) & ~4095;
+    uint32_t total_size = used_offset + used_size;
+    total_size = (total_size + 4095) & ~4095;
+    
+    /* Allouer la mémoire */
+    void *queue_mem = pmm_alloc_blocks((total_size + 4095) / 4096);
+    if (queue_mem == NULL) {
+        KLOG_ERROR("VIRTIO_MODERN", "Failed to allocate queue memory");
+        return -1;
+    }
+    
+    /* Mettre à zéro */
+    uint8_t *ptr = (uint8_t *)queue_mem;
+    for (uint32_t i = 0; i < total_size; i++) {
+        ptr[i] = 0;
+    }
+    
+    /* Assigner les pointeurs */
+    vq->desc = (VirtqDesc *)queue_mem;
+    vq->desc_phys = (uint32_t)(uintptr_t)queue_mem;
+    
+    vq->avail = (VirtqAvail *)((uint8_t *)queue_mem + avail_offset);
+    vq->avail_phys = vq->desc_phys + avail_offset;
+    
+    vq->used = (VirtqUsed *)((uint8_t *)queue_mem + used_offset);
+    vq->used_phys = vq->desc_phys + used_offset;
+    
+    /* Initialiser la chaîne de descriptors libres */
+    for (uint16_t i = 0; i < queue_size - 1; i++) {
+        vq->desc[i].next = i + 1;
+    }
+    vq->desc[queue_size - 1].next = 0;
+    
+    /* Allouer le tableau de buffers */
+    vq->buffers = (void **)kmalloc(queue_size * sizeof(void *));
+    if (vq->buffers == NULL) {
+        return -1;
+    }
+    for (int i = 0; i < queue_size; i++) {
+        vq->buffers[i] = NULL;
+    }
+    
+    KLOG_INFO_HEX("VIRTIO_MODERN", "Queue setup:", index);
+    KLOG_INFO_HEX("VIRTIO_MODERN", "  Desc phys: ", vq->desc_phys);
+    KLOG_INFO_HEX("VIRTIO_MODERN", "  Avail phys: ", vq->avail_phys);
+    KLOG_INFO_HEX("VIRTIO_MODERN", "  Used phys: ", vq->used_phys);
+    
+    /* Configurer la queue dans le device (adresses 64-bit) */
+    mmio_write16_off(cfg, VIRTIO_PCI_COMMON_Q_SIZE, queue_size);
+    mmiowb();
+    
+    /* Descriptor table address */
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_DESCLO, vq->desc_phys);
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_DESCHI, 0);
+    mmiowb();
+    
+    /* Available ring address */
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_AVAILLO, vq->avail_phys);
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_AVAILHI, 0);
+    mmiowb();
+    
+    /* Used ring address */
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_USEDLO, vq->used_phys);
+    mmio_write32_off(cfg, VIRTIO_PCI_COMMON_Q_USEDHI, 0);
+    mmiowb();
+    
+    /* Lire et cacher le notify_offset pour cette queue */
+    vq->notify_offset = mmio_read16_off(cfg, VIRTIO_PCI_COMMON_Q_NOFF);
+    KLOG_INFO_HEX("VIRTIO_MODERN", "  Notify offset: ", vq->notify_offset);
+    
+    /* Activer la queue */
+    mmio_write16_off(cfg, VIRTIO_PCI_COMMON_Q_ENABLE, 1);
+    mmiowb();
+    
+    KLOG_INFO("VIRTIO_MODERN", "Queue enabled!");
+    
+    return 0;
+}
+
+static void pci_modern_notify_queue(VirtioDevice *dev, VirtQueue *vq) {
+    /* Utiliser le notify_offset caché lors du setup (pas d'accès MMIO ici) */
+    uint32_t notify_offset = vq->notify_offset * dev->transport.pci.notify_off_multiplier;
+    volatile void *notify_addr = (volatile void *)((uint8_t *)dev->transport.pci.notify_base + notify_offset);
+    
+    /* Écrire l'index de la queue pour notifier */
+    mmio_write16(notify_addr, vq->index);
+    mmiowb();
+}
+
+static uint8_t pci_modern_read_config8(VirtioDevice *dev, uint16_t offset) {
+    if (dev->transport.pci.device_cfg == NULL) {
+        return 0;
+    }
+    return mmio_read8_off(dev->transport.pci.device_cfg, offset);
+}
+
+static uint16_t pci_modern_read_config16(VirtioDevice *dev, uint16_t offset) {
+    if (dev->transport.pci.device_cfg == NULL) {
+        return 0;
+    }
+    return mmio_read16_off(dev->transport.pci.device_cfg, offset);
+}
+
+static uint32_t pci_modern_read_config32(VirtioDevice *dev, uint16_t offset) {
+    if (dev->transport.pci.device_cfg == NULL) {
+        return 0;
+    }
+    return mmio_read32_off(dev->transport.pci.device_cfg, offset);
+}
+
+static uint32_t pci_modern_ack_interrupt(VirtioDevice *dev) {
+    if (dev == NULL || dev->transport.pci.isr == NULL) {
+        return 0;
+    }
+    /* Lire l'ISR status (lecture efface automatiquement) */
+    uint8_t isr = mmio_read8(dev->transport.pci.isr);
+    return isr;
+}
+
+/* Table d'opérations PCI Modern */
+static const VirtioTransportOps pci_modern_ops = {
+    .read8 = pci_modern_read8,
+    .read16 = pci_modern_read16,
+    .read32 = pci_modern_read32,
+    .write8 = pci_modern_write8,
+    .write16 = pci_modern_write16,
+    .write32 = pci_modern_write32,
+    .get_features = pci_modern_get_features,
+    .set_features = pci_modern_set_features,
+    .get_status = pci_modern_get_status,
+    .set_status = pci_modern_set_status,
+    .reset = pci_modern_reset,
+    .setup_queue = pci_modern_setup_queue,
+    .notify_queue = pci_modern_notify_queue,
+    .read_config8 = pci_modern_read_config8,
+    .read_config16 = pci_modern_read_config16,
+    .read_config32 = pci_modern_read_config32,
+    .ack_interrupt = pci_modern_ack_interrupt,
 };
 
 /* ============================================ */
@@ -536,6 +763,15 @@ VirtioDevice *virtio_create_from_pci(PCIDevice *pci_dev) {
     dev->transport.pci.mmio_phys = 0;
     dev->transport.pci.mmio_size = 0;
     dev->transport.pci.use_mmio = false;
+    dev->transport.pci.common_cfg = NULL;
+    dev->transport.pci.notify_base = NULL;
+    dev->transport.pci.isr = NULL;
+    dev->transport.pci.device_cfg = NULL;
+    dev->transport.pci.notify_off_multiplier = 0;
+    for (int i = 0; i < 6; i++) {
+        dev->transport.pci.bar_mapped[i] = NULL;
+        dev->transport.pci.bar_size[i] = 0;
+    }
     dev->device_id = VIRTIO_DEVICE_NET; /* Sera mis à jour */
     dev->vendor_id = pci_dev->vendor_id;
     dev->irq = pci_dev->interrupt_line;
@@ -544,29 +780,41 @@ VirtioDevice *virtio_create_from_pci(PCIDevice *pci_dev) {
     
     KLOG_INFO_HEX("VIRTIO", "  I/O Base (PIO): ", dev->transport.pci.io_base);
     
-    /* Scanner les capabilities PCI pour détecter VirtIO Modern */
-    pci_scan_virtio_caps(pci_dev);
+    /* ============================================ */
+    /* Tenter de détecter VirtIO PCI Modern (MMIO) */
+    /* ============================================ */
+    virtio_pci_modern_t modern;
+    if (virtio_pci_modern_detect(pci_dev, &modern)) {
+        KLOG_INFO("VIRTIO", "  VirtIO Modern detected, attempting MMIO setup...");
+        
+        if (virtio_pci_modern_map(pci_dev, &modern) == 0) {
+            /* Copier les pointeurs dans la structure du device */
+            dev->transport_type = VIRTIO_TRANSPORT_PCI_MODERN;
+            dev->ops = &pci_modern_ops;
+            dev->transport.pci.use_mmio = true;
+            dev->transport.pci.common_cfg = modern.common_cfg;
+            dev->transport.pci.notify_base = modern.notify_base;
+            dev->transport.pci.isr = modern.isr;
+            dev->transport.pci.device_cfg = modern.device_cfg;
+            dev->transport.pci.notify_off_multiplier = modern.notify_off_multiplier;
+            
+            /* Copier les mappings de BAR */
+            for (int i = 0; i < 6; i++) {
+                dev->transport.pci.bar_mapped[i] = modern.bar_mapped[i];
+                dev->transport.pci.bar_size[i] = modern.bar_size[i];
+            }
+            
+            KLOG_INFO("VIRTIO", "  *** Using PCI Modern MMIO transport ***");
+            KLOG_INFO_HEX("VIRTIO", "  IRQ: ", dev->irq);
+            
+            return dev;
+        } else {
+            KLOG_INFO("VIRTIO", "  MMIO mapping failed, falling back to Legacy PIO");
+        }
+    }
     
-    /* ============================================ */
-    /* Note sur VirtIO PCI Legacy et MMIO          */
-    /* ============================================ */
-    /*
-     * VirtIO PCI Legacy (Transitional) utilise BAR0 pour les registres.
-     * BAR0 est toujours un BAR I/O (PIO) sur les devices Legacy.
-     * 
-     * Le BAR1 (MMIO) est utilisé pour MSI-X, pas pour les registres.
-     * Donc on ne peut PAS utiliser MMIO pour accéder aux registres
-     * sur VirtIO PCI Legacy.
-     * 
-     * VirtIO PCI Modern (non-transitional) utilise des BARs MMIO
-     * avec un layout complètement différent (capabilities-based).
-     * 
-     * Pour l'instant, on reste en PIO pour VirtIO PCI Legacy.
-     * Le support MMIO natif (virtio-mmio) est disponible via
-     * virtio_create_from_mmio() pour les systèmes sans PCI.
-     */
+    /* Fallback sur PCI Legacy (PIO) */
     KLOG_INFO("VIRTIO", "  Using PIO transport (VirtIO PCI Legacy)");
-    
     KLOG_INFO_HEX("VIRTIO", "  IRQ: ", dev->irq);
     
     return dev;
