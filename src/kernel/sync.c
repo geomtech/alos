@@ -289,10 +289,19 @@ void semaphore_init(semaphore_t *sem, int32_t initial_count, uint32_t max_count)
 
 void sem_wait(semaphore_t *sem)
 {
-    if (!sem) return;
+    if (!sem) {
+        KLOG_ERROR("SEM", "sem_wait: sem is NULL!");
+        return;
+    }
     
     thread_t *current = thread_current();
-    if (!current) return;
+    if (!current) {
+        KLOG_ERROR("SEM", "sem_wait: thread_current() returned NULL!");
+        return;
+    }
+    
+    KLOG_INFO("SEM", "sem_wait: blocking thread");
+    KLOG_INFO("SEM", current->name);
     
     uint32_t flags = cpu_save_flags();
     cpu_cli();

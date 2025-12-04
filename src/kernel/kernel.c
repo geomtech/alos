@@ -99,6 +99,24 @@ extern void timer_tick(void);
 /* Déclaration de schedule() pour le multitasking */
 extern void schedule(void);
 
+/**
+ * Clear all debug registers to prevent spurious Debug exceptions.
+ * This disables hardware breakpoints and clears the debug status.
+ */
+static void clear_debug_registers(void) {
+    __asm__ volatile(
+        "xor %%rax, %%rax\n"
+        "mov %%rax, %%dr0\n"
+        "mov %%rax, %%dr1\n"
+        "mov %%rax, %%dr2\n"
+        "mov %%rax, %%dr3\n"
+        "mov %%rax, %%dr6\n"       /* Clear debug status */
+        "mov $0x400, %%rax\n"      /* DR7 = 0x400 (breakpoints disabled, bit 10 = 1 reserved) */
+        "mov %%rax, %%dr7\n"
+        : : : "rax"
+    );
+}
+
 /* Compteur pour le scheduling (tous les X ticks) */
 static uint32_t schedule_counter = 0;
 #define SCHEDULE_INTERVAL 2 /* Scheduler toutes les 2 ticks (~20ms à 100Hz) */
@@ -164,6 +182,9 @@ void kmain(void) {
   
   /* Initialize IDT (64-bit) */
   idt_init();
+  
+  /* Clear debug registers to prevent spurious Debug exceptions (INT 0x01) */
+  clear_debug_registers();
   
   /* Initialize CPU features */
   cpu_init();

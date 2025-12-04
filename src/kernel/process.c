@@ -753,8 +753,8 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     proc->should_terminate = 0;
     
     /* Créer un nouveau Page Directory pour l'isolation mémoire */
-    proc->pml4 = (uint64_t*)vmm_create_directory();
-    if (proc->pml4 == NULL) {
+    page_directory_t* dir = vmm_create_directory();
+    if (dir == NULL) {
         KLOG_ERROR("EXEC", "Failed to create page directory!");
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("Error: Failed to create page directory\n");
@@ -763,7 +763,8 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         kfree(proc);
         return -1;
     }
-    proc->cr3 = (uint64_t)proc->pml4;
+    proc->pml4 = (uint64_t*)dir;  /* Stocker le pointeur vers la structure */
+    proc->cr3 = dir->pml4_phys;   /* CR3 = adresse PHYSIQUE du PML4 */
     
     KLOG_INFO_HEX("EXEC", "Created page directory at: ", proc->cr3);
     
@@ -794,8 +795,9 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
     for (uint64_t addr = user_stack_bottom; addr < USER_STACK_TOP; addr += PAGE_SIZE) {
         if (!vmm_is_mapped_in_dir((page_directory_t*)proc->pml4, addr)) {
-            void* phys_page = pmm_alloc_block();
-            if (phys_page == NULL) {
+            /* pmm_alloc_block retourne une adresse virtuelle HHDM */
+            void* page_virt = pmm_alloc_block();
+            if (page_virt == NULL) {
                 KLOG_ERROR("EXEC", "Failed to allocate user stack!");
                 console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
                 console_puts("Error: Failed to allocate user stack (phys memory)\n");
@@ -805,19 +807,23 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
                 kfree(proc);
                 return -1;
             }
+            /* Convertir en adresse physique pour le mapping */
+            uint64_t page_phys = pmm_virt_to_phys(page_virt);
             if (vmm_map_page_in_dir((page_directory_t*)proc->pml4, 
-                                     (uint64_t)phys_page, addr, 
+                                     page_phys, addr, 
                                      PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
                 KLOG_ERROR("EXEC", "Failed to map user stack page!");
                 console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
                 console_puts("Error: Failed to map user stack page\n");
                 console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-                pmm_free_block(phys_page);
+                pmm_free_block(page_virt);
                 vmm_free_directory((page_directory_t*)proc->pml4);
                 kfree(kernel_stack);
                 kfree(proc);
                 return -1;
             }
+            /* Mettre la page à zéro */
+            memset(page_virt, 0, PAGE_SIZE);
         }
     }
     
@@ -963,9 +969,6 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
     
     if (main_thread == NULL) {
         KLOG_ERROR("EXEC", "Failed to create user thread!");
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("Error: Failed to create user thread\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         vmm_free_directory((page_directory_t*)proc->pml4);
         kfree(kernel_stack);
         kfree(proc);

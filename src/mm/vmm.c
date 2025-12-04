@@ -81,12 +81,15 @@ static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, ui
     /* Créer une nouvelle table */
     page_entry_t* new_table = alloc_table();
     if (new_table == NULL) {
+        KLOG_ERROR("VMM", "get_or_create_table: alloc_table failed!");
         return NULL;
     }
     
     /* Ajouter l'entrée */
     uint64_t phys = virt_to_phys(new_table);
     table[index] = phys | PAGE_PRESENT | PAGE_RW | (flags & PAGE_USER);
+    
+    KLOG_DEBUG_HEX("VMM", "  Created table at phys=", (uint32_t)phys);
     
     return new_table;
 }
@@ -127,6 +130,15 @@ void vmm_init(void)
     
     KLOG_INFO_HEX("VMM", "Kernel PML4 phys: ", (uint32_t)kernel_directory.pml4_phys);
     KLOG_INFO("VMM", "VMM initialized (using Limine paging)");
+}
+
+/**
+ * Retourne l'adresse physique du PML4 du kernel.
+ * Utilisé par le scheduler pour restaurer le CR3 du kernel.
+ */
+uint64_t vmm_get_kernel_cr3(void)
+{
+    return kernel_directory.pml4_phys;
 }
 
 void vmm_map_page(uint64_t phys, uint64_t virt, uint64_t flags)

@@ -384,37 +384,42 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->preempt_count = 0;
     thread->preempt_pending = false;
     
-    /* Préparer la stack initiale au format popa + iretd.
+    /* Préparer la stack initiale pour switch_context (x86-64).
      * 
-     * Layout (du haut vers le bas - ESP pointe vers EDI):
-     *   [EFLAGS]   <- iretd pop eflags (avec IF=1 pour activer les interrupts)
-     *   [CS]       <- iretd pop cs (segment code kernel = 0x08)
-     *   [EIP]      <- iretd pop eip (= task_entry_point)
-     *   [EAX]      <- popa (= entry address)
-     *   [ECX]      <- popa (= arg)
-     *   [EDX]      <- popa (= 0)
-     *   [EBX]      <- popa (= 0)
-     *   [ESP_dummy]<- popa ignore this
-     *   [EBP]      <- popa (= 0)
-     *   [ESI]      <- popa (= 0)
-     *   [EDI]      <- popa (= 0) <- ESP pointe ici
+     * switch_context fait dans cet ordre:
+     *   pop r15, r14, r13, r12, rbx, rbp
+     *   popfq
+     *   ret
+     * 
+     * task_entry_point attend:
+     *   R12 = entry function pointer
+     *   R13 = argument (void*)
+     * 
+     * Layout de la stack (RSP pointe vers R15):
+     *   [task_entry_point]  <- adresse de retour pour 'ret'
+     *   [RFLAGS = 0x202]    <- popfq (IF=1, bit 1 reserved = 1)
+     *   [RBP = 0]           <- pop rbp
+     *   [RBX = 0]           <- pop rbx
+     *   [R12 = entry]       <- pop r12 (entry function)
+     *   [R13 = arg]         <- pop r13 (argument)
+     *   [R14 = 0]           <- pop r14
+     *   [R15 = 0]           <- pop r15 <- RSP pointe ici
      */
     uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
     
-    /* Simuler ce que le CPU push lors d'une interruption */
-    *(--stack_top) = 0x202;                  /* EFLAGS: IF=1 (interrupts enabled) */
-    *(--stack_top) = 0x08;                   /* CS: kernel code segment */
-    *(--stack_top) = (uint64_t)task_entry_point;  /* EIP: point d'entrée */
+    /* Adresse de retour (après popfq + ret) */
+    *(--stack_top) = (uint64_t)task_entry_point;
     
-    /* Simuler pusha (ordre: EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI) */
-    *(--stack_top) = (uint64_t)entry;        /* EAX = adresse de la fonction */
-    *(--stack_top) = (uint64_t)arg;          /* ECX = argument */
-    *(--stack_top) = 0;                      /* EDX */
-    *(--stack_top) = 0;                      /* EBX */
-    *(--stack_top) = 0;                      /* ESP (ignoré par popa) */
-    *(--stack_top) = 0;                      /* EBP */
-    *(--stack_top) = 0;                      /* ESI */
-    *(--stack_top) = 0;                      /* EDI */
+    /* RFLAGS: IF=1 (bit 9), reserved bit 1 = 1 → 0x202 */
+    *(--stack_top) = 0x202;
+    
+    /* Registres callee-saved (ordre inverse des pop) */
+    *(--stack_top) = 0;                      /* RBP */
+    *(--stack_top) = 0;                      /* RBX */
+    *(--stack_top) = (uint64_t)entry;        /* R12 = entry function */
+    *(--stack_top) = (uint64_t)arg;          /* R13 = argument */
+    *(--stack_top) = 0;                      /* R14 */
+    *(--stack_top) = 0;                      /* R15 */
     
     thread->rsp = (uint64_t)stack_top;
     
@@ -501,8 +506,9 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     thread->entry = NULL;  /* Pas de fonction entry pour user threads */
     thread->arg = NULL;
     
-    thread->base_priority = THREAD_PRIORITY_NORMAL;
-    thread->priority = THREAD_PRIORITY_NORMAL;
+    /* Donner une priorité élevée aux threads utilisateur pour qu'ils soient schedulés */
+    thread->base_priority = THREAD_PRIORITY_UI;
+    thread->priority = THREAD_PRIORITY_UI;
     thread->time_slice_remaining = scheduler_get_time_slice(thread);
 
     /* Nice value and aging */
@@ -589,19 +595,6 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     KLOG_INFO_HEX("THREAD", "Kernel stack: ", (uint64_t)kernel_stack);
     KLOG_INFO_HEX("THREAD", "ESP (kernel): ", thread->rsp);
     KLOG_INFO_HEX("THREAD", "ESP0: ", thread->rsp0);
-    
-    /* DEBUG: Afficher les infos du thread user créé */
-    console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-    console_puts("[DEBUG] User thread created: TID=");
-    console_put_dec(thread->tid);
-    console_puts(" entry=0x");
-    console_put_hex(entry_point);
-    console_puts(" user_rsp=0x");
-    console_put_hex(user_rsp);
-    console_puts(" kstack_esp=0x");
-    console_put_hex(thread->rsp);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     /* Ajouter au scheduler */
     scheduler_enqueue(thread);
@@ -840,7 +833,6 @@ void thread_sleep_ticks(uint64_t ticks)
 {
     if (!g_current_thread || ticks == 0) return;
     
-    uint32_t flags = cpu_save_flags();
     cpu_cli();
     
     thread_t *thread = g_current_thread;
@@ -866,7 +858,10 @@ void thread_sleep_ticks(uint64_t ticks)
     
     scheduler_schedule();
     
-    cpu_restore_flags(flags);
+    /* IMPORTANT: Toujours réactiver les interruptions après un sleep.
+     * Le thread doit pouvoir recevoir les IRQ (timer, réseau, etc.)
+     * pour que le système fonctionne correctement. */
+    cpu_sti();
 }
 
 void thread_sleep_ms(uint32_t ms)
@@ -1447,6 +1442,18 @@ void scheduler_schedule(void)
         next = g_idle_thread;
     }
     
+    /* Debug: afficher le switch */
+    KLOG_INFO("SCHED", "schedule() called");
+    if (current) {
+        KLOG_INFO("SCHED", current->name);
+    }
+    if (next) {
+        KLOG_INFO("SCHED", next->name);
+        if (next->owner) {
+            KLOG_INFO("SCHED", "  -> has owner (user thread)");
+        }
+    }
+    
     /* Si pas de next ou même thread, rien à faire */
     if (!next || next == current) {
         cpu_sti();
@@ -1502,41 +1509,59 @@ void scheduler_schedule(void)
     
     /* Context switch !
      * Utiliser le CR3 du processus owner si disponible (pour les processus user)
-     * Sinon, CR3 = 0 pour les threads kernel (pas de changement de page directory)
+     * Sinon, utiliser le CR3 du kernel pour les threads kernel
      */
-    uint32_t new_cr3 = 0;
+    uint64_t new_cr3;
     if (next->owner && next->owner->cr3) {
         new_cr3 = next->owner->cr3;
-        
-        /* Vérification de sanité : CR3 doit être une adresse physique valide (alignée sur 4 Ko) */
-        if (new_cr3 < 0x1000 || (new_cr3 & 0xFFF) != 0) {
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-            console_puts("\n[SCHED] FATAL: Invalid CR3 = 0x");
-            console_put_hex(new_cr3);
-            console_puts(" for thread ");
-            console_puts(next->name);
-            console_puts("!\n");
-            console_puts("Process cr3 corrupted. Halting.\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-            for (;;) asm volatile("hlt");
-        }
+    } else {
+        /* Thread kernel : utiliser le PML4 du kernel */
+        new_cr3 = vmm_get_kernel_cr3();
     }
     
-    /* DEBUG: Afficher info sur le switch vers un thread user */
-    if (next->owner && next->owner->cr3 && next->first_switch) {
-        console_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-        console_puts("[DEBUG] First switch to user thread: ");
-        console_puts(next->name);
-        console_puts(" TID=");
-        console_put_dec(next->tid);
-        console_puts(" ESP=0x");
-        console_put_hex(next->rsp);
-        console_puts(" CR3=0x");
-        console_put_hex(new_cr3);
-        console_puts("\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-        next->first_switch = false;  /* Marquer comme déjà switché */
+    /* Vérification de sanité : CR3 doit être une adresse physique valide (alignée sur 4 Ko) */
+    if (new_cr3 < 0x1000 || (new_cr3 & 0xFFF) != 0) {
+        KLOG_ERROR_HEX("SCHED", "FATAL: Invalid CR3 = ", (uint32_t)new_cr3);
+        for (;;) asm volatile("hlt");
     }
+    
+    /* Premier switch vers un thread utilisateur : utiliser jump_to_user */
+    if (next->owner && next->owner->cr3 && next->first_switch) {
+        KLOG_INFO("SCHED", "First switch to user thread: ");
+        KLOG_INFO("SCHED", next->name);
+        KLOG_INFO_DEC("SCHED", " TID=", next->tid);
+        
+        next->first_switch = false;
+        g_current_thread = next;
+        
+        /* Récupérer les infos depuis la stack préparée */
+        uint64_t *kstack = (uint64_t *)next->rsp;
+        /* La stack contient: RAX,RCX,RDX,RBX,RBP,RSI,RDI,R8-R15, puis RIP,CS,RFLAGS,RSP,SS */
+        uint64_t user_rip = kstack[15];  /* RIP après les 15 registres */
+        uint64_t user_rsp = kstack[18];  /* RSP (après RIP, CS, RFLAGS) */
+        
+        KLOG_INFO_HEX("SCHED", "jump_to_user: RIP=", (uint32_t)user_rip);
+        KLOG_INFO_HEX("SCHED", "jump_to_user: RSP=", (uint32_t)user_rsp);
+        KLOG_INFO_HEX("SCHED", "jump_to_user: CR3=", (uint32_t)new_cr3);
+        
+        /* Sauvegarder le contexte actuel si nécessaire */
+        if (current) {
+            /* Sauvegarder RSP du thread actuel */
+            uint64_t dummy_rsp;
+            __asm__ volatile("mov %%rsp, %0" : "=r"(dummy_rsp));
+            current->rsp = dummy_rsp;
+        }
+        
+        /* Sauter en mode utilisateur - ne revient jamais */
+        extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
+        jump_to_user(user_rsp, user_rip, new_cr3);
+        
+        /* Ne devrait jamais arriver ici */
+        __builtin_unreachable();
+    }
+    
+    /* Mettre à jour g_current_thread AVANT le switch pour les threads kernel */
+    g_current_thread = next;
     
     if (current) {
         switch_task(&current->rsp, next->rsp, new_cr3);

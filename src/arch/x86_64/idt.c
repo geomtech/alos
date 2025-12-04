@@ -264,6 +264,42 @@ void exception_handler(struct interrupt_frame *frame)
         return;
     }
     
+    /* Debug Exception (INT 0x01) - handle TF flag and hardware breakpoints */
+    if (int_no == 1) {
+        uint64_t dr6, dr7;
+        
+        /* Read debug registers */
+        __asm__ volatile("mov %%dr6, %0" : "=r"(dr6));
+        __asm__ volatile("mov %%dr7, %0" : "=r"(dr7));
+        
+        KLOG_ERROR("DEBUG", "=== DEBUG EXCEPTION ===");
+        KLOG_ERROR_HEX("DEBUG", "DR6 (status): ", (uint32_t)dr6);
+        KLOG_ERROR_HEX("DEBUG", "DR7 (control): ", (uint32_t)dr7);
+        KLOG_ERROR_HEX("DEBUG", "RFLAGS: ", (uint32_t)frame->rflags);
+        KLOG_ERROR_HEX("DEBUG", "RIP (low): ", (uint32_t)frame->rip);
+        
+        /* Check if Trap Flag (TF, bit 8) is set */
+        if (frame->rflags & (1 << 8)) {
+            KLOG_ERROR("DEBUG", "*** TRAP FLAG IS SET - Clearing ***");
+            /* Clear TF in saved RFLAGS so execution can continue */
+            frame->rflags &= ~(1ULL << 8);
+        }
+        
+        /* Clear DR6 (debug status register) */
+        __asm__ volatile("xor %%rax, %%rax; mov %%rax, %%dr6" ::: "rax");
+        
+        /* If only TF was the cause, we can continue */
+        /* DR6 bit 14 (BS) indicates single-step trap */
+        if (dr6 & (1 << 14)) {
+            KLOG_ERROR("DEBUG", "Single-step trap - continuing");
+            return;
+        }
+        
+        /* For other debug causes (hardware breakpoints), continue for now */
+        KLOG_ERROR("DEBUG", "Debug exception handled - continuing");
+        return;
+    }
+    
     /* Kernel panic for other exceptions - use serial only */
     cli();
     

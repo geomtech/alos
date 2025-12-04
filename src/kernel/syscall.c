@@ -48,9 +48,8 @@ static void fd_table_init(void)
             console_puts("[SYSCALL] FATAL: Cannot allocate fd_table!\n");
             return;
         }
-        console_puts("[SYSCALL] fd_table allocated at ");
-        console_put_hex((uint32_t)(uintptr_t)fd_table);
-        console_puts("\n");
+
+        KLOG_INFO_HEX("SYSCALL", "fd_table allocated at address: ", (uint32_t)(uintptr_t)fd_table);
         
         /* Forcer le rechargement du TLB pour être sûr que les nouveaux mappings sont visibles */
         __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3" : : : "rax", "memory");
@@ -212,18 +211,13 @@ static int sys_open(const char* path, int flags)
     }
     
     KLOG_INFO("SYSCALL", "sys_open called");
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] open: ");
-    console_puts(path);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO("SYSCALL", "[SYSCALL] open:");
+    KLOG_INFO("SYSCALL", path);
     
     /* Ouvrir le fichier via VFS */
     vfs_node_t* node = vfs_open(path, flags);
     if (node == NULL) {
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("[SYSCALL] open: file not found\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        KLOG_ERROR("SYSCALL", "[SYSCALL] open: file not found");
         return -1;
     }
     
@@ -231,7 +225,7 @@ static int sys_open(const char* path, int flags)
     int fd = fd_alloc();
     if (fd < 0) {
         vfs_close(node);
-        console_puts("[SYSCALL] open: no free file descriptors\n");
+        KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
         return -1;
     }
     
@@ -241,13 +235,8 @@ static int sys_open(const char* path, int flags)
     fd_table[fd].position = 0;
     fd_table[fd].vfs_node = node;
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] open: fd=");
-    console_put_dec(fd);
-    console_puts(", size=");
-    console_put_dec(node->size);
-    console_puts(" bytes\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO_DEC("SYSCALL", "[SYSCALL] open: fd=", fd);
+    KLOG_INFO_DEC("SYSCALL", "file size=", node->size);
     
     return fd;
 }
@@ -739,11 +728,22 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     uint16_t port = listen_sock->local_port;
     tcp_socket_t* client_sock = NULL;
     
-    /* Attendre qu'un socket client soit prêt (ESTABLISHED) - polling sans délai */
+    /* Attendre qu'un socket client soit prêt (ESTABLISHED).
+     * On utilise un sleep court au lieu de thread_yield() pur pour éviter
+     * de monopoliser le CPU et permettre aux IRQ de traiter les paquets.
+     * 
+     * Note: Les interruptions DOIVENT être activées pendant le sleep
+     * pour que l'IRQ réseau puisse traiter le handshake TCP.
+     */
+    KLOG_DEBUG("SYSCALL", "sys_accept: waiting for connection...");
+    
     while ((client_sock = tcp_find_ready_client(port)) == NULL) {
-        /* Juste céder le CPU, pas de délai */
-        thread_yield();
+        /* Sleep 10ms pour permettre aux IRQ de s'exécuter.
+         * thread_sleep_ms réactive les interruptions via RFLAGS. */
+        thread_sleep_ms(10);
     }
+    
+    KLOG_DEBUG("SYSCALL", "sys_accept: connection ready!");
     
     /* Allouer un nouveau FD pour le socket client */
     int client_fd = fd_alloc();
@@ -794,20 +794,20 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
         return 0;
     }
     
-    net_lock();
-    
-    /* Attente des données - yield sans délai */
+    /* Attente des données avec sleep pour permettre aux IRQ de s'exécuter.
+     * On ne prend PAS le lock pendant l'attente pour éviter les deadlocks
+     * avec l'IRQ réseau qui traite les paquets entrants.
+     */
     while (tcp_available(sock) == 0) {
         if (sock->state != TCP_STATE_ESTABLISHED) {
-            net_unlock();
             return 0;
         }
-        /* Relâcher le lock, yield, reprendre */
-        net_unlock();
-        thread_yield();
-        net_lock();
+        /* Sleep 1ms pour permettre aux IRQ de traiter les paquets */
+        thread_sleep_ms(1);
     }
     
+    /* Prendre le lock seulement pour la lecture des données */
+    net_lock();
     int n = tcp_recv(sock, buf, len);
     net_unlock();
     

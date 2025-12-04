@@ -159,6 +159,14 @@ void vmm_set_user_accessible(uint64_t start, uint64_t size);
 page_directory_t* vmm_create_directory(void);
 
 /**
+ * Retourne l'adresse physique du PML4 du kernel.
+ * Utilisé par le scheduler pour restaurer le CR3 du kernel.
+ * 
+ * @return Adresse physique du PML4 kernel
+ */
+uint64_t vmm_get_kernel_cr3(void);
+
+/**
  * Libère un Page Directory et toutes ses tables.
  * 
  * @param dir  Page Directory à libérer

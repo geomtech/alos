@@ -19,6 +19,9 @@ section .text
 ;
 global switch_context
 switch_context:
+    ; CRITICAL: Save RFLAGS FIRST to prevent TF/IF leakage between threads
+    pushfq
+    
     ; Save callee-saved registers (System V ABI)
     push rbp
     push rbx
@@ -27,25 +30,22 @@ switch_context:
     push r14
     push r15
     
-    ; Save RFLAGS
-    pushfq
-    
     ; Save current RSP to *old_rsp_ptr
     mov [rdi], rsp
     
     ; Load new RSP
     mov rsp, rsi
     
-    ; Restore RFLAGS
-    popfq
-    
-    ; Restore callee-saved registers
+    ; Restore callee-saved registers (LIFO order)
     pop r15
     pop r14
     pop r13
     pop r12
     pop rbx
     pop rbp
+    
+    ; CRITICAL: Restore RFLAGS LAST (matches push order)
+    popfq
     
     ; Return to new thread
     ret
@@ -66,6 +66,9 @@ switch_task:
     ; Disable interrupts during switch
     cli
     
+    ; CRITICAL: Save RFLAGS FIRST to prevent TF/IF leakage between threads
+    pushfq
+    
     ; Save callee-saved registers
     push rbp
     push rbx
@@ -73,9 +76,6 @@ switch_task:
     push r13
     push r14
     push r15
-    
-    ; Save RFLAGS
-    pushfq
     
     ; Save current RSP
     mov [rdi], rsp
@@ -89,16 +89,16 @@ switch_task:
     ; Load new RSP
     mov rsp, rsi
     
-    ; Restore RFLAGS (will re-enable interrupts if IF was set)
-    popfq
-    
-    ; Restore callee-saved registers
+    ; Restore callee-saved registers (LIFO order)
     pop r15
     pop r14
     pop r13
     pop r12
     pop rbx
     pop rbp
+    
+    ; CRITICAL: Restore RFLAGS LAST (will re-enable interrupts if IF was set)
+    popfq
     
     ; Return to new thread
     ret
@@ -118,10 +118,45 @@ global jump_to_user
 jump_to_user:
     cli
     
+    ; Debug: write to serial port BEFORE cr3 change
+    push rax
+    push rdx
+    mov al, 'B'
+    mov dx, 0x3F8
+    out dx, al
+    mov al, 'C'
+    out dx, al
+    mov al, 'R'
+    out dx, al
+    mov al, '3'
+    out dx, al
+    mov al, 10
+    out dx, al
+    pop rdx
+    pop rax
+    
     ; Change page table if cr3 != 0
     test rdx, rdx
     jz .skip_cr3_user
     mov cr3, rdx
+    
+    ; Debug: write to serial port AFTER cr3 change
+    push rax
+    push rdx
+    mov al, 'A'
+    mov dx, 0x3F8
+    out dx, al
+    mov al, 'C'
+    out dx, al
+    mov al, 'R'
+    out dx, al
+    mov al, '3'
+    out dx, al
+    mov al, 10
+    out dx, al
+    pop rdx
+    pop rax
+    
 .skip_cr3_user:
     
     ; Build iretq frame
@@ -161,6 +196,17 @@ jump_to_user:
     mov es, ax
     mov fs, ax
     mov gs, ax
+    
+    ; Debug: write to serial port before iretq
+    mov al, 'U'
+    mov dx, 0x3F8
+    out dx, al
+    mov al, 'S'
+    out dx, al
+    mov al, 'R'
+    out dx, al
+    mov al, 10
+    out dx, al
     
     ; Jump to user mode!
     iretq

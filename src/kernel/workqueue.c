@@ -61,6 +61,14 @@ static void worker_thread_func(void *arg)
     }
     
     KLOG_INFO("WORKER", "Worker thread exiting");
+    
+    /* Ne jamais retourner - appeler thread_exit pour terminer proprement */
+    thread_exit(0);
+    
+    /* Ne devrait jamais arriver ici */
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
 }
 
 /* ============================================ */

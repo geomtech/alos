@@ -7,6 +7,7 @@
 #include "../mm/pmm.h"
 #include "../mm/kheap.h"
 #include "../include/elf.h"
+#include "../include/string.h"
 
 /* ========================================
  * Fonctions utilitaires locales
@@ -183,14 +184,17 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
             
             /* Vérifier si la page n'est pas déjà mappée */
             if (!vmm_is_mapped_in_dir(target_dir, virt_addr)) {
-                /* Allouer une page physique */
-                void* phys_page = pmm_alloc_block();
-                if (phys_page == NULL) {
+                /* Allouer une page physique (retourne adresse virtuelle HHDM) */
+                void* page_virt = pmm_alloc_block();
+                if (page_virt == NULL) {
                     KLOG_ERROR("ELF", "Out of physical memory!");
                     kfree(phdrs);
                     vfs_close(file);
                     return ELF_ERR_MEMORY;
                 }
+                
+                /* Convertir en adresse physique pour le mapping */
+                uint64_t page_phys = pmm_virt_to_phys(page_virt);
                 
                 /* Déterminer les flags de la page */
                 uint64_t page_flags = PAGE_PRESENT | PAGE_USER;
@@ -199,21 +203,16 @@ int elf_load_file(const char* filename, process_t* proc, elf_load_result_t* resu
                 }
                 
                 /* Mapper la page dans le directory cible */
-                if (vmm_map_page_in_dir(target_dir, (uint64_t)phys_page, virt_addr, page_flags) != 0) {
+                if (vmm_map_page_in_dir(target_dir, page_phys, virt_addr, page_flags) != 0) {
                     KLOG_ERROR("ELF", "Failed to map page!");
-                    pmm_free_block(phys_page);
+                    pmm_free_block(page_virt);
                     kfree(phdrs);
                     vfs_close(file);
                     return ELF_ERR_MEMORY;
                 }
                 
-                /* Mettre la page à zéro */
-                if (vmm_memset_in_dir(target_dir, virt_addr, 0, PAGE_SIZE) != 0) {
-                    KLOG_ERROR("ELF", "Failed to zero page!");
-                    kfree(phdrs);
-                    vfs_close(file);
-                    return ELF_ERR_MEMORY;
-                }
+                /* Mettre la page à zéro via l'adresse virtuelle HHDM */
+                memset(page_virt, 0, PAGE_SIZE);
             }
         }
         
