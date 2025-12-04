@@ -55,8 +55,8 @@ MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
 
 # Drivers
-DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c
-DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o
+DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c
+DRIVERS_OBJ = src/drivers/pci.o src/drivers/ata.o src/drivers/net/pcnet.o src/drivers/net/virtio_net.o src/drivers/virtio/virtio_mmio.o src/drivers/virtio/virtio_transport.o
 
 # Network stack (par couche OSI)
 NET_L2_SRC = src/net/l2/ethernet.c src/net/l2/arp.c
@@ -160,10 +160,14 @@ src/config/%.o: src/config/%.c
 src/kernel/mmio/%.o: src/kernel/mmio/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# VirtIO drivers
+src/drivers/virtio/%.o: src/drivers/virtio/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage
 clean:
 	rm -f src/arch/x86/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
-	rm -f src/drivers/*.o src/drivers/net/*.o
+	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
 	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o
 	rm -f alos.bin

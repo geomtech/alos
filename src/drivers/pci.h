@@ -31,6 +31,10 @@
 #define PCI_BAR5 0x24
 #define PCI_INTERRUPT_LINE 0x3C
 #define PCI_INTERRUPT_PIN 0x3D
+#define PCI_CAPABILITIES_PTR 0x34
+
+/* Capability IDs */
+#define PCI_CAP_ID_VNDR 0x09
 
 /* Vendor IDs connus */
 #define PCI_VENDOR_AMD 0x1022
@@ -90,6 +94,12 @@ uint16_t pci_config_read_word(uint8_t bus, uint8_t slot, uint8_t func,
  */
 uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func,
                                uint8_t offset);
+
+/**
+ * Lit un octet de 8 bits depuis le PCI Configuration Space.
+ */
+uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func,
+                             uint8_t offset);
 
 /**
  * Écrit un double mot de 32 bits dans le PCI Configuration Space.

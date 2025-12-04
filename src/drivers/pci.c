@@ -81,6 +81,17 @@ uint32_t pci_config_read_dword(uint8_t bus, uint8_t slot, uint8_t func,
   return inl(PCI_CONFIG_DATA);
 }
 
+uint8_t pci_config_read_byte(uint8_t bus, uint8_t slot, uint8_t func,
+                             uint8_t offset) {
+  uint32_t address = pci_make_address(bus, slot, func, offset);
+
+  outl(PCI_CONFIG_ADDRESS, address);
+  uint32_t data = inl(PCI_CONFIG_DATA);
+
+  /* Extraire l'octet approprié */
+  return (uint8_t)((data >> ((offset & 3) * 8)) & 0xFF);
+}
+
 void pci_config_write_dword(uint8_t bus, uint8_t slot, uint8_t func,
                             uint8_t offset, uint32_t value) {
   uint32_t address = pci_make_address(bus, slot, func, offset);

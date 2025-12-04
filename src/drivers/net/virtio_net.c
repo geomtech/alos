@@ -1,694 +1,422 @@
-/* src/drivers/net/virtio_net.c - Virtio Network Driver (Legacy)
+/* src/drivers/net/virtio_net.c - VirtIO Network Driver
  *
- * Ce driver supporte deux modes d'accès:
- * - PIO (Port I/O) : Mode legacy, toujours disponible
- * - MMIO (Memory-Mapped I/O) : Mode moderne, utilisé si BAR MMIO disponible
+ * Ce driver utilise l'abstraction de transport VirtIO qui supporte:
+ * - PCI PIO (Port I/O) : Mode legacy
+ * - PCI MMIO : Mode moderne via BAR MMIO (auto-détecté)
+ * - MMIO natif : Pour systèmes sans PCI
+ *
+ * Le mode MMIO est automatiquement sélectionné si un BAR MMIO est disponible.
  */
+
 #include "virtio_net.h"
+#include "../virtio/virtio_transport.h"
 #include "../../arch/x86/idt.h"
 #include "../../arch/x86/io.h"
-#include "../../kernel/mmio/mmio.h"
-#include "../../kernel/mmio/pci_mmio.h"
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
 #include "../../net/netlog.h"
-
-/* Global instance */
-static VirtIONetDevice *g_virtio_dev = NULL;
-static NetInterface *g_virtio_netif = NULL;
-
-/* Mode d'accès forcé (-1 = auto, 0 = PIO, 1 = MMIO) */
-static int g_virtio_forced_access_mode = -1;
+#include "../../kernel/klog.h"
 
 /* ============================================ */
-/*           Fonctions PIO (Port I/O)           */
+/*           Structures internes                */
 /* ============================================ */
 
-static uint8_t virtio_read8_pio(VirtIONetDevice *dev, uint16_t offset) {
-  return inb(dev->io_base + offset);
-}
+/* Structure interne du driver réseau VirtIO */
+typedef struct {
+    VirtioDevice *vdev;         /* Device VirtIO abstrait */
+    VirtQueue rx_queue;         /* Queue de réception */
+    VirtQueue tx_queue;         /* Queue de transmission */
+    
+    uint8_t mac_addr[6];        /* Adresse MAC */
+    bool initialized;
+    
+    /* Statistiques */
+    uint32_t packets_rx;
+    uint32_t packets_tx;
+    uint32_t errors;
+} VirtioNetDriver;
 
-static void virtio_write8_pio(VirtIONetDevice *dev, uint16_t offset,
-                              uint8_t value) {
-  outb(dev->io_base + offset, value);
-}
+/* Header VirtIO-Net (doit précéder chaque paquet)
+ * Taille: 10 bytes pour Legacy, 12 bytes si VIRTIO_NET_F_MRG_RXBUF
+ */
+typedef struct {
+    uint8_t flags;
+    uint8_t gso_type;
+    uint16_t hdr_len;
+    uint16_t gso_size;
+    uint16_t csum_start;
+    uint16_t csum_offset;
+    /* num_buffers n'est PAS inclus en mode Legacy sans MRG_RXBUF */
+} __attribute__((packed)) VirtioNetHdr;
 
-static uint16_t virtio_read16_pio(VirtIONetDevice *dev, uint16_t offset) {
-  return inw(dev->io_base + offset);
-}
-
-static void virtio_write16_pio(VirtIONetDevice *dev, uint16_t offset,
-                               uint16_t value) {
-  outw(dev->io_base + offset, value);
-}
-
-static uint32_t virtio_read32_pio(VirtIONetDevice *dev, uint16_t offset) {
-  return inl(dev->io_base + offset);
-}
-
-static void virtio_write32_pio(VirtIONetDevice *dev, uint16_t offset,
-                               uint32_t value) {
-  outl(dev->io_base + offset, value);
-}
-
-/* ============================================ */
-/*           Fonctions MMIO                     */
-/* ============================================ */
-
-static uint8_t virtio_read8_mmio(VirtIONetDevice *dev, uint16_t offset) {
-  return mmio_read8(MMIO_REG(dev->mmio_base, offset));
-}
-
-static void virtio_write8_mmio(VirtIONetDevice *dev, uint16_t offset,
-                               uint8_t value) {
-  mmio_write8(MMIO_REG(dev->mmio_base, offset), value);
-  mmiowb();
-}
-
-static uint16_t virtio_read16_mmio(VirtIONetDevice *dev, uint16_t offset) {
-  return mmio_read16(MMIO_REG(dev->mmio_base, offset));
-}
-
-static void virtio_write16_mmio(VirtIONetDevice *dev, uint16_t offset,
-                                uint16_t value) {
-  mmio_write16(MMIO_REG(dev->mmio_base, offset), value);
-  mmiowb();
-}
-
-static uint32_t virtio_read32_mmio(VirtIONetDevice *dev, uint16_t offset) {
-  return mmio_read32(MMIO_REG(dev->mmio_base, offset));
-}
-
-static void virtio_write32_mmio(VirtIONetDevice *dev, uint16_t offset,
-                                uint32_t value) {
-  mmio_write32(MMIO_REG(dev->mmio_base, offset), value);
-  mmiowb();
-}
+#define VIRTIO_NET_HDR_SIZE 10  /* Taille du header Legacy */
 
 /* ============================================ */
-/*           Fonctions de dispatch              */
+/*           Variables globales                 */
 /* ============================================ */
 
-static uint8_t virtio_read8(VirtIONetDevice *dev, uint16_t offset) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    return virtio_read8_mmio(dev, offset);
-  }
-  return virtio_read8_pio(dev, offset);
-}
+static VirtioNetDriver *g_driver = NULL;
+static NetInterface *g_netif = NULL;
 
-static void virtio_write8(VirtIONetDevice *dev, uint16_t offset,
-                          uint8_t value) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    virtio_write8_mmio(dev, offset, value);
-  } else {
-    virtio_write8_pio(dev, offset, value);
-  }
-}
+/* Taille des buffers RX */
+#define RX_BUFFER_SIZE 2048
+#define RX_BUFFER_COUNT 16
 
-static uint16_t virtio_read16(VirtIONetDevice *dev, uint16_t offset) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    return virtio_read16_mmio(dev, offset);
-  }
-  return virtio_read16_pio(dev, offset);
-}
-
-static void virtio_write16(VirtIONetDevice *dev, uint16_t offset,
-                           uint16_t value) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    virtio_write16_mmio(dev, offset, value);
-  } else {
-    virtio_write16_pio(dev, offset, value);
-  }
-}
-
-static uint32_t virtio_read32(VirtIONetDevice *dev, uint16_t offset) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    return virtio_read32_mmio(dev, offset);
-  }
-  return virtio_read32_pio(dev, offset);
-}
-
-static void virtio_write32(VirtIONetDevice *dev, uint16_t offset,
-                           uint32_t value) {
-  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
-    virtio_write32_mmio(dev, offset, value);
-  } else {
-    virtio_write32_pio(dev, offset, value);
-  }
-}
-
-bool virtio_net_is_mmio(VirtIONetDevice *dev) {
-  return dev != NULL && dev->access_mode == VIRTIO_ACCESS_MMIO;
-}
-
-void virtio_net_force_access_mode(virtio_access_mode_t mode) {
-  g_virtio_forced_access_mode = (int)mode;
-}
+/* Buffers RX pré-alloués */
+static uint8_t *rx_buffers[RX_BUFFER_COUNT];
 
 /* ============================================ */
-/*           Queue Management                   */
+/*           Fonctions internes                 */
 /* ============================================ */
 
-static void virtio_queue_init(VirtIONetDevice *dev, VirtioQueue *vq,
-                              uint16_t index) {
-  /* Select the queue */
-  virtio_write16(dev, VIRTIO_REG_QUEUE_SELECT, index);
-
-  /* Get queue size */
-  uint16_t size = virtio_read16(dev, VIRTIO_REG_QUEUE_SIZE);
-  if (size == 0) {
-    net_puts("[Virtio] Queue size is 0!\n");
-    return;
-  }
-
-  vq->queue_index = index;
-  vq->size = size;
-  vq->free_head = 0;
-  vq->num_free = size;
-  vq->last_used_idx = 0;
-
-  /* Calculate required size */
-  /* Descriptors: 16 bytes * size */
-  uint32_t desc_size = sizeof(VirtQDesc) * size;
-
-  /* Available Ring: 2 + 2 + 2 * size + 2 */
-  uint32_t avail_size = 2 + 2 + 2 * size + 2;
-
-  /* Used Ring: 2 + 2 + 8 * size + 2 */
-  /* Must be aligned to 4096 bytes boundary */
-  uint32_t used_size = 2 + 2 + sizeof(VirtQUsedElem) * size + 2;
-
-  /* Allocate memory (must be physically contiguous and aligned) */
-  /* For simplicity, we allocate separate chunks but in a real OS
-     we would need physically contiguous pages. kmalloc here is simple heap. */
-
-  /* Align to 4096 for the used ring requirement */
-  uint32_t total_size = desc_size + avail_size;
-  /* Padding for alignment */
-  if (total_size % 4096 != 0) {
-    total_size = (total_size + 4096) & ~0xFFF;
-  }
-  total_size += used_size;
-
-  /* Allocate with alignment */
-  uint8_t *mem = (uint8_t *)kmalloc(total_size + 4096);
-  if (mem == NULL) {
-    net_puts("[Virtio] Failed to allocate queue memory!\n");
-    return;
-  }
-
-  /* Align to 4K */
-  uint32_t mem_addr = (uint32_t)(uintptr_t)mem;
-  if (mem_addr & 0xFFF) {
-    mem_addr = (mem_addr + 4096) & ~0xFFF;
-  }
-
-  vq->desc = (VirtQDesc *)(uintptr_t)mem_addr;
-  vq->avail = (VirtQAvail *)(uintptr_t)(mem_addr + desc_size);
-  vq->used =
-      (VirtQUsed *)(uintptr_t)(mem_addr +
-                               ((desc_size + avail_size + 4095) & ~0xFFF));
-
-  /* Initialize descriptors */
-  for (int i = 0; i < size; i++) {
-    vq->desc[i].next = (i + 1) % size;
-    vq->desc[i].flags = 0;
-    vq->desc[i].len = 0;
-    vq->desc[i].addr = 0;
-  }
-
-  /* Allocate buffer tracking array */
-  vq->buffers = (void **)kmalloc(sizeof(void *) * size);
-  for (int i = 0; i < size; i++)
-    vq->buffers[i] = NULL;
-
-  /* Write physical address to device (page number) */
-  /* Legacy Virtio expects PFN (Physical Frame Number) of the start of the
-   * region */
-  uint32_t pfn = mem_addr >> 12;
-  virtio_write32(dev, VIRTIO_REG_QUEUE_ADDRESS, pfn);
-
-  net_puts("[Virtio] Queue ");
-  net_put_dec(index);
-  net_puts(" initialized at PFN ");
-  net_put_hex(pfn);
-  net_puts("\n");
-}
-
-static int virtio_queue_add_buf(VirtioQueue *vq, void *buf, uint32_t len,
-                                bool write, bool next) {
-  if (vq->num_free == 0)
-    return -1;
-
-  uint16_t desc_idx = vq->free_head;
-  VirtQDesc *desc = &vq->desc[desc_idx];
-
-  desc->addr = (uint64_t)(uintptr_t)buf;
-  desc->len = len;
-  desc->flags = 0;
-
-  if (write)
-    desc->flags |= VIRTQ_DESC_F_WRITE;
-  if (next)
-    desc->flags |= VIRTQ_DESC_F_NEXT;
-
-  vq->free_head = desc->next;
-  vq->num_free--;
-
-  vq->buffers[desc_idx] = buf;
-
-  return desc_idx;
-}
-
-static void virtio_queue_notify(VirtIONetDevice *dev, VirtioQueue *vq,
-                                uint16_t desc_idx) {
-  /* Add to available ring */
-  vq->avail->ring[vq->avail->idx % vq->size] = desc_idx;
-
-  /* Memory barrier would go here */
-  asm volatile("" ::: "memory");
-
-  vq->avail->idx++;
-
-  /* Memory barrier */
-  asm volatile("" ::: "memory");
-
-  /* Notify device */
-  virtio_write16(dev, VIRTIO_REG_QUEUE_NOTIFY, vq->queue_index);
-}
-
-/* ============================================ */
-/*           Packet Reception                   */
-/* ============================================ */
-
-static void virtio_refill_rx(VirtIONetDevice *dev) {
-  VirtioQueue *vq = &dev->rx_queue;
-
-  while (vq->num_free >= 2) { /* Need 2 descriptors: Header + Packet */
-    /* Allocate buffer */
-    /* Note: In a real driver we would reuse buffers or use a pool */
-    /* Here we allocate a new buffer for simplicity */
-    uint8_t *buf =
-        (uint8_t *)kmalloc(VIRTIO_NET_PKT_SIZE + sizeof(VirtioNetHeader));
-    if (buf == NULL)
-      break;
-
-    VirtioNetHeader *header = (VirtioNetHeader *)buf;
-    uint8_t *packet = buf + sizeof(VirtioNetHeader);
-
-    /* Add header descriptor (writeable) */
-    int head_idx =
-        virtio_queue_add_buf(vq, header, sizeof(VirtioNetHeader), true, true);
-
-    /* Add packet descriptor (writeable) */
-    int pkt_idx =
-        virtio_queue_add_buf(vq, packet, VIRTIO_NET_PKT_SIZE, true, false);
-
-    /* Link them manually if needed, but add_buf handles next flag */
-    /* We just need to notify the head */
-
-    virtio_queue_notify(dev, vq, head_idx);
-  }
-}
-
-static void virtio_receive(VirtIONetDevice *dev) {
-  VirtioQueue *vq = &dev->rx_queue;
-
-  while (vq->last_used_idx != vq->used->idx) {
-    uint16_t used_idx = vq->last_used_idx % vq->size;
-    VirtQUsedElem *elem = &vq->used->ring[used_idx];
-
-    uint16_t desc_idx = (uint16_t)elem->id;
-    uint32_t len = elem->len;
-
-    /* Process the chain */
-    /* First descriptor is header */
-    VirtQDesc *header_desc = &vq->desc[desc_idx];
-    VirtioNetHeader *header = (VirtioNetHeader *)(uintptr_t)header_desc->addr;
-
-    /* Second descriptor is packet */
-    /* We assume strict 2-descriptor chain as we set it up */
-    if (header_desc->flags & VIRTQ_DESC_F_NEXT) {
-      uint16_t pkt_desc_idx = header_desc->next;
-      VirtQDesc *pkt_desc = &vq->desc[pkt_desc_idx];
-      uint8_t *packet = (uint8_t *)(uintptr_t)pkt_desc->addr;
-
-      /* Actual packet length is total length minus header size */
-      /* But Virtio legacy says len in used ring is total bytes written */
-      uint32_t pkt_len = len - sizeof(VirtioNetHeader);
-
-      /* Pass to Ethernet layer */
-      ethernet_handle_packet(packet, pkt_len);
-
-      /* Free the buffer (or recycle) */
-      /* For now, we just free and refill will alloc new ones */
-      /* In production, we should recycle the buffer to avoid kmalloc overhead
-       */
-      kfree(header); /* header points to start of alloc block */
-
-      /* Return descriptors to free pool */
-      /* This is a bit hacky, we should have a proper free list management */
-      /* But since we just increment free_head circularly, we can't easily
-       * "return" random indices */
-      /* Wait, the free list is linked via 'next'. We can push these back. */
-
-      vq->desc[pkt_desc_idx].next = vq->free_head;
-      vq->free_head = desc_idx;
-      vq->num_free += 2;
+/**
+ * Remplit la queue RX avec des buffers.
+ */
+static void virtio_net_refill_rx(VirtioNetDriver *drv) {
+    VirtQueue *vq = &drv->rx_queue;
+    
+    for (int i = 0; i < RX_BUFFER_COUNT && vq->num_free >= 1; i++) {
+        if (rx_buffers[i] == NULL) {
+            rx_buffers[i] = (uint8_t *)kmalloc(RX_BUFFER_SIZE);
+            if (rx_buffers[i] == NULL) {
+                continue;
+            }
+        }
+        
+        /* Ajouter le buffer à la queue (device-writable) */
+        int idx = virtio_queue_add_buf(vq, rx_buffers[i], RX_BUFFER_SIZE, true, false);
+        if (idx < 0) {
+            break;
+        }
     }
-
-    vq->last_used_idx++;
-    dev->packets_rx++;
-  }
-
-  /* Refill RX ring */
-  virtio_refill_rx(dev);
+    
+    /* Notifier le device */
+    virtio_notify(drv->vdev, vq);
 }
 
-/* ============================================ */
-/*           Interrupt Handler                  */
-/* ============================================ */
-
-void virtio_net_poll(void) {
-  VirtIONetDevice *dev =
-      g_virtio_dev; // Changed from &g_virtio_device to g_virtio_dev
-  if (dev == NULL)
-    return; // Added null check
-
-  /* Read ISR status to check if it's for us and clear interrupt */
-  uint8_t isr = virtio_read8(dev, VIRTIO_REG_ISR_STATUS);
-
-  if (isr & 1) {
-    /* Queue Interrupt */
-    // net_puts("[Virtio] Queue Interrupt\n");
-
-    /* Check RX Queue */
-    /* Note: In a real driver we should check used ring index */
-    virtio_receive(dev);
-
-    /* Check TX Queue (reclaim buffers) */
-    /* TODO: Implement TX reclamation */
-  }
-
-  if (isr & 2) {
-    /* Configuration Change Interrupt */
-    net_puts("[Virtio] Config Change Interrupt\n");
-  }
+/**
+ * Traite les paquets reçus.
+ */
+static void virtio_net_receive(VirtioNetDriver *drv) {
+    VirtQueue *vq = &drv->rx_queue;
+    
+    while (virtio_queue_has_used(vq)) {
+        uint32_t len;
+        uint8_t *buf = (uint8_t *)virtio_queue_get_used(vq, &len);
+        
+        if (buf == NULL || len <= VIRTIO_NET_HDR_SIZE) {
+            continue;
+        }
+        
+        /* Le paquet commence après le header VirtIO (10 bytes) */
+        uint8_t *pkt_data = buf + VIRTIO_NET_HDR_SIZE;
+        uint32_t pkt_len = len - VIRTIO_NET_HDR_SIZE;
+        
+        /* Traiter le paquet Ethernet */
+        if (pkt_len > 0 && g_netif != NULL) {
+            ethernet_handle_packet_netif(g_netif, pkt_data, pkt_len);
+            drv->packets_rx++;
+            
+            if (g_netif != NULL) {
+                g_netif->packets_rx++;
+                g_netif->bytes_rx += pkt_len;
+            }
+        }
+        
+        /* Remettre le buffer dans la queue RX */
+        virtio_queue_add_buf(vq, buf, RX_BUFFER_SIZE, true, false);
+    }
+    
+    /* Notifier le device */
+    virtio_notify(drv->vdev, vq);
 }
 
+/**
+ * Handler d'interruption.
+ */
+static void virtio_net_irq_handler_internal(void) {
+    if (g_driver == NULL || g_driver->vdev == NULL) {
+        return;
+    }
+    
+    /* Acquitter l'interruption */
+    uint32_t isr = g_driver->vdev->ops->ack_interrupt(g_driver->vdev);
+    
+    if (isr & 1) {
+        /* Queue interrupt - traiter les paquets */
+        virtio_net_receive(g_driver);
+    }
+    
+    if (isr & 2) {
+        /* Config change interrupt */
+        KLOG_INFO("VIRTIO_NET", "Config change interrupt");
+    }
+}
+
+/* Handler d'IRQ exporté */
 void virtio_net_irq_handler(void) {
-  virtio_net_poll();
-
-  /* Acknowledge interrupt (EOI) */
-  outb(0x20, 0x20);
-  outb(0xA0, 0x20);
+    virtio_net_irq_handler_internal();
+    
+    /* EOI */
+    outb(0x20, 0x20);
+    outb(0xA0, 0x20);
 }
 
-/* ============================================ */
-/*           NetInterface Implementation        */
-/* ============================================ */
-
+/**
+ * Fonction d'envoi pour NetInterface.
+ */
 static int virtio_netif_send(NetInterface *netif, uint8_t *data, int len) {
-  if (netif == NULL || netif->driver_data == NULL)
-    return -1;
-
-  VirtIONetDevice *dev = (VirtIONetDevice *)netif->driver_data;
-
-  bool result = virtio_net_send(dev, data, (uint16_t)len);
-
-  if (result) {
-    netif->packets_tx++;
-    netif->bytes_tx += len;
+    if (netif == NULL || netif->driver_data == NULL) {
+        return -1;
+    }
+    
+    VirtioNetDriver *drv = (VirtioNetDriver *)netif->driver_data;
+    
+    if (!drv->initialized || drv->vdev == NULL) {
+        return -1;
+    }
+    
+    VirtQueue *vq = &drv->tx_queue;
+    
+    /* Vérifier qu'on a au moins un descriptor libre */
+    if (vq->num_free < 1) {
+        /* Essayer de récupérer les buffers utilisés */
+        while (virtio_queue_has_used(vq)) {
+            uint32_t used_len;
+            void *used_buf = virtio_queue_get_used(vq, &used_len);
+            if (used_buf != NULL) {
+                kfree(used_buf);
+            }
+        }
+        
+        if (vq->num_free < 1) {
+            drv->errors++;
+            return -1;
+        }
+    }
+    
+    /* Allouer le header + données dans un seul buffer */
+    uint32_t total_len = VIRTIO_NET_HDR_SIZE + len;
+    uint8_t *buf = (uint8_t *)kmalloc(total_len);
+    if (buf == NULL) {
+        drv->errors++;
+        return -1;
+    }
+    
+    /* Remplir le header (10 bytes) */
+    VirtioNetHdr *hdr = (VirtioNetHdr *)buf;
+    hdr->flags = 0;
+    hdr->gso_type = 0;
+    hdr->hdr_len = 0;
+    hdr->gso_size = 0;
+    hdr->csum_start = 0;
+    hdr->csum_offset = 0;
+    
+    /* Copier les données après le header */
+    uint8_t *pkt_data = buf + VIRTIO_NET_HDR_SIZE;
+    for (int i = 0; i < len; i++) {
+        pkt_data[i] = data[i];
+    }
+    
+    /* Ajouter à la queue TX */
+    int idx = virtio_queue_add_buf(vq, buf, total_len, false, false);
+    if (idx < 0) {
+        kfree(buf);
+        drv->errors++;
+        return -1;
+    }
+    
+    /* Notifier le device */
+    virtio_notify(drv->vdev, vq);
+    
+    drv->packets_tx++;
+    if (netif != NULL) {
+        netif->packets_tx++;
+        netif->bytes_tx += len;
+    }
+    
     return len;
-  } else {
-    netif->errors++;
-    return -1;
-  }
 }
 
 /* ============================================ */
-/*           Public API                         */
+/*           API publique                       */
 /* ============================================ */
 
 VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("\n=== Virtio Network Driver Initialization ===\n");
-  net_reset_color();
-
-  if (pci_dev == NULL)
-    return NULL;
-
-  VirtIONetDevice *dev = (VirtIONetDevice *)kmalloc(sizeof(VirtIONetDevice));
-  if (dev == NULL)
-    return NULL;
-
-  /* Initialiser la structure */
-  dev->pci_dev = pci_dev;
-  dev->io_base = pci_dev->bar0 & 0xFFFFFFFC;
-  dev->mmio_base = NULL;
-  dev->mmio_phys = 0;
-  dev->mmio_size = 0;
-  dev->access_mode = VIRTIO_ACCESS_PIO; /* Par défaut PIO */
-  dev->initialized = false;
-  dev->packets_rx = 0;
-  dev->packets_tx = 0;
-  dev->errors = 0;
-
-  /* ============================================ */
-  /* Détection et configuration du mode d'accès  */
-  /* ============================================ */
-  
-  pci_device_bars_t bars;
-  if (pci_parse_bars(pci_dev, &bars) == 0) {
-    net_puts("[Virtio] Analyzing PCI BARs...\n");
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("\n=== VirtIO Network Driver (MMIO) ===\n");
+    net_reset_color();
     
-    pci_bar_info_t *mmio_bar = pci_find_mmio_bar(&bars);
-    pci_bar_info_t *pio_bar = pci_find_pio_bar(&bars);
-    
-    if (pio_bar != NULL) {
-      net_puts("[Virtio] PIO BAR");
-      net_put_dec(pio_bar->bar_index);
-      net_puts(": 0x");
-      net_put_hex(pio_bar->base_addr);
-      net_puts("\n");
+    if (pci_dev == NULL) {
+        return NULL;
     }
     
-    if (mmio_bar != NULL) {
-      net_puts("[Virtio] MMIO BAR");
-      net_put_dec(mmio_bar->bar_index);
-      net_puts(": 0x");
-      net_put_hex(mmio_bar->base_addr);
-      net_puts(" (");
-      net_put_dec(mmio_bar->size);
-      net_puts(" bytes)\n");
+    /* Créer le device VirtIO via l'abstraction de transport */
+    VirtioDevice *vdev = virtio_create_from_pci(pci_dev);
+    if (vdev == NULL) {
+        net_puts("[VirtIO-Net] Failed to create VirtIO device\n");
+        return NULL;
     }
     
-    /* Sélectionner le mode d'accès
-     * 
-     * NOTE: VirtIO Legacy PCI utilise un layout de registres spécifique
-     * qui est différent du transport VirtIO MMIO standard.
-     * Le BAR MMIO de VirtIO PCI Legacy a le MÊME layout que le BAR PIO,
-     * donc on peut utiliser MMIO mais avec les mêmes offsets.
-     * 
-     * CEPENDANT, QEMU émule VirtIO PCI Legacy avec des registres qui
-     * fonctionnent mieux en PIO. On garde PIO par défaut pour la stabilité.
+    /* Afficher le mode de transport
+     * Note: VirtIO PCI Legacy utilise toujours PIO car BAR0 est un I/O BAR.
+     * Le BAR1 MMIO est pour MSI-X, pas pour les registres.
      */
-    bool use_mmio = false;
+    net_puts("[VirtIO-Net] Transport: PCI Legacy (PIO)\n");
+    net_puts("[VirtIO-Net] I/O Base: 0x");
+    net_put_hex(vdev->transport.pci.io_base);
+    net_puts("\n");
     
-    if (g_virtio_forced_access_mode == 0) {
-      use_mmio = false;
-      net_puts("[Virtio] Access mode: PIO (forced)\n");
-    } else if (g_virtio_forced_access_mode == 1 && mmio_bar != NULL) {
-      use_mmio = true;
-      net_puts("[Virtio] Access mode: MMIO (forced)\n");
-    } else {
-      /* Par défaut, utiliser PIO pour VirtIO Legacy car plus stable */
-      use_mmio = false;
-      net_puts("[Virtio] Access mode: PIO (default for VirtIO Legacy)\n");
+    /* Allouer le driver */
+    VirtioNetDriver *drv = (VirtioNetDriver *)kmalloc(sizeof(VirtioNetDriver));
+    if (drv == NULL) {
+        virtio_destroy(vdev);
+        return NULL;
     }
     
-    if (use_mmio && mmio_bar != NULL) {
-      dev->mmio_phys = mmio_bar->base_addr;
-      dev->mmio_size = mmio_bar->size;
-      dev->mmio_base = pci_map_bar(mmio_bar);
-      
-      if (dev->mmio_base != NULL) {
-        dev->access_mode = VIRTIO_ACCESS_MMIO;
-        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        net_puts("[Virtio] MMIO mapped at virtual: 0x");
-        net_put_hex((uint32_t)(uintptr_t)dev->mmio_base);
-        net_puts("\n");
-        net_reset_color();
-      } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[Virtio] WARNING: Failed to map MMIO, falling back to PIO\n");
-        net_reset_color();
-        dev->access_mode = VIRTIO_ACCESS_PIO;
-      }
+    drv->vdev = vdev;
+    drv->initialized = false;
+    drv->packets_rx = 0;
+    drv->packets_tx = 0;
+    drv->errors = 0;
+    
+    /* Initialiser les buffers RX */
+    for (int i = 0; i < RX_BUFFER_COUNT; i++) {
+        rx_buffers[i] = NULL;
     }
-  }
-
-  net_puts("[Virtio] I/O Base (PIO): 0x");
-  net_put_hex(dev->io_base);
-  net_puts("\n");
-
-  /* Enable Bus Mastering */
-  pci_enable_bus_mastering(pci_dev);
-
-  /* Reset Device */
-  virtio_write8(dev, VIRTIO_REG_DEVICE_STATUS, 0);
-
-  /* Acknowledge Device */
-  virtio_write8(dev, VIRTIO_REG_DEVICE_STATUS,
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-
-  /* Negotiate Features */
-  uint32_t features = virtio_read32(dev, VIRTIO_REG_DEVICE_FEATURES);
-  /* We only support basic features for now */
-  features &= (VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS);
-  virtio_write32(dev, VIRTIO_REG_GUEST_FEATURES, features);
-
-  /* Set FEATURES_OK */
-  virtio_write8(dev, VIRTIO_REG_DEVICE_STATUS,
-                VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
-                    VIRTIO_STATUS_FEATURES_OK);
-
-  /* Check if device accepted features */
-  uint8_t status = virtio_read8(dev, VIRTIO_REG_DEVICE_STATUS);
-  if (!(status & VIRTIO_STATUS_FEATURES_OK)) {
-    net_puts("[Virtio] Feature negotiation failed!\n");
-    kfree(dev);
-    return NULL;
-  }
-
-  /* Initialize Queues */
-  virtio_queue_init(dev, &dev->rx_queue, VIRTIO_NET_RX_QUEUE_IDX);
-  virtio_queue_init(dev, &dev->tx_queue, VIRTIO_NET_TX_QUEUE_IDX);
-
-  /* Read MAC Address */
-  /* If VIRTIO_NET_F_MAC is negotiated, MAC is in config space at offset 0 */
-  /* Config space starts at 20 (0x14) for Legacy PCI */
-  /* But wait, IO space layout:
-     0x00: Device Features
-     ...
-     0x14: Device Specific Config
-  */
-  for (int i = 0; i < 6; i++) {
-    dev->mac_addr[i] = virtio_read8(dev, 0x14 + i);
-  }
-
-  net_puts("[Virtio] MAC Address: ");
-  for (int i = 0; i < 6; i++) {
-    net_put_hex_byte(dev->mac_addr[i]);
-    if (i < 5)
-      net_putc(':');
-  }
-  net_puts("\n");
-
-  /* Setup Interrupts */
-  if (pci_dev->interrupt_line != 11) {
-    net_puts("[Virtio] Warning: IRQ is ");
-    net_put_dec(pci_dev->interrupt_line);
-    net_puts(", expected 11. Patching IDT...\n");
-
-    extern void irq11_handler(void);
-    idt_set_gate(32 + pci_dev->interrupt_line,
-                 (uint32_t)(uintptr_t)irq11_handler, 0x08, 0x8E);
-  }
-
-  /* Populate RX Ring */
-  virtio_refill_rx(dev);
-
-  /* Set DRIVER_OK */
-  virtio_write8(dev, VIRTIO_REG_DEVICE_STATUS,
-                status | VIRTIO_STATUS_DRIVER_OK);
-
-  dev->initialized = true;
-  g_virtio_dev = dev;
-
-  /* Register NetInterface */
-  g_virtio_netif = (NetInterface *)kmalloc(sizeof(NetInterface));
-  if (g_virtio_netif != NULL) {
-    /* Initialize netif */
-    /* ... same as pcnet ... */
-    g_virtio_netif->name[0] = 'e';
-    g_virtio_netif->name[1] = 't';
-    g_virtio_netif->name[2] = 'h';
-    g_virtio_netif->name[3] =
-        '1'; /* Assuming eth1 if eth0 is pcnet, logic should be dynamic */
-    g_virtio_netif->name[4] = '\0';
-
-    for (int i = 0; i < 6; i++)
-      g_virtio_netif->mac_addr[i] = dev->mac_addr[i];
-
-    g_virtio_netif->ip_addr = 0;
-    g_virtio_netif->netmask = 0;
-    g_virtio_netif->gateway = 0;
-    g_virtio_netif->dns_server = 0;
-    g_virtio_netif->flags = NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
-    g_virtio_netif->send = virtio_netif_send;
-    g_virtio_netif->driver_data = dev;
-
-    netdev_register(g_virtio_netif);
-  }
-
-  return dev;
+    
+    /* Enable Bus Mastering */
+    pci_enable_bus_mastering(pci_dev);
+    
+    /* Initialiser le device VirtIO */
+    uint32_t required_features = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
+    if (virtio_init_device(vdev, required_features) < 0) {
+        net_puts("[VirtIO-Net] Device initialization failed!\n");
+        kfree(drv);
+        virtio_destroy(vdev);
+        return NULL;
+    }
+    
+    /* Configurer les queues */
+    net_puts("[VirtIO-Net] Setting up RX queue...\n");
+    if (virtio_setup_queue(vdev, &drv->rx_queue, 0) < 0) {
+        net_puts("[VirtIO-Net] RX queue setup failed!\n");
+        kfree(drv);
+        virtio_destroy(vdev);
+        return NULL;
+    }
+    
+    net_puts("[VirtIO-Net] Setting up TX queue...\n");
+    if (virtio_setup_queue(vdev, &drv->tx_queue, 1) < 0) {
+        net_puts("[VirtIO-Net] TX queue setup failed!\n");
+        kfree(drv);
+        virtio_destroy(vdev);
+        return NULL;
+    }
+    
+    /* Lire l'adresse MAC depuis la config space */
+    for (int i = 0; i < 6; i++) {
+        drv->mac_addr[i] = vdev->ops->read_config8(vdev, i);
+    }
+    
+    net_puts("[VirtIO-Net] MAC Address: ");
+    for (int i = 0; i < 6; i++) {
+        net_put_hex_byte(drv->mac_addr[i]);
+        if (i < 5) net_putc(':');
+    }
+    net_puts("\n");
+    
+    /* Configurer l'IRQ */
+    uint8_t irq = pci_dev->interrupt_line;
+    net_puts("[VirtIO-Net] IRQ: ");
+    net_put_dec(irq);
+    net_puts("\n");
+    
+    if (irq != 11) {
+        extern void irq11_handler(void);
+        idt_set_gate(32 + irq, (uint32_t)(uintptr_t)irq11_handler, 0x08, 0x8E);
+    }
+    
+    /* Remplir la queue RX */
+    virtio_net_refill_rx(drv);
+    
+    /* Finaliser l'initialisation */
+    if (virtio_finalize_init(vdev) < 0) {
+        net_puts("[VirtIO-Net] Failed to finalize init!\n");
+        kfree(drv);
+        virtio_destroy(vdev);
+        return NULL;
+    }
+    
+    drv->initialized = true;
+    g_driver = drv;
+    
+    /* Créer et enregistrer la NetInterface */
+    g_netif = (NetInterface *)kmalloc(sizeof(NetInterface));
+    if (g_netif != NULL) {
+        g_netif->name[0] = 'e';
+        g_netif->name[1] = 't';
+        g_netif->name[2] = 'h';
+        g_netif->name[3] = '0';
+        g_netif->name[4] = '\0';
+        
+        for (int i = 0; i < 6; i++) {
+            g_netif->mac_addr[i] = drv->mac_addr[i];
+        }
+        
+        g_netif->ip_addr = 0;
+        g_netif->netmask = 0;
+        g_netif->gateway = 0;
+        g_netif->dns_server = 0;
+        g_netif->flags = NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
+        g_netif->send = virtio_netif_send;
+        g_netif->driver_data = drv;
+        g_netif->packets_rx = 0;
+        g_netif->packets_tx = 0;
+        g_netif->bytes_rx = 0;
+        g_netif->bytes_tx = 0;
+        g_netif->errors = 0;
+        
+        netdev_register(g_netif);
+    }
+    
+    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    net_puts("[VirtIO-Net] Driver initialized successfully!\n");
+    net_reset_color();
+    
+    /* Retourner un pointeur compatible avec l'ancienne API */
+    return (VirtIONetDevice *)drv;
 }
 
 bool virtio_net_send(VirtIONetDevice *dev, const uint8_t *data, uint16_t len) {
-  if (dev == NULL || !dev->initialized)
-    return false;
-
-  VirtioQueue *vq = &dev->tx_queue;
-
-  if (vq->num_free < 2) {
-    /* Try to reclaim used buffers */
-    while (vq->last_used_idx != vq->used->idx) {
-      uint16_t used_idx = vq->last_used_idx % vq->size;
-      VirtQUsedElem *elem = &vq->used->ring[used_idx];
-      uint16_t desc_idx = (uint16_t)elem->id;
-
-      /* Free the buffer */
-      /* In our simple implementation, we assume 2 descriptors per packet
-       * (Header + Data) */
-      /* We need to find the start of the chain */
-
-      /* For now, just increment free count. Real implementation needs better
-       * tracking */
-      vq->num_free += 2; /* Rough approximation */
-      vq->last_used_idx++;
+    VirtioNetDriver *drv = (VirtioNetDriver *)dev;
+    if (drv == NULL || g_netif == NULL) {
+        return false;
     }
-
-    if (vq->num_free < 2)
-      return false;
-  }
-
-  /* Create Header */
-  VirtioNetHeader *header = (VirtioNetHeader *)kmalloc(sizeof(VirtioNetHeader));
-  header->flags = 0;
-  header->gso_type = 0;
-  header->hdr_len = 0;
-  header->gso_size = 0;
-  header->csum_start = 0;
-  header->csum_offset = 0;
-
-  /* Create Data Buffer */
-  uint8_t *buf = (uint8_t *)kmalloc(len);
-  for (int i = 0; i < len; i++)
-    buf[i] = data[i];
-
-  /* Add Header Descriptor */
-  int head_idx =
-      virtio_queue_add_buf(vq, header, sizeof(VirtioNetHeader), false, true);
-
-  /* Add Data Descriptor */
-  int data_idx = virtio_queue_add_buf(vq, buf, len, false, false);
-
-  /* Notify */
-  virtio_queue_notify(dev, vq, head_idx);
-
-  return true;
+    return virtio_netif_send(g_netif, (uint8_t *)data, len) > 0;
 }
 
-VirtIONetDevice *virtio_net_get_device(void) { return g_virtio_dev; }
+VirtIONetDevice *virtio_net_get_device(void) {
+    return (VirtIONetDevice *)g_driver;
+}
+
+void virtio_net_poll(void) {
+    if (g_driver != NULL && g_driver->initialized) {
+        /* Vérifier les interruptions en polling */
+        virtio_net_irq_handler_internal();
+    }
+}
+
+bool virtio_net_is_mmio(VirtIONetDevice *dev) {
+    VirtioNetDriver *drv = (VirtioNetDriver *)dev;
+    if (drv == NULL || drv->vdev == NULL) {
+        return false;
+    }
+    return drv->vdev->transport.pci.use_mmio;
+}
+
+void virtio_net_force_access_mode(virtio_access_mode_t mode) {
+    /* Non implémenté - le mode est auto-détecté */
+    (void)mode;
+}

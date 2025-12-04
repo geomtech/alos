@@ -186,20 +186,10 @@ The networking stack follows the OSI model architecture:
   - DNS cache with TTL management
   - Integrates with DHCP-provided DNS server
 
-#### Layer 3 - Network
-- **IPv4**: Internet Protocol v4
-  - Packet parsing and validation
-  - Checksum calculation
-  - TTL handling
-- **ICMP**: Internet Control Message Protocol
-  - Echo Request/Reply (ping responder)
-  - **Ping command** with DNS resolution (`ping("google.com")`)
-  - Destination Unreachable messages
-- **Routing**: Basic routing table with gateway support
-
 ```
 src/
 ├── arch/x86/          # x86-specific code (boot, GDT, IDT, TSS, usermode)
+├── config/            # Kernel configuration
 ├── kernel/            # Kernel core (main, console, keyboard, syscalls, elf)
 ├── mm/                # Memory Management (PMM, heap, VMM)
 ├── drivers/           # Hardware drivers
@@ -214,15 +204,12 @@ src/
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
 │   ├── l3/            # Layer 3 (IPv4, ICMP, Routing)
 │   └── l4/            # Layer 4 (UDP, TCP, DHCP, DNS)
-├── lib/               # Common utilities (string functions)
+├── lib/               # Common utilities (string, libc for userland)
 ├── shell/             # Command interpreter
 │   ├── shell.c/h      # Shell core (readline, history, parsing)
 │   └── commands.c/h   # Built-in commands (help, ping, exec, etc.)
 ├── userland/          # User space programs (server, hello, test)
 └── include/           # Shared headers (Multiboot, linker script, ELF)
-
-userland/
-└── libc.h             # Minimal C library for user space programs
 ```
 
 ## Building
@@ -352,7 +339,7 @@ make run-pcap
 - [ ] OpenGL
 - [ ] SSL
 - [ ] SSH
-- [ ] UTF-8 string and console
+- [ ] UTF-8 string and console
 
 ## Linux Compatibility
 
