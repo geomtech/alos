@@ -78,14 +78,10 @@ void console_puts(const char* str)
 {
     if (!initialized) return;
     
-    uint64_t flags = save_flags();
-    local_cli();
+    /* SIMPLIFIED FOR DEBUGGING - no flags save/restore */
     spinlock_lock(&console_lock);
-    
     fb_console_puts(str);
-    
     spinlock_unlock(&console_lock);
-    restore_flags(flags);
 }
 
 void console_put_hex(uint32_t value)

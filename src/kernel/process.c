@@ -19,7 +19,7 @@
  * Constantes
  * ======================================== */
 
-#define KERNEL_STACK_SIZE   16384   /* Taille de la stack kernel par thread (16 KiB) */
+/* Use KERNEL_STACK_SIZE from process.h (32 KiB) */
 
 /* Utiliser la définition de usermode.h si disponible, sinon définir ici */
 #ifndef USER_STACK_SIZE
@@ -254,6 +254,10 @@ void schedule(void)
         return;
     }
     
+    /* DEBUG: This should never be reached if only idle_process exists */
+    KLOG_ERROR("SCHED", "schedule() called with multiple processes!");
+    KLOG_ERROR("SCHED", current_process->name);
+    
     /* Trouver le prochain processus READY */
     process_t* next = current_process->next;
     process_t* start = next;
@@ -295,11 +299,14 @@ void switch_to(process_t* next)
     /* ========================================
      * Mettre à jour le TSS
      * ========================================
-     * Si le nouveau processus est interrompu en Ring 3, le CPU
-     * utilisera esp0 du TSS comme stack kernel pour sauvegarder
-     * le contexte.
+     * Mettre à jour TSS.RSP0 seulement pour les processus kernel.
+     * Ne JAMAIS mettre à jour TSS.RSP0 quand on switch vers un processus user
+     * qui est déjà dans le kernel (au milieu d'un syscall).
+     * 
+     * Note: Cette fonction est legacy et ne devrait plus être utilisée
+     * pour les threads user (utiliser scheduler_schedule à la place).
      */
-    if (next->rsp0 != 0) {
+    if (next->pml4 == (uint64_t*)vmm_get_kernel_directory() && next->rsp0 != 0) {
         tss_set_rsp0(next->rsp0);
     }
     

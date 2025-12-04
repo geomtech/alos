@@ -88,7 +88,7 @@ extern uint32_t scheduler_preempt(void *frame);
 void timer_tick(void)
 {
     g_timer_ticks++;
-    scheduler_tick();
+    /* DISABLED FOR DEBUGGING: scheduler_tick(); */
 }
 
 /**

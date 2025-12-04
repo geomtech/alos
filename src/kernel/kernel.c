@@ -128,19 +128,8 @@ void timer_handler_c(void) {
   /* Incrémenter le compteur de ticks */
   timer_tick();
 
-  /* Envoyer EOI au PIC (AVANT le schedule pour éviter les problèmes) */
-  outb(0x20, 0x20);
-
-  /* CRITIQUE: Réveiller les threads dont le sleep est terminé.
-   * Sans cela, les threads bloqués dans thread_sleep_ms() ne se réveillent jamais! */
-  scheduler_wake_sleeping();
-
-  /* Appeler le scheduler périodiquement */
-  schedule_counter++;
-  if (schedule_counter >= SCHEDULE_INTERVAL) {
-    schedule_counter = 0;
-    schedule();
-  }
+  /* NOTE: EOI est envoyé par irq_handler() après le retour de cette fonction.
+   * Ne pas envoyer de double EOI ici ! */
 }
 
 /**

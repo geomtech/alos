@@ -11,7 +11,7 @@
  * Constantes
  * ======================================== */
 
-#define KERNEL_STACK_SIZE   4096    /* Taille de la stack kernel par thread (4 KiB) */
+#define KERNEL_STACK_SIZE   32768   /* Taille de la stack kernel par thread (32 KiB) */
 #define MAX_PROCESSES       64      /* Nombre max de processus */
 #define PROCESS_NAME_MAX    32      /* Longueur max du nom de processus */
 

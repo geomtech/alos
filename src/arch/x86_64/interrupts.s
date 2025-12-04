@@ -288,16 +288,22 @@ syscall_entry:
     add rsp, 16             ; Remove error_code and int_no
     
     ; Restore for SYSRET
+    ; Stack now: [RIP] [CS] [RFLAGS] [RSP] [SS]
     pop rcx                 ; Return RIP -> RCX
     add rsp, 8              ; Skip CS
     pop r11                 ; RFLAGS -> R11
-    pop rsp                 ; Restore user RSP
-    ; Skip SS
+    ; Stack now: [RSP] [SS]
     
-    ; Swap back to user GS
+    ; NOTE: Cannot use "pop rsp" because it increments the NEW rsp value!
+    ; Use a temporary register instead
+    mov r10, [rsp]          ; Load user RSP into r10 (r10 is caller-saved, safe to use)
+    add rsp, 16             ; Skip RSP and SS on kernel stack
+    
+    ; Swap back to user GS (must be done while still on kernel stack)
     swapgs
     
-    ; Return to user mode
+    ; Now restore user RSP and return
+    mov rsp, r10            ; Restore user RSP
     sysretq
 
 section .data
@@ -316,11 +322,24 @@ syscall_set_kernel_stack:
 ; ============================================
 ; INT 0x80 syscall handler (legacy compatibility)
 ; ============================================
+; Must match syscall_regs_t structure layout:
+;   - 15 general registers (R15...RAX)
+;   - int_no (dummy)
+;   - error_code (dummy)
+;   - CPU-pushed: RIP, CS, RFLAGS, RSP, SS
+;
 global syscall_handler_asm
 extern syscall_dispatcher
 
 syscall_handler_asm:
-    ; Save all registers
+    ; Push dummy int_no and error_code to match syscall_regs_t structure
+    ; Note: Push in reverse order since stack grows down
+    ; Structure expects: [rax][int_no][error_code][rip]...
+    ; So we push error_code first (higher addr), then int_no (lower addr)
+    push qword 0            ; Dummy error code (will be at higher address)
+    push qword 0x80         ; Interrupt number (will be at lower address, right after rax)
+    
+    ; Save all registers (must match PUSH_ALL order)
     push rax
     push rcx
     push rdx
@@ -357,6 +376,9 @@ syscall_handler_asm:
     pop rdx
     pop rcx
     pop rax
+    
+    ; Remove int_no and error_code
+    add rsp, 16
     
     iretq
 

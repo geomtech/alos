@@ -276,7 +276,12 @@ void exception_handler(struct interrupt_frame *frame)
         KLOG_ERROR_HEX("DEBUG", "DR6 (status): ", (uint32_t)dr6);
         KLOG_ERROR_HEX("DEBUG", "DR7 (control): ", (uint32_t)dr7);
         KLOG_ERROR_HEX("DEBUG", "RFLAGS: ", (uint32_t)frame->rflags);
+        KLOG_ERROR_HEX("DEBUG", "RIP (high): ", (uint32_t)(frame->rip >> 32));
         KLOG_ERROR_HEX("DEBUG", "RIP (low): ", (uint32_t)frame->rip);
+        KLOG_ERROR_HEX("DEBUG", "RSP (high): ", (uint32_t)(frame->rsp >> 32));
+        KLOG_ERROR_HEX("DEBUG", "RSP (low): ", (uint32_t)frame->rsp);
+        KLOG_ERROR_HEX("DEBUG", "CS: ", (uint32_t)frame->cs);
+        KLOG_ERROR_HEX("DEBUG", "SS: ", (uint32_t)frame->ss);
         
         /* Check if Trap Flag (TF, bit 8) is set */
         if (frame->rflags & (1 << 8)) {

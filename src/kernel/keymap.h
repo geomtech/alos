@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /* Nombre maximum de keymaps enregistrées */
 #define MAX_KEYMAPS 8
@@ -56,7 +57,7 @@ const keymap_t* keymap_find_by_name(const char* name);
  * @param count Pointeur pour stocker le nombre de keymaps
  * @return Tableau de pointeurs vers les keymaps
  */
-const keymap_t** keymap_list_all(int* count);
+const keymap_t** keymap_list_all(size_t* count);
 
 /**
  * Enregistre une nouvelle keymap.

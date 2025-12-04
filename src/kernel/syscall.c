@@ -169,29 +169,11 @@ static int sys_exit(int status)
  */
 static int sys_write(int fd, const char* buf, uint64_t count)
 {
-    (void)fd;  /* Ignoré pour l'instant */
+    (void)fd;
+    (void)buf;
+    (void)count;
     
-    if (buf == NULL) {
-        return -1;
-    }
-    
-    KLOG_INFO("SYSCALL", "sys_write called");
-    KLOG_INFO_HEX("SYSCALL", "  Buffer at: ", (uint32_t)buf);
-    
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    
-    if (count == 0) {
-        /* Null-terminated string */
-        console_puts(buf);
-    } else {
-        /* Écrire exactement count caractères */
-        for (uint32_t i = 0; i < count && buf[i] != '\0'; i++) {
-            console_putc(buf[i]);
-        }
-    }
-    
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
+    /* COMPLETELY DISABLED FOR DEBUGGING */
     return 0;
 }
 
@@ -696,6 +678,7 @@ static int sys_listen(int fd, int backlog)
     
     KLOG_DEBUG_DEC("SYSCALL", "sys_listen: listening on port ", sock->local_port);
     
+    KLOG_INFO("SYSCALL", "sys_listen returning 0");
     return 0;
 }
 
@@ -915,12 +898,17 @@ void syscall_dispatcher(syscall_regs_t* regs)
     uint32_t syscall_num = regs->rax;
     int result = -1;
     
-    /* DEBUG: Afficher le syscall reçu */
-    KLOG_INFO("SYSCALL", "=== Syscall Dispatcher ===");
-    KLOG_INFO_HEX("SYSCALL", "Syscall number (EAX): ", syscall_num);
-    KLOG_INFO_HEX("SYSCALL", "Arg1 (EBX): ", regs->rdi);
-    KLOG_INFO_HEX("SYSCALL", "Arg2 (ECX): ", regs->rsi);
-    KLOG_INFO_HEX("SYSCALL", "Arg3 (EDX): ", regs->rdx);
+    /* DEBUG: Vérification de sanité du RIP */
+    uint64_t entry_rip_low = regs->rip & 0xFFFFFFFF;
+    if (entry_rip_low >= 0xBFFF0000 && entry_rip_low <= 0xC0000000) {
+        KLOG_ERROR("SYSCALL", "FATAL: Entry RIP corrupted (points to stack)!");
+        KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
+        KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
+        KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
+        KLOG_ERROR_HEX("SYSCALL", "  RSP (low): ", (uint32_t)regs->rsp);
+        KLOG_ERROR_HEX("SYSCALL", "  RFLAGS: ", (uint32_t)regs->rflags);
+        for (;;) __asm__ volatile("hlt");
+    }
     
     /* Vérifier si le mode compatibilité Linux est actif */
     if (linux_compat_is_active()) {
@@ -966,6 +954,9 @@ void syscall_dispatcher(syscall_regs_t* regs)
             
         case SYS_ACCEPT:
             result = sys_accept((int)regs->rdi, (sockaddr_in_t*)regs->rsi, (int*)regs->rdx);
+            KLOG_INFO_HEX("SYSCALL", "sys_accept returned: ", (uint32_t)result);
+            KLOG_INFO_HEX("SYSCALL", "Post-accept RIP: ", regs->rip);
+            KLOG_INFO_HEX("SYSCALL", "Post-accept RSP: ", regs->rsp);
             break;
             
         case SYS_RECV:
@@ -1024,6 +1015,8 @@ void syscall_dispatcher(syscall_regs_t* regs)
     
     /* Retourner le résultat dans EAX */
     regs->rax = (uint32_t)result;
+    
+    KLOG_INFO("SYSCALL", "syscall_dispatcher returning");
 }
 
 /* ========================================

@@ -139,6 +139,7 @@ typedef struct tcp_socket {
 
 /* Internal socket flags */
 #define TCP_SOCK_AWAITING_ACK   0x01    /* We're waiting for an ACK */
+#define TCP_SOCK_ACCEPTED       0x02    /* Socket has been accepted by sys_accept */
 
 /* ===========================================
  * Fonctions publiques

@@ -701,14 +701,14 @@ static int cmd_keymap(int argc, char **argv) {
 
   /* "keymap list" - lister les layouts disponibles */
   if (strcmp(argv[1], "list") == 0) {
-    int count = 0;
+    size_t count = 0;
     const keymap_t **keymaps = keymap_list_all(&count);
     const keymap_t *current = keymap_get_current();
 
     console_puts("\nAvailable keyboard layouts:\n");
     console_puts("---------------------------\n");
 
-    for (int i = 0; i < count; i++) {
+    for (size_t i = 0; i < count; i++) {
       /* Marquer le layout actif avec une étoile */
       if (keymaps[i] == current) {
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
@@ -1923,7 +1923,7 @@ static int cmd_synctest(int argc, char **argv) {
 
 /* Test threads for scheduler */
 static void sched_test_worker_busy(void *arg) {
-  int id = (int)arg;
+  int id = (int)(intptr_t)arg;
   uint64_t iterations = 0;
   int nice = (int)thread_get_nice(thread_current());
 

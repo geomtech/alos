@@ -140,23 +140,6 @@ jump_to_user:
     jz .skip_cr3_user
     mov cr3, rdx
     
-    ; Debug: write to serial port AFTER cr3 change
-    push rax
-    push rdx
-    mov al, 'A'
-    mov dx, 0x3F8
-    out dx, al
-    mov al, 'C'
-    out dx, al
-    mov al, 'R'
-    out dx, al
-    mov al, '3'
-    out dx, al
-    mov al, 10
-    out dx, al
-    pop rdx
-    pop rax
-    
 .skip_cr3_user:
     
     ; Build iretq frame

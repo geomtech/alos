@@ -592,9 +592,10 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     thread->rsp = (uint64_t)kstack_top;
     
     KLOG_INFO_DEC("THREAD", "Created user thread TID: ", thread->tid);
-    KLOG_INFO_HEX("THREAD", "Kernel stack: ", (uint64_t)kernel_stack);
-    KLOG_INFO_HEX("THREAD", "ESP (kernel): ", thread->rsp);
-    KLOG_INFO_HEX("THREAD", "ESP0: ", thread->rsp0);
+    KLOG_INFO_HEX("THREAD", "Kernel stack (high): ", (uint32_t)((uint64_t)kernel_stack >> 32));
+    KLOG_INFO_HEX("THREAD", "Kernel stack (low): ", (uint32_t)(uint64_t)kernel_stack);
+    KLOG_INFO_HEX("THREAD", "RSP0 (high): ", (uint32_t)(thread->rsp0 >> 32));
+    KLOG_INFO_HEX("THREAD", "RSP0 (low): ", (uint32_t)thread->rsp0);
     
     /* Ajouter au scheduler */
     scheduler_enqueue(thread);
@@ -907,8 +908,15 @@ const char *thread_priority_name(thread_priority_t priority)
 static void idle_thread_func(void *arg)
 {
     (void)arg;
+    KLOG_INFO("IDLE", "Idle thread started, enabling interrupts");
     for (;;) {
-        __asm__ volatile("hlt");
+        /* Enable interrupts and halt until next IRQ */
+        __asm__ volatile("sti; hlt");
+        
+        /* After waking from hlt (IRQ occurred), check if another thread is ready.
+         * This is necessary because the IRQ handler (e.g., keyboard) may have
+         * woken up a thread, but scheduler_preempt() only runs on timer IRQ. */
+        scheduler_schedule();
     }
 }
 
@@ -1269,8 +1277,12 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame)
     
     spinlock_unlock(&g_scheduler_lock);
     
-    /* Mettre à jour le TSS pour le nouveau thread */
-    if (next->rsp0 != 0) {
+    /* Mettre à jour le TSS.RSP0 seulement pour les threads kernel.
+     * Ne JAMAIS mettre à jour TSS.RSP0 quand on switch vers un thread user
+     * qui est déjà dans le kernel (au milieu d'un syscall).
+     * Les threads user utilisent le RSP0 configuré lors de leur premier switch.
+     */
+    if (next->owner == NULL && next->rsp0 != 0) {
         tss_set_rsp0(next->rsp0);
     }
     
@@ -1446,35 +1458,11 @@ void scheduler_schedule(void)
         next = g_idle_thread;
     }
     
-    /* Debug: afficher le switch */
-    KLOG_INFO("SCHED", "schedule() called");
-    if (current) {
-        KLOG_INFO("SCHED", current->name);
-    }
-    if (next) {
-        KLOG_INFO("SCHED", next->name);
-        if (next->owner) {
-            KLOG_INFO("SCHED", "  -> has owner (user thread)");
-        }
-    }
-    
     /* Si pas de next ou même thread, rien à faire */
     if (!next || next == current) {
         cpu_sti();
         return;
     }
-    
-    /* debug sched 
-    KLOG_INFO("SCHED", "Context switch:");
-    if (current) {
-        KLOG_INFO("SCHED", "  From:");
-        KLOG_INFO("SCHED", current->name);
-        KLOG_INFO_HEX("SCHED", "  Old ESP: ", current->rsp);
-    }
-    KLOG_INFO("SCHED", "  To:");
-    KLOG_INFO("SCHED", next->name);
-    KLOG_INFO_HEX("SCHED", "  New ESP: ", next->rsp);
-    */
 
     uint64_t now = timer_get_ticks();
 
@@ -1491,8 +1479,9 @@ void scheduler_schedule(void)
         current->base_priority = current->priority;
     }
 
-    /* Mettre le thread actuel dans la run queue s'il est toujours READY/RUNNING */
-    if (current && (current->state == THREAD_STATE_RUNNING || current->state == THREAD_STATE_READY)) {
+    /* Remettre le thread actuel dans la run queue s'il est toujours READY/RUNNING */
+    if (current && (current->state == THREAD_STATE_RUNNING ||
+                    current->state == THREAD_STATE_READY)) {
         current->state = THREAD_STATE_READY;
         current->wait_start_tick = now;  /* Start aging timer */
         scheduler_enqueue(current);
@@ -1506,24 +1495,30 @@ void scheduler_schedule(void)
     next->state = THREAD_STATE_RUNNING;
     g_current_thread = next;
     
-    /* Mettre à jour le TSS */
-    if (next->rsp0 != 0) {
+    /* Mettre à jour le TSS.RSP0 seulement pour :
+     * - Les threads kernel (owner == NULL)
+     * - Les threads user à leur premier switch (first_switch == true)
+     * 
+     * Ne JAMAIS mettre à jour TSS.RSP0 quand on switch vers un thread user
+     * qui est déjà dans le kernel (au milieu d'un syscall).
+     */
+    bool should_update_tss = (next->owner == NULL) || next->first_switch;
+    if (should_update_tss && next->rsp0 != 0) {
         tss_set_rsp0(next->rsp0);
     }
     
-    /* Context switch !
-     * Utiliser le CR3 du processus owner si disponible (pour les processus user)
-     * Sinon, utiliser le CR3 du kernel pour les threads kernel
+    /* Context switch :
+     * Utiliser le CR3 du processus owner si disponible (user),
+     * sinon le CR3 du kernel (thread noyau).
      */
     uint64_t new_cr3;
     if (next->owner && next->owner->cr3) {
         new_cr3 = next->owner->cr3;
     } else {
-        /* Thread kernel : utiliser le PML4 du kernel */
         new_cr3 = vmm_get_kernel_cr3();
     }
     
-    /* Vérification de sanité : CR3 doit être une adresse physique valide (alignée sur 4 Ko) */
+    /* Sanity check CR3 */
     if (new_cr3 < 0x1000 || (new_cr3 & 0xFFF) != 0) {
         KLOG_ERROR_HEX("SCHED", "FATAL: Invalid CR3 = ", (uint32_t)new_cr3);
         for (;;) asm volatile("hlt");
@@ -1538,9 +1533,31 @@ void scheduler_schedule(void)
         next->first_switch = false;
         g_current_thread = next;
         
-        /* Récupérer les infos depuis la stack préparée */
+        /* CRITICAL: Set TSS.RSP0 for syscalls from user mode */
+        if (next->rsp0 != 0) {
+            KLOG_INFO_HEX("SCHED", "Setting TSS.RSP0 (high): ", (uint32_t)(next->rsp0 >> 32));
+            KLOG_INFO_HEX("SCHED", "Setting TSS.RSP0 (low): ", (uint32_t)next->rsp0);
+            tss_set_rsp0(next->rsp0);
+        }
+        
+        /*
+         * Layout de la pile préparée par thread_create_user:
+         *
+         * kstack[0]  = RAX
+         * kstack[1]  = RCX
+         * ...
+         * kstack[14] = R15
+         * kstack[15] = RIP (entry_point)
+         * kstack[16] = CS (0x23)
+         * kstack[17] = RFLAGS (0x202)
+         * kstack[18] = RSP (user_rsp)
+         * kstack[19] = SS (0x1B)
+         *
+         * Note: Il n'y a PAS de int_no/error_code dans ce frame initial.
+         * Ces champs sont ajoutés par isr128 lors d'un vrai syscall.
+         */
         uint64_t *kstack = (uint64_t *)next->rsp;
-        /* La stack contient: RAX,RCX,RDX,RBX,RBP,RSI,RDI,R8-R15, puis RIP,CS,RFLAGS,RSP,SS */
+
         uint64_t user_rip = kstack[15];  /* RIP après les 15 registres */
         uint64_t user_rsp = kstack[18];  /* RSP (après RIP, CS, RFLAGS) */
         
@@ -1550,22 +1567,27 @@ void scheduler_schedule(void)
         
         /* Sauvegarder le contexte actuel si nécessaire */
         if (current) {
-            /* Sauvegarder RSP du thread actuel */
             uint64_t dummy_rsp;
             __asm__ volatile("mov %%rsp, %0" : "=r"(dummy_rsp));
             current->rsp = dummy_rsp;
         }
         
-        /* Sauter en mode utilisateur - ne revient jamais */
         extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
         jump_to_user(user_rsp, user_rip, new_cr3);
         
-        /* Ne devrait jamais arriver ici */
         __builtin_unreachable();
     }
     
     /* Mettre à jour g_current_thread AVANT le switch pour les threads kernel */
     g_current_thread = next;
+    
+    if (next->owner) {
+        KLOG_INFO("SCHED", "switch_task to user thread:");
+        KLOG_INFO("SCHED", next->name);
+        KLOG_INFO_HEX("SCHED", "  next->rsp: ", (uint32_t)next->rsp);
+        KLOG_INFO_HEX("SCHED", "  next->rsp (high): ", (uint32_t)(next->rsp >> 32));
+        KLOG_INFO_HEX("SCHED", "  first_switch: ", next->first_switch);
+    }
     
     if (current) {
         switch_task(&current->rsp, next->rsp, new_cr3);
@@ -1574,8 +1596,17 @@ void scheduler_schedule(void)
         switch_task(&g_dummy_rsp, next->rsp, new_cr3);
     }
     
-    /* On revient ici quand ce thread est reschedulé */
-    cpu_sti();
+    /* On revient ici quand ce thread est reschedulé.
+     * 
+     * Ne PAS faire cpu_sti() si on revient dans un thread user
+     * au milieu d'un syscall - laisser iretq restaurer les interruptions.
+     */
+    if (next->owner != NULL && !next->first_switch) {
+        /* Thread user au milieu d'un syscall - ne pas réactiver les interruptions.
+         * Le iretq va restaurer RFLAGS avec IF. */
+    } else {
+        cpu_sti();
+    }
 }
 
 /* ========================================

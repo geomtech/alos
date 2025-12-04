@@ -73,7 +73,10 @@ static void free_table(page_entry_t* table)
 static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, uint64_t flags)
 {
     if (table[index] & PAGE_PRESENT) {
-        /* Table existe déjà */
+        /* Table existe déjà - ajouter PAGE_USER si demandé */
+        if (flags & PAGE_USER) {
+            table[index] |= PAGE_USER;
+        }
         uint64_t phys = table[index] & PAGE_FRAME_MASK;
         return (page_entry_t*)phys_to_virt(phys);
     }
@@ -306,6 +309,10 @@ void vmm_set_user_accessible(uint64_t start, uint64_t size)
 
 void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr)
 {
+    /* Get current RSP for debugging */
+    uint64_t current_rsp;
+    __asm__ volatile("mov %%rsp, %0" : "=r"(current_rsp));
+    
     /* Log to serial only to avoid recursive page faults on VGA */
     KLOG_ERROR_HEX("VMM", "PAGE FAULT at (high): ", (uint32_t)(fault_addr >> 32));
     KLOG_ERROR_HEX("VMM", "PAGE FAULT at (low): ", (uint32_t)fault_addr);
@@ -319,6 +326,8 @@ void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr)
     if (error_code & 0x10) {
         KLOG_ERROR("VMM", "  - Instruction fetch");
     }
+    KLOG_ERROR_HEX("VMM", "Current RSP (high): ", (uint32_t)(current_rsp >> 32));
+    KLOG_ERROR_HEX("VMM", "Current RSP (low): ", (uint32_t)current_rsp);
     KLOG_ERROR("VMM", "System halted.");
     
     /* Halt */
@@ -357,6 +366,13 @@ page_directory_t* vmm_create_directory(void)
     /* Copier les entrées kernel (higher half: indices 256-511) */
     for (int i = 256; i < 512; i++) {
         pml4[i] = kernel_directory.pml4[i];
+    }
+    
+    /* Copier l'entrée PML4[0] qui contient les mappings MMIO (0x01000000 - 0x10000000).
+     * Ces mappings sont nécessaires pour que le kernel puisse accéder aux périphériques
+     * même quand on exécute du code kernel avec le CR3 d'un processus user (syscalls). */
+    if (kernel_directory.pml4[0] & PAGE_PRESENT) {
+        pml4[0] = kernel_directory.pml4[0];
     }
     
     KLOG_INFO_HEX("VMM", "Created new PML4 at: ", (uint32_t)dir->pml4_phys);

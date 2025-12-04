@@ -5,9 +5,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "keymap.h"
+#include "sync.h"
 
 /* Taille du buffer clavier */
 #define KEYBOARD_BUFFER_SIZE 256
+
+/* Sémaphore pour synchronisation avec l'IRQ clavier */
+extern semaphore_t keyboard_sem;
 
 /**
  * Lit un caractère du buffer clavier (bloquant).

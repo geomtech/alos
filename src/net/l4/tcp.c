@@ -287,14 +287,17 @@ static tcp_socket_t* tcp_find_listening_socket(uint16_t port)
 /**
  * Trouve un socket client prêt (ESTABLISHED) pour un port donné.
  * Utilisé par sys_accept pour trouver les connexions créées par tcp_handle_packet.
- * Ne retourne pas les sockets LISTEN ou CLOSED.
+ * Ne retourne pas les sockets LISTEN, CLOSED, ou déjà acceptés.
  */
 tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
 {
     for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && 
             tcp_sockets[i].local_port == local_port &&
-            tcp_sockets[i].state == TCP_STATE_ESTABLISHED) {
+            tcp_sockets[i].state == TCP_STATE_ESTABLISHED &&
+            !(tcp_sockets[i].flags & TCP_SOCK_ACCEPTED)) {
+            /* Mark as accepted so we don't return it again */
+            tcp_sockets[i].flags |= TCP_SOCK_ACCEPTED;
             return &tcp_sockets[i];
         }
     }

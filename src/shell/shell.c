@@ -1,12 +1,17 @@
 /* src/shell/shell.c - ALOS Command Shell Implementation */
 #include "shell.h"
+#include <stdint.h>
 #include "commands.h"
 #include "../kernel/console.h"
 #include "../kernel/keyboard.h"
 #include "../kernel/process.h"
+#include "../kernel/klog.h"
 #include "../include/string.h"
 #include "../fs/vfs.h"
 #include "../config/config.h"
+
+/* Type signé pour les tailles (compatible 64 bits) */
+typedef int64_t ssize_t;
 
 /* Codes spéciaux clavier (définis dans keyboard.c) - castés en char pour éviter les warnings */
 #define KEY_UP      ((char)0x80)
@@ -20,9 +25,9 @@ static char cwd[SHELL_PATH_MAX] = "/";
 
 /* Historique des commandes */
 static char history[SHELL_HISTORY_SIZE][SHELL_LINE_MAX];
-static int history_count = 0;      /* Nombre de commandes dans l'historique */
-static int history_index = 0;      /* Position d'écriture (circulaire) */
-static int history_nav = -1;       /* Position de navigation (-1 = pas de navigation) */
+static size_t history_count = 0;      /* Nombre de commandes dans l'historique */
+static size_t history_index = 0;      /* Position d'écriture (circulaire) */
+static ssize_t history_nav = -1;      /* Position de navigation (-1 = pas de navigation) */
 
 /* ========================================
  * Fonctions utilitaires internes
@@ -62,13 +67,13 @@ static void history_add(const char* line)
  * @param offset  0 = dernière commande, 1 = avant-dernière, etc.
  * @return Pointeur vers la commande ou NULL
  */
-static const char* history_get(int offset)
+static const char* history_get(ssize_t offset)
 {
-    if (offset < 0 || offset >= history_count) {
+    if (offset < 0 || offset >= (ssize_t)history_count) {
         return NULL;
     }
     
-    int idx = (history_index - 1 - offset + SHELL_HISTORY_SIZE) % SHELL_HISTORY_SIZE;
+    size_t idx = (history_index - 1 - (size_t)offset + SHELL_HISTORY_SIZE) % SHELL_HISTORY_SIZE;
     return history[idx];
 }
 
@@ -133,7 +138,7 @@ static void shell_readline(char* buffer, size_t max_len)
                 
             case KEY_UP:
                 /* Flèche haut - commande précédente */
-                if (history_nav < history_count - 1) {
+                if (history_nav < (ssize_t)history_count - 1) {
                     history_nav++;
                     const char* hist = history_get(history_nav);
                     if (hist) {
@@ -408,8 +413,8 @@ void shell_init(void)
     /* Charger l'historique persistant depuis /config/history */
     int loaded = config_load_history(history, SHELL_HISTORY_SIZE, SHELL_LINE_MAX);
     if (loaded > 0) {
-        history_count = loaded;
-        history_index = loaded % SHELL_HISTORY_SIZE;
+        history_count = (size_t)loaded;
+        history_index = (size_t)loaded % SHELL_HISTORY_SIZE;
         console_set_color(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK);
         console_puts("[Shell] Loaded ");
         console_put_dec(loaded);
@@ -424,18 +429,24 @@ void shell_init(void)
 void shell_save_history(void)
 {
     /* Calculer l'index de départ pour l'historique circulaire */
-    int start_index = 0;
+    size_t start_index = 0;
     if (history_count >= SHELL_HISTORY_SIZE) {
         start_index = history_index;  /* Buffer plein, commencer à l'index courant */
     }
     
-    config_save_history(history, history_count, start_index, SHELL_LINE_MAX);
+    config_save_history(history, (int)history_count, (int)start_index, SHELL_LINE_MAX);
 }
 
 void shell_run(void)
 {
     char line[SHELL_LINE_MAX];
     char* argv[SHELL_ARGS_MAX];
+    
+    /* AUTO-START: Run server command for testing */
+    {
+        char* test_argv[] = { "server", NULL };
+        command_execute(1, test_argv);
+    }
     
     while (1) {
         /* Afficher le prompt avec le cwd */
@@ -446,6 +457,8 @@ void shell_run(void)
         console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
         console_puts("$ ");
         console_refresh();
+        
+        KLOG_INFO("SHELL", "Prompt displayed, waiting for input...");
         
         /* Lire une ligne */
         shell_readline(line, sizeof(line));
