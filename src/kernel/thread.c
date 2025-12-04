@@ -1038,8 +1038,9 @@ void scheduler_tick(void)
         g_current_thread->preempt_pending = true;
     }
 
-    /* Rocket Boost aging: check all run queues except UI for starvation */
-    spinlock_lock(&g_scheduler_lock);
+    /* Rocket Boost aging: check all run queues except UI for starvation
+     * Note: We're in IRQ context (timer), use IRQ-safe spinlock for safety */
+    uint64_t sched_flags = spinlock_irqsave(&g_scheduler_lock);
 
     for (int pri = THREAD_PRIORITY_IDLE; pri < THREAD_PRIORITY_UI; pri++) {
         thread_t *thread = g_run_queues[pri];
@@ -1081,7 +1082,7 @@ void scheduler_tick(void)
         }
     }
 
-    spinlock_unlock(&g_scheduler_lock);
+    spinlock_irqrestore(&g_scheduler_lock, sched_flags);
 }
 
 /* ========================================
@@ -1343,7 +1344,9 @@ void scheduler_enqueue(thread_t *thread)
 {
     if (!thread || thread->state == THREAD_STATE_RUNNING) return;
     
-    spinlock_lock(&g_scheduler_lock);
+    /* Use IRQ-safe spinlock since this can be called from IRQ context
+     * (e.g., condvar_broadcast from tcp_handle_packet in IRQ handler) */
+    uint64_t flags = spinlock_irqsave(&g_scheduler_lock);
     
     thread_priority_t pri = thread->priority;
     if (pri >= THREAD_PRIORITY_COUNT) {
@@ -1363,14 +1366,15 @@ void scheduler_enqueue(thread_t *thread)
         thread->state = THREAD_STATE_READY;
     }
     
-    spinlock_unlock(&g_scheduler_lock);
+    spinlock_irqrestore(&g_scheduler_lock, flags);
 }
 
 void scheduler_dequeue(thread_t *thread)
 {
     if (!thread) return;
     
-    spinlock_lock(&g_scheduler_lock);
+    /* Use IRQ-safe spinlock for consistency with scheduler_enqueue */
+    uint64_t flags = spinlock_irqsave(&g_scheduler_lock);
     
     thread_priority_t pri = thread->priority;
     if (pri >= THREAD_PRIORITY_COUNT) {
@@ -1391,7 +1395,7 @@ void scheduler_dequeue(thread_t *thread)
     thread->sched_next = NULL;
     thread->sched_prev = NULL;
     
-    spinlock_unlock(&g_scheduler_lock);
+    spinlock_irqrestore(&g_scheduler_lock, flags);
 }
 
 /* Sélectionne le prochain thread à exécuter */
@@ -1611,8 +1615,9 @@ void check_thread_timeouts(void)
      * checking thread->wait_result after scheduler_schedule returns.
      */
     
-    /* Simple implementation: Check all queues for timed-out blocked threads */
-    spinlock_lock(&g_scheduler_lock);
+    /* Simple implementation: Check all queues for timed-out blocked threads
+     * Note: Called from IRQ context, use IRQ-safe spinlock for safety */
+    uint64_t timeout_flags = spinlock_irqsave(&g_scheduler_lock);
     
     /* Scan all priority queues - but blocked threads aren't here!
      * Blocked threads are in wait queues, not run queues.
@@ -1620,7 +1625,7 @@ void check_thread_timeouts(void)
      * The check happens in wait_queue_wait_timeout.
      */
     
-    spinlock_unlock(&g_scheduler_lock);
+    spinlock_irqrestore(&g_scheduler_lock, timeout_flags);
     
     /* Alternative: use a global thread list or timeout list.
      * For now, the timeout mechanism works as follows:

@@ -118,6 +118,35 @@ static inline bool spinlock_trylock(spinlock_t *lock)
 }
 
 /* ========================================
+ * IRQ-safe Spinlock variants
+ * These disable interrupts to prevent deadlock when
+ * the same lock is used from both thread and IRQ context.
+ * ======================================== */
+
+static inline uint64_t spinlock_irqsave(spinlock_t *lock)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    __asm__ volatile("cli");
+    if (lock) {
+        while (__sync_lock_test_and_set(&lock->value, 1) != 0) {
+            while (lock->value) {
+                __asm__ volatile("pause");
+            }
+        }
+    }
+    return flags;
+}
+
+static inline void spinlock_irqrestore(spinlock_t *lock, uint64_t flags)
+{
+    if (lock) {
+        __sync_lock_release(&lock->value);
+    }
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+/* ========================================
  * Wait Queue - Synchronisation
  * ======================================== */
 
