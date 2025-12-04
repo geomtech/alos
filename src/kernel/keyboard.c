@@ -119,15 +119,33 @@ char keyboard_getchar(void)
     if (!keyboard_sem_initialized) {
         semaphore_init(&keyboard_sem, 0, KEYBOARD_BUFFER_SIZE);
         keyboard_sem_initialized = true;
+        KLOG_INFO("KBD", "Keyboard semaphore initialized");
+    }
+    
+    /* Si des caractères sont déjà dans le buffer, les retourner directement */
+    if (keyboard_has_char()) {
+        return keyboard_buffer_get();
     }
     
     /* Attendre qu'une touche soit disponible.
-     * sem_wait() bloque le thread et libère le CPU aux autres threads.
-     * L'IRQ clavier appellera sem_post() pour nous réveiller. */
-    sem_wait(&keyboard_sem);
-    
-    /* Une touche est maintenant disponible */
-    return keyboard_buffer_get();
+     * Utilise sem_timedwait avec un court timeout pour éviter les blocages.
+     * Si timeout, on vérifie le buffer et on réessaie. */
+    while (1) {
+        /* Essayer d'attendre avec timeout de 100ms */
+        if (sem_timedwait(&keyboard_sem, 100)) {
+            /* Sémaphore signalé, une touche est disponible */
+            char c = keyboard_buffer_get();
+            if (c != 0) return c;
+        }
+        
+        /* Timeout ou pas de caractère, vérifier le buffer directement */
+        if (keyboard_has_char()) {
+            return keyboard_buffer_get();
+        }
+        
+        /* Céder le CPU aux autres threads */
+        thread_yield();
+    }
 }
 
 /**

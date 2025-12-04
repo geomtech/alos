@@ -294,10 +294,7 @@ tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
     for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && 
             tcp_sockets[i].local_port == local_port &&
-            tcp_sockets[i].state == TCP_STATE_ESTABLISHED &&
-            !(tcp_sockets[i].flags & TCP_SOCK_ACCEPTED)) {
-            /* Mark as accepted so we don't return it again */
-            tcp_sockets[i].flags |= TCP_SOCK_ACCEPTED;
+            tcp_sockets[i].state == TCP_STATE_ESTABLISHED) {
             return &tcp_sockets[i];
         }
     }

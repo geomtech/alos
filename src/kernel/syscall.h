@@ -39,6 +39,44 @@
 #define MAX_SYSCALLS    256
 
 /* ========================================
+ * Blocking Syscall Support
+ * ======================================== */
+
+/* État d'un syscall bloquant */
+typedef enum {
+    SYSCALL_STATE_RUNNING,      /* Syscall en cours */
+    SYSCALL_STATE_BLOCKED,      /* Syscall bloqué, attente événement */
+    SYSCALL_STATE_COMPLETED,    /* Syscall terminé, résultat disponible */
+} syscall_state_t;
+
+/* Context de reprise pour syscalls bloquants */
+typedef struct syscall_context {
+    syscall_state_t state;      /* État du syscall */
+    uint32_t syscall_num;       /* Numéro du syscall */
+    int result;                 /* Résultat (quand completed) */
+    
+    /* Arguments sauvegardés pour reprise */
+    uint64_t arg0;
+    uint64_t arg1;
+    uint64_t arg2;
+    uint64_t arg3;
+    
+    /* Contexte spécifique au syscall (union) */
+    union {
+        struct {
+            int listen_fd;
+            uint16_t port;
+        } accept_ctx;
+        
+        struct {
+            int fd;
+            uint8_t* buf;
+            int len;
+        } recv_ctx;
+    };
+} syscall_context_t;
+
+/* ========================================
  * Structure des registres pour syscall (x86-64)
  * ======================================== */
 

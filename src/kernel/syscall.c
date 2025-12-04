@@ -15,6 +15,7 @@
 #include "../net/core/net.h"
 #include "../mm/kheap.h"
 #include "sync.h"
+#include "timer.h"
 
 /* Macro pour activer/désactiver les interruptions */
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
@@ -683,16 +684,19 @@ static int sys_listen(int fd, int backlog)
 }
 
 /**
- * SYS_ACCEPT (43) - Accepter une connexion entrante
+ * SYS_ACCEPT (43) - Accepter une connexion entrante (non-bloquant avec timeout)
  * 
  * Modèle MULTI-SOCKET: le socket serveur reste TOUJOURS en LISTEN.
  * Les sockets clients sont créés automatiquement par tcp_handle_packet
  * quand un SYN arrive. Cette fonction trouve juste le socket client prêt.
  * 
+ * Polling non-bloquant avec timeout de 10 secondes (100 tentatives × 100ms).
+ * Interruptible par CTRL+C ou CTRL+D.
+ * 
  * @param fd    File descriptor du socket en écoute
  * @param addr  Pointeur vers sockaddr_in pour l'adresse du client (peut être NULL)
  * @param len   Pointeur vers la taille (ignoré)
- * @return NOUVEAU FD pour le socket client, ou -1 si erreur
+ * @return NOUVEAU FD pour le socket client, ou -1 si erreur/timeout/interruption
  */
 static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
 {
@@ -709,59 +713,92 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     }
     
     uint16_t port = listen_sock->local_port;
-    tcp_socket_t* client_sock = NULL;
     
-    /* Attendre qu'un socket client soit prêt (ESTABLISHED).
-     * On utilise une condition variable pour bloquer efficacement
-     * jusqu'à ce que tcp_handle_packet() signale une nouvelle connexion.
-     * 
-     * Note: Les interruptions DOIVENT être activées pendant l'attente
-     * pour que l'IRQ réseau puisse traiter le handshake TCP.
-     */
-    KLOG_DEBUG("SYSCALL", "sys_accept: waiting for connection...");
+    /* Chercher un client prêt SANS bloquer */
+    tcp_socket_t* client_sock = tcp_find_ready_client(port);
     
-    /* Acquérir le mutex avant de vérifier/attendre */
-    mutex_lock(&listen_sock->accept_mutex);
-    
-    while ((client_sock = tcp_find_ready_client(port)) == NULL) {
-        /* Attendre sur la condition variable - libère le mutex et bloque.
-         * Sera réveillé par tcp_handle_packet() quand un client passe à ESTABLISHED. */
-        condvar_wait(&listen_sock->accept_cv, &listen_sock->accept_mutex);
+    if (client_sock != NULL) {
+        /* Connexion immédiatement disponible - path rapide */
+        goto accept_ready;
     }
     
-    mutex_unlock(&listen_sock->accept_mutex);
+    /* Pas de connexion prête - polling avec timeout (busy-wait) */
+    KLOG_DEBUG("SYSCALL", "sys_accept: no client ready, polling...");
     
-    KLOG_DEBUG("SYSCALL", "sys_accept: connection ready!");
+    uint64_t start_tick = timer_get_ticks();
+    uint64_t timeout_ticks = 10000;  /* 10 secondes (1 tick = 1ms) */
+    uint64_t check_interval = 100;   /* Vérifier toutes les 100ms */
+    uint64_t last_check = start_tick;
     
-    /* Allouer un nouveau FD pour le socket client */
-    int client_fd = fd_alloc();
-    if (client_fd < 0) {
-        KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
-        net_lock();
-        tcp_close(client_sock);
-        net_unlock();
-        return -1;
+    while ((timer_get_ticks() - start_tick) < timeout_ticks) {
+        uint64_t now = timer_get_ticks();
+        
+        /* Vérifier seulement toutes les 100ms pour ne pas surcharger */
+        if ((now - last_check) >= check_interval) {
+            last_check = now;
+            
+            client_sock = tcp_find_ready_client(port);
+            if (client_sock != NULL) {
+                goto accept_ready;
+            }
+            
+            /* Vérifier si CTRL+C ou autres interruptions */
+            int key = sys_kbhit();
+            if (key == 0x03 || key == 0x04) {  /* CTRL+C ou CTRL+D */
+                KLOG_DEBUG("SYSCALL", "sys_accept: interrupted by user");
+                return -1;
+            }
+        }
+        
+        /* Pause CPU pour économiser l'énergie (sans changer de thread) */
+        __asm__ volatile("pause");
     }
     
-    /* Configurer le FD */
-    fd_table[client_fd].type = FILE_TYPE_SOCKET;
-    fd_table[client_fd].socket = client_sock;
-    fd_table[client_fd].flags = O_RDWR;
+    /* Timeout atteint */
+    KLOG_DEBUG("SYSCALL", "sys_accept: timeout waiting for connection");
+    return -1;
     
-    /* Remplir l'adresse du client si demandé */
-    if (addr != NULL) {
-        addr->sin_family = AF_INET;
-        addr->sin_port = htons(client_sock->remote_port);
-        addr->sin_addr = ((uint32_t)client_sock->remote_ip[0]) |
-                         ((uint32_t)client_sock->remote_ip[1] << 8) |
-                         ((uint32_t)client_sock->remote_ip[2] << 16) |
-                         ((uint32_t)client_sock->remote_ip[3] << 24);
+accept_ready:
+    {
+        /* client_sock est déjà défini et valide à ce point */
+        tcp_socket_t* listen_sock = fd_table[fd].socket;
+        tcp_socket_t* client_sock = tcp_find_ready_client(listen_sock->local_port);
+        if (!client_sock) {
+            /* Ne devrait pas arriver */
+            KLOG_ERROR("SYSCALL", "sys_accept: no client after ready check!");
+            return -1;
+        }
+        
+        /* Allouer un nouveau FD pour le socket client */
+        int client_fd = fd_alloc();
+        if (client_fd < 0) {
+            KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
+            net_lock();
+            tcp_close(client_sock);
+            net_unlock();
+            return -1;
+        }
+        
+        /* Configurer le FD */
+        fd_table[client_fd].type = FILE_TYPE_SOCKET;
+        fd_table[client_fd].socket = client_sock;
+        fd_table[client_fd].flags = O_RDWR;
+        
+        /* Remplir l'adresse du client si demandé */
+        if (addr != NULL) {
+            addr->sin_family = AF_INET;
+            addr->sin_port = htons(client_sock->remote_port);
+            addr->sin_addr = ((uint32_t)client_sock->remote_ip[0]) |
+                             ((uint32_t)client_sock->remote_ip[1] << 8) |
+                             ((uint32_t)client_sock->remote_ip[2] << 16) |
+                             ((uint32_t)client_sock->remote_ip[3] << 24);
+        }
+        
+        KLOG_DEBUG_DEC("SYSCALL", "sys_accept: new client fd ", client_fd);
+        
+        /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
+        return client_fd;
     }
-    
-    KLOG_DEBUG_DEC("SYSCALL", "sys_accept: new client fd ", client_fd);
-    
-    /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
-    return client_fd;
 }
 
 /**
@@ -1015,6 +1052,33 @@ void syscall_dispatcher(syscall_regs_t* regs)
     
     /* Retourner le résultat dans EAX */
     regs->rax = (uint32_t)result;
+    
+    /* NOUVEAU: Vérifier si le thread doit céder le CPU */
+    thread_t *current = thread_current();
+    if (current && current->needs_yield && current->state == THREAD_STATE_BLOCKED) {
+        /* Le thread est bloqué (ex: dans condvar_wait).
+         * On doit céder le CPU MAINTENANT, avec le contexte syscall complet.
+         * 
+         * IMPORTANT: Ne PAS retourner au user space - appeler scheduler.
+         */
+        KLOG_INFO("SYSCALL", "Thread blocked, yielding from syscall");
+        
+        /* Sauvegarder le contexte complet (RIP, RSP, etc. sont dans regs) */
+        current->rsp = (uint64_t)regs;  /* Sauvegarder le frame syscall */
+        
+        /* Marquer comme BLOCKED (déjà fait par condvar_wait) */
+        /* current->state = THREAD_STATE_BLOCKED; */
+        
+        /* Retirer de la run queue */
+        scheduler_dequeue(current);
+        
+        /* Appeler le scheduler - il va choisir un autre thread */
+        scheduler_schedule();
+        
+        /* Quand on revient ici, on a été réveillé.
+         * Le contexte est restauré, on peut continuer. */
+        KLOG_INFO("SYSCALL", "Thread woken up, resuming syscall");
+    }
     
     KLOG_INFO("SYSCALL", "syscall_dispatcher returning");
 }

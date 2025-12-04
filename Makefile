@@ -67,8 +67,8 @@ NET_L2_OBJ = src/net/l2/ethernet.o src/net/l2/arp.o
 NET_L3_SRC = src/net/l3/ipv4.c src/net/l3/icmp.c src/net/l3/route.c
 NET_L3_OBJ = src/net/l3/ipv4.o src/net/l3/icmp.o src/net/l3/route.o
 
-NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c src/net/l4/dns.c src/net/l4/tcp.c src/net/l4/http.c
-NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o src/net/l4/dns.o src/net/l4/tcp.o src/net/l4/http.o
+NET_L4_SRC = src/net/l4/udp.c src/net/l4/dhcp.c src/net/l4/dns.c src/net/l4/tcp.c src/net/l4/http.c src/net/l4/httpd.c
+NET_L4_OBJ = src/net/l4/udp.o src/net/l4/dhcp.o src/net/l4/dns.o src/net/l4/tcp.o src/net/l4/http.o src/net/l4/httpd.o
 
 NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
@@ -223,7 +223,7 @@ distclean: clean
 # Test rapide avec QEMU x86-64 (avec carte réseau virtio connectée en mode user)
 # SLIRP network: 10.0.2.0/24, gateway 10.0.2.2, DHCP range 10.0.2.15-10.0.2.31
 run: iso
-	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
+	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
 
 run-e1000: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 256M \
