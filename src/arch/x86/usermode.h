@@ -1,4 +1,4 @@
-/* src/arch/x86/usermode.h - User Mode (Ring 3) Support */
+/* src/arch/x86_64/usermode.h - User Mode (Ring 3) Support */
 #ifndef USERMODE_H
 #define USERMODE_H
 

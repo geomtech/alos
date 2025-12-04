@@ -1,32 +1,48 @@
 /* src/console.c - Console virtuelle avec scrolling */
 #include "console.h"
+#include "fb_console.h"
 #include "thread.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
+
+/* Use framebuffer console if available */
+static bool use_fb_console = false;
 
 /* Ports VGA pour le contrôle du curseur hardware */
 #define VGA_CTRL_REG    0x3D4
 #define VGA_DATA_REG    0x3D5
 
 /* Helpers pour la gestion des interruptions */
-static inline uint32_t save_flags(void) {
-    uint32_t flags;
-    asm volatile("pushfl; popl %0" : "=r"(flags));
+static inline uint64_t save_flags(void) {
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
     return flags;
 }
 
-static inline void restore_flags(uint32_t flags) {
-    asm volatile("pushl %0; popfl" : : "r"(flags) : "memory", "cc");
+static inline void restore_flags(uint64_t flags) {
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
-static inline void cli(void) {
-    asm volatile("cli");
+static inline void local_cli(void) {
+    __asm__ volatile("cli");
 }
 
 /* Spinlock pour protéger l'accès concurrent à la console */
 static spinlock_t console_lock;
 
-/* Buffer VGA physique */
-static uint16_t* const VGA_MEMORY = (uint16_t*)0xB8000;
+/* Buffer VGA physique - sera initialisé avec l'offset HHDM */
+static uint16_t* VGA_MEMORY = (uint16_t*)0xB8000;  /* Adresse physique par défaut */
+
+/* Fonction pour initialiser l'adresse VGA avec l'offset HHDM */
+void console_set_hhdm_offset(uint64_t hhdm_offset) {
+    VGA_MEMORY = (uint16_t*)(0xB8000 + hhdm_offset);
+}
+
+/* Initialize framebuffer console */
+void console_init_fb(struct limine_framebuffer *fb) {
+    if (fb != NULL && fb_console_init(fb) == 0) {
+        use_fb_console = true;
+    }
+}
 
 /* Buffer virtuel de la console (100 lignes x 80 colonnes) */
 static uint16_t console_buffer[CONSOLE_BUFFER_LINES * VGA_WIDTH];
@@ -86,8 +102,12 @@ void console_init(void)
 
 void console_clear(uint8_t bg_color)
 {
-    uint32_t flags = save_flags();
-    cli();
+    if (use_fb_console) {
+        fb_console_clear(vga_to_fb_color[bg_color & 0x0F]);
+        return;
+    }
+    uint64_t flags = save_flags();
+    local_cli();
     spinlock_lock(&console_lock);
     
     uint8_t color = make_color(VGA_COLOR_WHITE, bg_color);
@@ -109,6 +129,10 @@ void console_clear(uint8_t bg_color)
 
 void console_set_color(uint8_t fg, uint8_t bg)
 {
+    if (use_fb_console) {
+        fb_console_set_vga_color(fg, bg);
+        return;
+    }
     current_color = make_color(fg, bg);
 }
 
@@ -163,8 +187,12 @@ static void console_putc_unlocked(char c)
 
 void console_putc(char c)
 {
-    uint32_t flags = save_flags();
-    cli();
+    if (use_fb_console) {
+        fb_console_putc(c);
+        return;
+    }
+    uint64_t flags = save_flags();
+    local_cli();
     spinlock_lock(&console_lock);
     console_putc_unlocked(c);
     /* Note: putc ne fait pas de refresh complet pour perf, juste buffer */
@@ -174,8 +202,12 @@ void console_putc(char c)
 
 void console_puts(const char* str)
 {
-    uint32_t flags = save_flags();
-    cli();
+    if (use_fb_console) {
+        fb_console_puts(str);
+        return;
+    }
+    uint64_t flags = save_flags();
+    local_cli();
     spinlock_lock(&console_lock);
     while (*str) {
         console_putc_unlocked(*str++);
@@ -242,6 +274,10 @@ void console_scroll_down(void)
 
 void console_refresh(void)
 {
+    if (use_fb_console) {
+        fb_console_refresh();
+        return;
+    }
     /* Réinitialiser l'état du curseur car on va rafraîchir tout l'écran */
     cursor_char_saved = 0;
     

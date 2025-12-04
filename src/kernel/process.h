@@ -29,25 +29,29 @@ typedef enum {
  * ======================================== */
 
 /**
- * Registres CPU sauvegardés lors d'un context switch.
+ * Registres CPU sauvegardés lors d'un context switch (x86-64).
  * 
  * Note: On ne sauvegarde que les registres callee-saved
- * car le compilateur s'occupe des caller-saved (EAX, ECX, EDX).
+ * selon la convention System V AMD64 ABI.
  * 
+ * Registres callee-saved: RBX, RBP, R12-R15
  * Layout sur la stack après un switch:
- *   [EBP]  <- ESP pointe ici après les pops
- *   [EDI]
- *   [ESI]
- *   [EBX]
- *   [EIP]  <- Adresse de retour (ret sautera ici)
+ *   [R15]
+ *   [R14]
+ *   [R13]
+ *   [R12]
+ *   [RBP]
+ *   [RBX]
+ *   [RIP]  <- Adresse de retour (ret sautera ici)
  */
 typedef struct {
-    uint32_t ebx;
-    uint32_t esi;
-    uint32_t edi;
-    uint32_t ebp;
-    uint32_t eip;       /* Adresse de retour */
-    /* EFLAGS est géré implicitement par pushf/popf si nécessaire */
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
+    uint64_t rip;       /* Adresse de retour */
 } __attribute__((packed)) context_t;
 
 /**
@@ -61,17 +65,17 @@ typedef struct process {
     volatile int should_terminate;  /* Flag pour demander l'arrêt (CTRL+C) */
     int exit_status;                /* Code de sortie */
     
-    /* ===== Context ===== */
-    uint32_t esp;                   /* Stack Pointer sauvegardé */
-    uint32_t esp0;                  /* Stack Pointer kernel (base) */
-    uint32_t cr3;                   /* Adresse physique du Page Directory (pour switch CR3) */
+    /* ===== Context (x86-64) ===== */
+    uint64_t rsp;                   /* Stack Pointer sauvegardé */
+    uint64_t rsp0;                  /* Stack Pointer kernel (base pour TSS) */
+    uint64_t cr3;                   /* Adresse physique du PML4 (pour switch CR3) */
     
     /* ===== Mémoire ===== */
-    uint32_t* page_directory;       /* Page Directory (pour l'instant = kernel) */
+    uint64_t* pml4;                 /* PML4 (Page Map Level 4) */
     
     /* ===== Stack ===== */
     void* stack_base;               /* Base de la stack allouée (pour kfree) */
-    uint32_t stack_size;            /* Taille de la stack */
+    uint64_t stack_size;            /* Taille de la stack */
     
     /* ===== Threads ===== */
     thread_t* main_thread;          /* Thread principal du processus */
@@ -272,6 +276,6 @@ size_t process_snapshot(process_info_t* buffer, size_t capacity);
  * fonction pour garantir que le code kernel reste accessible pendant
  * la transition entre espaces mémoire.
  */
-extern void switch_task(uint32_t* old_esp_ptr, uint32_t new_esp, uint32_t new_cr3);
+extern void switch_task(uint64_t* old_rsp_ptr, uint64_t new_rsp, uint64_t new_cr3);
 
 #endif /* PROCESS_H */

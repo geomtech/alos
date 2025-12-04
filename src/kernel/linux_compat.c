@@ -227,12 +227,12 @@ static int32_t linux_sys_stub(const char* name)
 
 int32_t linux_syscall_handler(syscall_regs_t* regs)
 {
-    uint32_t syscall_num = regs->eax;
-    uint32_t arg1 = regs->ebx;
-    uint32_t arg2 = regs->ecx;
-    uint32_t arg3 = regs->edx;
-    uint32_t arg4 = regs->esi;
-    uint32_t arg5 = regs->edi;
+    uint64_t syscall_num = regs->rax;
+    uint64_t arg1 = regs->rdi;
+    uint64_t arg2 = regs->rsi;
+    uint64_t arg3 = regs->rdx;
+    uint64_t arg4 = regs->r10;
+    uint64_t arg5 = regs->r8;
     
     /* Dispatcher selon le numéro de syscall */
     switch (syscall_num) {
@@ -261,7 +261,7 @@ int32_t linux_syscall_handler(syscall_regs_t* regs)
         case LINUX_SYS_MMAP:
         case LINUX_SYS_MMAP2:
             return linux_sys_mmap((void*)arg1, arg2, arg3, arg4, arg5, 
-                                  regs->ebp); /* 6ème arg sur la stack */
+                                  regs->r9); /* 6ème arg sur la stack */
         
         case LINUX_SYS_GETCWD:
             return linux_sys_getcwd((char*)arg1, arg2);

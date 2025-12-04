@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "console.h"
 #include "keyboard.h"
 #include "keymap.h"
@@ -101,14 +101,8 @@ void keyboard_clear_buffer(void)
 char keyboard_getchar(void)
 {
     while (!keyboard_has_char()) {
-        /* Activer les interruptions pour recevoir l'IRQ clavier */
-        asm volatile("sti");
-        
-        /* Céder le CPU aux autres threads au lieu de bloquer le CPU */
-        thread_yield();
-        
-        /* Petite pause pour éviter de spammer le scheduler si on est le seul thread */
-        asm volatile("hlt");
+        /* Activer les interruptions et attendre */
+        asm volatile("sti; hlt");
     }
     return keyboard_buffer_get();
 }
@@ -165,8 +159,7 @@ void keyboard_handler_c(void)
     /* 2. Gérer le préfixe E0 (touches étendues: AltGr, flèches, etc.) */
     if (scancode == SCANCODE_E0_PREFIX) {
         e0_prefix = true;
-        outb(0x20, 0x20);
-        return;
+        return;  /* EOI sent by irq_handler */
     }
 
     /* 3. Gérer les modificateurs (appui et relâchement) */
@@ -195,8 +188,7 @@ void keyboard_handler_c(void)
                     break;
             }
         }
-        /* Acquitter et sortir */
-        outb(0x20, 0x20);
+        /* EOI sent by irq_handler */
         return;
     }
     
@@ -207,8 +199,7 @@ void keyboard_handler_c(void)
         if (scancode == SCANCODE_LALT) {
             altgr_pressed = true;
             e0_prefix = false;
-            outb(0x20, 0x20);
-            return;
+            return;  /* EOI sent by irq_handler */
         }
         /* Autres touches étendues (flèches, etc.) */
         e0_prefix = false;

@@ -25,16 +25,16 @@ static inline void cpu_sti(void)
     __asm__ volatile("sti");
 }
 
-static inline uint32_t cpu_save_flags(void)
+static inline uint64_t cpu_save_flags(void)
 {
-    uint32_t flags;
-    __asm__ volatile("pushfl; popl %0" : "=r"(flags));
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
     return flags;
 }
 
-static inline void cpu_restore_flags(uint32_t flags)
+static inline void cpu_restore_flags(uint64_t flags)
 {
-    __asm__ volatile("pushl %0; popfl" : : "r"(flags) : "memory", "cc");
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
 /* Get current timer tick count (from timer.c) */

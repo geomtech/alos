@@ -1,16 +1,17 @@
-# Makefile pour les programmes userland ALOS
+# Makefile pour les programmes userland ALOS (x86-64)
 # Ces programmes sont compilés pour être exécutés par le kernel via le chargeur ELF
 
-CC = i686-elf-gcc
-LD = i686-elf-ld
+CC = x86_64-elf-gcc
+LD = x86_64-elf-ld
 
 # Flags de compilation
 # -ffreestanding : pas de libc standard
 # -nostdlib : pas de bibliothèques standard
 # -fno-builtin : pas de fonctions builtin
-# -m32 : forcer 32 bits
+# -mcmodel=large : pour les adresses 64-bit
+# -mno-red-zone : pas de red zone (requis pour le kernel)
 # -I../../src/lib : pour inclure libc.h
-CFLAGS = -ffreestanding -nostdlib -fno-builtin -m32 -O0 -g -Wall -I../../src/lib
+CFLAGS = -ffreestanding -nostdlib -fno-builtin -mcmodel=large -mno-red-zone -O0 -g -Wall -I../../src/lib
 
 # Adresse de base des programmes utilisateur
 # Le kernel charge les programmes à partir de 0x400000

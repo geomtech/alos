@@ -5,8 +5,8 @@
  */
 
 #include "e1000e.h"
-#include "../../arch/x86/idt.h"
-#include "../../arch/x86/io.h"
+#include "../../arch/x86_64/idt.h"
+#include "../../arch/x86_64/io.h"
 #include "../../mm/kheap.h"
 #include "../../mm/vmm.h"
 #include "../../net/core/netdev.h"
@@ -599,7 +599,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     /* Patch IDT if needed */
     if (dev->irq != 11) {
         extern void irq11_handler(void);
-        idt_set_gate(32 + dev->irq, (uint32_t)(uintptr_t)irq11_handler, 0x08, 0x8E);
+        idt_set_gate(32 + dev->irq, (uint64_t)(uintptr_t)irq11_handler, 0x08, 0x8E, 0);
     }
     
     /* Store global instance */

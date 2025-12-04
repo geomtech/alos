@@ -13,7 +13,7 @@
 #include "../../mm/pmm.h"
 #include "../../kernel/klog.h"
 #include "../../kernel/console.h"
-#include "../../arch/x86/io.h"
+#include "../../arch/x86_64/io.h"
 
 /* ============================================ */
 /*           PCI Legacy Transport               */

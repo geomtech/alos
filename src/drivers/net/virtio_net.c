@@ -10,8 +10,8 @@
 
 #include "virtio_net.h"
 #include "../virtio/virtio_transport.h"
-#include "../../arch/x86/idt.h"
-#include "../../arch/x86/io.h"
+#include "../../arch/x86_64/idt.h"
+#include "../../arch/x86_64/io.h"
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
@@ -326,7 +326,7 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
     
     if (irq != 11) {
         extern void irq11_handler(void);
-        idt_set_gate(32 + irq, (uint32_t)(uintptr_t)irq11_handler, 0x08, 0x8E);
+        idt_set_gate(32 + irq, (uint64_t)(uintptr_t)irq11_handler, 0x08, 0x8E, 0);
     }
     
     /* Remplir la queue RX */

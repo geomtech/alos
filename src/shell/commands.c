@@ -1,6 +1,6 @@
 /* src/shell/commands.c - Shell Commands Implementation */
 #include "commands.h"
-#include "../arch/x86/usermode.h"
+#include "../arch/x86_64/usermode.h"
 #include "../config/config.h"
 #include "../drivers/pci.h"
 #include "../fs/vfs.h"
@@ -612,15 +612,13 @@ static int cmd_usermode(int argc, char **argv) {
     return 0;
   }
 
-  console_puts("\nJumping to User Mode...\n");
+  console_puts("\nUser mode test not implemented for x86-64 yet.\n");
   console_refresh();
 
-  /* Le grand saut ! */
-  jump_to_usermode(user_mode_test, NULL);
+  /* TODO: Implémenter jump_to_usermode pour x86-64 */
+  /* jump_to_usermode(user_mode_test, NULL); */
 
-  /* On ne devrait JAMAIS arriver ici */
-  console_puts("ERROR: Returned from User Mode!?\n");
-  return -1;
+  return 0;
 }
 
 /**

@@ -1,6 +1,6 @@
 /* src/kernel/timer.c - PIT Timer & RTC Driver Implementation */
 #include "timer.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "console.h"
 
 /* ===========================================

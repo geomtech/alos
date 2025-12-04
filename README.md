@@ -252,14 +252,11 @@ debugfs disk.img -R "ls"
 ### Running
 
 ```bash
-# Run in QEMU with disk
-make run
-
-# Run with debug output (shows interrupts and exceptions)
-make run-debug
-
-# Run with network packet capture
-make run-pcap
+make          # Compile le kernel
+make iso      # Crée l'ISO bootable (télécharge Limine si nécessaire)
+make run      # Lance QEMU avec l'ISO
+make clean    # Nettoie les fichiers compilés
+make distclean # Nettoie tout, y compris Limine
 ```
 
 ## QEMU Configuration

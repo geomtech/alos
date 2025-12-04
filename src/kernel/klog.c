@@ -4,7 +4,7 @@
 #include "console.h"
 #include "../fs/vfs.h"
 #include "../mm/kheap.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 
 /* ===========================================
  * Variables globales

@@ -1,6 +1,6 @@
 /* src/drivers/pci.c - PCI Bus Driver Implementation */
 #include "pci.h"
-#include "../arch/x86/io.h"
+#include "../arch/x86_64/io.h"
 #include "../kernel/klog.h"
 #include "../mm/kheap.h"
 

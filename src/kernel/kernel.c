@@ -1,9 +1,9 @@
-/* src/kernel/kernel.c */
-#include "../arch/x86/gdt.h"
-#include "../arch/x86/idt.h"
-#include "../arch/x86/io.h"
-#include "../arch/x86/tss.h"
-#include "../arch/x86/usermode.h"
+/* src/kernel/kernel.c - ALOS Kernel for x86-64 with Limine */
+#include "../arch/x86_64/gdt.h"
+#include "../arch/x86_64/idt.h"
+#include "../arch/x86_64/io.h"
+#include "../arch/x86_64/cpu.h"
+#include "../arch/x86_64/usermode.h"
 #include "../config/config.h"
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
@@ -12,7 +12,7 @@
 #include "mmio/mmio.h"
 #include "../fs/ext2.h"
 #include "../fs/vfs.h"
-#include "../include/multiboot.h"
+#include "../include/limine.h"
 #include "../include/string.h"
 #include "../mm/kheap.h"
 #include "../mm/pmm.h"
@@ -35,9 +35,63 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Variables globales pour les infos Multiboot */
-static multiboot_info_t *g_mboot_info = NULL;
-static uint32_t g_mboot_magic = 0;
+/* ============================================
+ * Limine Requests
+ * ============================================
+ * These are placed in a special section that Limine scans.
+ */
+
+/* Request markers */
+__attribute__((used, section(".limine_requests_start")))
+static volatile uint64_t limine_requests_start_marker[4] = LIMINE_REQUESTS_START_MARKER;
+
+__attribute__((used, section(".limine_requests_end")))
+static volatile uint64_t limine_requests_end_marker[2] = LIMINE_REQUESTS_END_MARKER;
+
+/* Base revision - required */
+__attribute__((used, section(".limine_requests")))
+static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(3);
+
+/* Memory map request */
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_memmap_request memmap_request = {
+    .id = LIMINE_MEMMAP_REQUEST_ID,
+    .revision = 0
+};
+
+/* HHDM (Higher Half Direct Map) request */
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST_ID,
+    .revision = 0
+};
+
+/* Framebuffer request (for VGA-like output) */
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_framebuffer_request framebuffer_request = {
+    .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
+    .revision = 0
+};
+
+/* Kernel address request */
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_executable_address_request kernel_addr_request = {
+    .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
+    .revision = 0
+};
+
+/* Bootloader info request */
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_bootloader_info_request bootloader_info_request = {
+    .id = LIMINE_BOOTLOADER_INFO_REQUEST_ID,
+    .revision = 0
+};
+
+/* Global pointers to Limine responses */
+static struct limine_memmap_response *g_memmap = NULL;
+static struct limine_hhdm_response *g_hhdm = NULL;
+static struct limine_framebuffer_response *g_framebuffer = NULL;
+static uint64_t g_hhdm_offset = 0;
 
 /* Fonction externe pour incrémenter les ticks */
 extern void timer_tick(void);
@@ -64,14 +118,58 @@ void timer_handler_c(void) {
   }
 }
 
-void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
-  /* Sauvegarder les infos Multiboot */
-  g_mboot_magic = magic;
-  g_mboot_info = mboot_info;
+/**
+ * Halt and catch fire - called on unrecoverable errors.
+ */
+static void hcf(void) {
+    cli();
+    for (;;) {
+        __asm__ volatile("hlt");
+    }
+}
 
-  init_gdt();
-  init_idt();
-  syscall_init(); /* Initialiser les syscalls (INT 0x80) */
+/**
+ * Kernel main entry point - called by Limine.
+ * Limine has already set up:
+ * - Long mode (64-bit)
+ * - Paging with identity map + higher half
+ * - A valid stack
+ */
+void kmain(void) {
+  /* Verify Limine base revision */
+  if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)) {
+    hcf();
+  }
+  
+  /* Get Limine responses */
+  g_memmap = memmap_request.response;
+  g_hhdm = hhdm_request.response;
+  g_framebuffer = framebuffer_request.response;
+  
+  if (g_hhdm != NULL) {
+    g_hhdm_offset = g_hhdm->offset;
+  }
+
+  /* Initialize framebuffer console (preferred) or VGA text mode */
+  if (g_framebuffer != NULL && g_framebuffer->framebuffer_count > 0) {
+    struct limine_framebuffer *fb = g_framebuffer->framebuffers[0];
+    console_init_fb(fb);
+  } else {
+    /* Fallback to VGA text mode */
+    console_set_hhdm_offset(g_hhdm_offset);
+  }
+
+  /* Initialize GDT (64-bit) */
+  gdt_init();
+  
+  /* Initialize IDT (64-bit) */
+  idt_init();
+  
+  /* Initialize CPU features */
+  cpu_init();
+  
+  /* Initialize syscalls (INT 0x80 + SYSCALL instruction) */
+  syscall_init();
 
   /* Initialiser la console avec scrolling */
   console_init();
@@ -82,33 +180,38 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
   /* Initialiser le système de logs précoce (buffer mémoire) */
   klog_early_init();
 
-  /* Vérifier le magic number */
-  if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-    KLOG_ERROR("KERNEL", "Invalid Multiboot magic!");
-  } else {
-    KLOG_INFO_HEX("KERNEL", "Multiboot magic OK: ", magic);
-
-    /* Infos mémoire */
-    if (mboot_info->flags & MULTIBOOT_INFO_MEMORY) {
-      KLOG_INFO_DEC("KERNEL", "Memory Lower (KB): ", mboot_info->mem_lower);
-      KLOG_INFO_DEC("KERNEL", "Memory Upper (KB): ", mboot_info->mem_upper);
-
-      uint32_t total_mb =
-          (mboot_info->mem_lower + mboot_info->mem_upper + 1024) / 1024;
-      KLOG_INFO_DEC("KERNEL", "Total RAM (MB): ~", total_mb);
+  /* Log bootloader info */
+  if (bootloader_info_request.response != NULL) {
+    KLOG_INFO("KERNEL", "Booted by Limine");
+    klog(LOG_INFO, "KERNEL", bootloader_info_request.response->name);
+  }
+  
+  /* Log HHDM offset */
+  if (g_hhdm != NULL) {
+    KLOG_INFO_HEX("KERNEL", "HHDM offset: ", (uint32_t)(g_hhdm_offset >> 32));
+    KLOG_INFO_HEX("KERNEL", "HHDM offset (low): ", (uint32_t)g_hhdm_offset);
+  }
+  
+  /* Log memory map */
+  if (g_memmap != NULL) {
+    KLOG_INFO_DEC("KERNEL", "Memory map entries: ", (uint32_t)g_memmap->entry_count);
+    
+    uint64_t total_usable = 0;
+    for (uint64_t i = 0; i < g_memmap->entry_count; i++) {
+      struct limine_memmap_entry *entry = g_memmap->entries[i];
+      if (entry->type == LIMINE_MEMMAP_USABLE) {
+        total_usable += entry->length;
+      }
     }
-
-    /* Bootloader */
-    if (mboot_info->flags & MULTIBOOT_INFO_BOOT_LOADER) {
-      klog(LOG_INFO, "KERNEL", (const char *)mboot_info->boot_loader_name);
-    }
-
-    KLOG_INFO_HEX("KERNEL", "Flags: ", mboot_info->flags);
+    KLOG_INFO_DEC("KERNEL", "Total usable RAM (MB): ", (uint32_t)(total_usable / (1024 * 1024)));
+  }
 
     /* ============================================ */
     /* Initialisation du Timer (PIT + RTC)         */
     /* ============================================ */
+    KLOG_INFO("KERNEL", "Initializing timer...");
     timer_init(TIMER_FREQUENCY); /* 1000 Hz = 1ms par tick */
+    KLOG_INFO("KERNEL", "Timer initialized");
 
     /* Afficher la date/heure de boot */
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
@@ -120,7 +223,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
     /* ============================================ */
     /* Initialisation du PMM                       */
     /* ============================================ */
-    init_pmm(mboot_info);
+    init_pmm_limine(g_memmap, g_hhdm_offset);
 
     KLOG_INFO("PMM", "=== Physical Memory Manager ===");
     KLOG_INFO_DEC("PMM", "Free blocks: ", pmm_get_free_blocks());
@@ -296,11 +399,10 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
     console_puts(" * GitHub: https://github.com/geomtech/alos\n");
     console_puts(" * Type 'help' for a list of commands.\n");
     console_puts("\n");
-  }
 
-  console_refresh();
+    console_refresh();
 
-  asm volatile("sti");
+    __asm__ volatile("sti");
 
   /* ============================================ */
   /* Initialiser le User Mode Support (TSS)       */
@@ -323,7 +425,30 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
   shell_run();
 
   /* Ne devrait jamais arriver */
-  while (1) {
-    asm volatile("hlt");
-  }
+  hcf();
+}
+
+/* ============================================
+ * Helper functions for Limine integration
+ * ============================================ */
+
+/**
+ * Get the HHDM offset for physical to virtual address conversion.
+ */
+uint64_t get_hhdm_offset(void) {
+    return g_hhdm_offset;
+}
+
+/**
+ * Convert physical address to virtual address using HHDM.
+ */
+void* phys_to_virt(uint64_t phys) {
+    return (void*)(phys + g_hhdm_offset);
+}
+
+/**
+ * Convert virtual address to physical address.
+ */
+uint64_t virt_to_phys(void* virt) {
+    return (uint64_t)virt - g_hhdm_offset;
 }

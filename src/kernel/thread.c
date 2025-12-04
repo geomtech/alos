@@ -8,10 +8,11 @@
 #include "../mm/kheap.h"
 #include "../mm/vmm.h"
 #include "../include/string.h"
-#include "../arch/x86/tss.h"
+#include "../arch/x86_64/gdt.h"
+#include "../arch/x86_64/idt.h"
 
 /* Fonction ASM pour sauter vers un thread user (premier switch) */
-extern void jump_to_user(uint32_t esp, uint32_t cr3);
+extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
 
 /* ========================================
  * Variables globales
@@ -73,16 +74,16 @@ static inline void cpu_sti(void)
     __asm__ volatile("sti");
 }
 
-static inline uint32_t cpu_save_flags(void)
+static inline uint64_t cpu_save_flags(void)
 {
-    uint32_t flags;
-    __asm__ volatile("pushfl; popl %0" : "=r"(flags));
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
     return flags;
 }
 
-static inline void cpu_restore_flags(uint32_t flags)
+static inline void cpu_restore_flags(uint64_t flags)
 {
-    __asm__ volatile("pushl %0; popfl" : : "r"(flags) : "memory", "cc");
+    __asm__ volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
 /* ========================================
@@ -337,7 +338,7 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     
     thread->stack_base = stack;
     thread->stack_size = stack_size;
-    thread->esp0 = (uint32_t)stack + stack_size;
+    thread->rsp0 = (uint64_t)stack + stack_size;
     
     thread->entry = entry;
     thread->arg = arg;
@@ -398,16 +399,16 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
      *   [ESI]      <- popa (= 0)
      *   [EDI]      <- popa (= 0) <- ESP pointe ici
      */
-    uint32_t *stack_top = (uint32_t *)((uint32_t)stack + stack_size);
+    uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
     
     /* Simuler ce que le CPU push lors d'une interruption */
     *(--stack_top) = 0x202;                  /* EFLAGS: IF=1 (interrupts enabled) */
     *(--stack_top) = 0x08;                   /* CS: kernel code segment */
-    *(--stack_top) = (uint32_t)task_entry_point;  /* EIP: point d'entrée */
+    *(--stack_top) = (uint64_t)task_entry_point;  /* EIP: point d'entrée */
     
     /* Simuler pusha (ordre: EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI) */
-    *(--stack_top) = (uint32_t)entry;        /* EAX = adresse de la fonction */
-    *(--stack_top) = (uint32_t)arg;          /* ECX = argument */
+    *(--stack_top) = (uint64_t)entry;        /* EAX = adresse de la fonction */
+    *(--stack_top) = (uint64_t)arg;          /* ECX = argument */
     *(--stack_top) = 0;                      /* EDX */
     *(--stack_top) = 0;                      /* EBX */
     *(--stack_top) = 0;                      /* ESP (ignoré par popa) */
@@ -415,11 +416,11 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     *(--stack_top) = 0;                      /* ESI */
     *(--stack_top) = 0;                      /* EDI */
     
-    thread->esp = (uint32_t)stack_top;
+    thread->rsp = (uint64_t)stack_top;
     
     KLOG_INFO_DEC("THREAD", "Created thread TID: ", thread->tid);
-    KLOG_INFO_HEX("THREAD", "Stack: ", (uint32_t)stack);
-    KLOG_INFO_HEX("THREAD", "ESP: ", thread->esp);
+    KLOG_INFO_HEX("THREAD", "Stack: ", (uint64_t)stack);
+    KLOG_INFO_HEX("THREAD", "ESP: ", thread->rsp);
     
     /* Ajouter au scheduler */
     scheduler_enqueue(thread);
@@ -444,19 +445,19 @@ thread_t *thread_create_in_process(process_t *proc, const char *name,
 
 /**
  * Crée un thread user mode pour un processus.
- * Le thread démarrera en Ring 3 à l'adresse entry_point avec la stack user_esp.
+ * Le thread démarrera en Ring 3 à l'adresse entry_point avec la stack user_rsp.
  * 
  * @param proc        Processus propriétaire
  * @param name        Nom du thread
  * @param entry_point Point d'entrée en user mode (EIP)
- * @param user_esp    Stack pointer user mode (ESP)
+ * @param user_rsp    Stack pointer user mode (ESP)
  * @param kernel_stack Stack kernel pré-allouée (pour les syscalls)
  * @param kernel_stack_size Taille de la kernel stack
  * @return Thread créé, ou NULL si erreur
  */
 thread_t *thread_create_user(process_t *proc, const char *name,
-                             uint32_t entry_point, uint32_t user_esp,
-                             void *kernel_stack, uint32_t kernel_stack_size)
+                             uint64_t entry_point, uint64_t user_rsp,
+                             void *kernel_stack, uint64_t kernel_stack_size)
 {
     if (!proc || !kernel_stack) {
         KLOG_ERROR("THREAD", "thread_create_user: invalid parameters");
@@ -466,7 +467,7 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     KLOG_INFO("THREAD", "Creating user thread:");
     KLOG_INFO("THREAD", name ? name : "<unnamed>");
     KLOG_INFO_HEX("THREAD", "Entry point: ", entry_point);
-    KLOG_INFO_HEX("THREAD", "User ESP: ", user_esp);
+    KLOG_INFO_HEX("THREAD", "User ESP: ", user_rsp);
     
     /* Allouer la structure thread */
     thread_t *thread = (thread_t *)kmalloc(sizeof(thread_t));
@@ -495,7 +496,7 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     /* La stack du thread est la kernel stack (pour les syscalls) */
     thread->stack_base = kernel_stack;
     thread->stack_size = kernel_stack_size;
-    thread->esp0 = (uint32_t)kernel_stack + kernel_stack_size;
+    thread->rsp0 = (uint64_t)kernel_stack + kernel_stack_size;
     
     thread->entry = NULL;  /* Pas de fonction entry pour user threads */
     thread->arg = NULL;
@@ -558,11 +559,11 @@ thread_t *thread_create_user(process_t *proc, const char *name,
      * Et popa attend:
      *   [EAX] [ECX] [EDX] [EBX] [ESP_dummy] [EBP] [ESI] [EDI]
      */
-    uint32_t *kstack_top = (uint32_t *)((uint32_t)kernel_stack + kernel_stack_size);
+    uint64_t *kstack_top = (uint64_t *)((uint64_t)kernel_stack + kernel_stack_size);
     
     /* Frame pour IRET vers User Mode (Ring 3) */
     *(--kstack_top) = 0x23;           /* SS: User Data Segment (RPL=3) */
-    *(--kstack_top) = user_esp;       /* ESP: User stack pointer */
+    *(--kstack_top) = user_rsp;       /* ESP: User stack pointer */
     *(--kstack_top) = 0x202;          /* EFLAGS: IF=1 (interrupts enabled) */
     *(--kstack_top) = 0x1B;           /* CS: User Code Segment (RPL=3) */
     *(--kstack_top) = entry_point;    /* EIP: User entry point */
@@ -577,12 +578,12 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     *(--kstack_top) = 0;              /* ESI */
     *(--kstack_top) = 0;              /* EDI */
     
-    thread->esp = (uint32_t)kstack_top;
+    thread->rsp = (uint64_t)kstack_top;
     
     KLOG_INFO_DEC("THREAD", "Created user thread TID: ", thread->tid);
-    KLOG_INFO_HEX("THREAD", "Kernel stack: ", (uint32_t)kernel_stack);
-    KLOG_INFO_HEX("THREAD", "ESP (kernel): ", thread->esp);
-    KLOG_INFO_HEX("THREAD", "ESP0: ", thread->esp0);
+    KLOG_INFO_HEX("THREAD", "Kernel stack: ", (uint64_t)kernel_stack);
+    KLOG_INFO_HEX("THREAD", "ESP (kernel): ", thread->rsp);
+    KLOG_INFO_HEX("THREAD", "ESP0: ", thread->rsp0);
     
     /* DEBUG: Afficher les infos du thread user créé */
     console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
@@ -590,10 +591,10 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     console_put_dec(thread->tid);
     console_puts(" entry=0x");
     console_put_hex(entry_point);
-    console_puts(" user_esp=0x");
-    console_put_hex(user_esp);
+    console_puts(" user_rsp=0x");
+    console_put_hex(user_rsp);
     console_puts(" kstack_esp=0x");
-    console_put_hex(thread->esp);
+    console_put_hex(thread->rsp);
     console_puts("\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
@@ -941,8 +942,8 @@ void scheduler_init(void)
     main_thread->exit_status = 0;
     main_thread->stack_base = NULL;  /* Pas de stack allouée */
     main_thread->stack_size = 0;
-    main_thread->esp = 0;  /* Sera rempli lors du premier switch */
-    main_thread->esp0 = 0;
+    main_thread->rsp = 0;  /* Sera rempli lors du premier switch */
+    main_thread->rsp0 = 0;
     main_thread->entry = NULL;
     main_thread->arg = NULL;
     main_thread->base_priority = THREAD_PRIORITY_NORMAL;
@@ -1134,7 +1135,7 @@ static void scheduler_enqueue_nolock(thread_t *thread)
     }
 }
 
-uint32_t scheduler_preempt(interrupt_frame_t *frame)
+uint64_t scheduler_preempt(interrupt_frame_t *frame)
 {
     if (!g_scheduler_active || !g_current_thread) return 0;
     
@@ -1268,21 +1269,21 @@ uint32_t scheduler_preempt(interrupt_frame_t *frame)
     spinlock_unlock(&g_scheduler_lock);
     
     /* Mettre à jour le TSS pour le nouveau thread */
-    if (next->esp0 != 0) {
-        tss_set_kernel_stack(next->esp0);
+    if (next->rsp0 != 0) {
+        tss_set_rsp0(next->rsp0);
     }
     
     /* Sauvegarder l'ESP du thread préempté.
      * Le frame pointe vers les registres sauvegardés sur la stack.
      * On sauvegarde ce pointeur comme ESP du thread actuel.
      */
-    current->esp = (uint32_t)frame;
+    current->rsp = (uint64_t)frame;
     
     /* Retourner l'ESP du nouveau thread.
      * Le code ASM va faire: mov esp, eax ; popa ; iretd
      * donc on retourne l'ESP qui pointe vers un frame sauvegardé.
      */
-    return next->esp;
+    return next->rsp;
 }
 
 /* ========================================
@@ -1423,10 +1424,10 @@ static thread_t *scheduler_pick_next(void)
 }
 
 /* Fonction ASM de context switch (définie dans switch.s) */
-extern void switch_task(uint32_t *old_esp_ptr, uint32_t new_esp, uint32_t new_cr3);
+extern void switch_task(uint64_t *old_rsp_ptr, uint64_t new_rsp, uint64_t new_cr3);
 
 /* ESP dummy pour le premier switch */
-static uint32_t g_dummy_esp = 0;
+static uint64_t g_dummy_rsp = 0;
 
 void scheduler_schedule(void)
 {
@@ -1452,11 +1453,11 @@ void scheduler_schedule(void)
     if (current) {
         KLOG_INFO("SCHED", "  From:");
         KLOG_INFO("SCHED", current->name);
-        KLOG_INFO_HEX("SCHED", "  Old ESP: ", current->esp);
+        KLOG_INFO_HEX("SCHED", "  Old ESP: ", current->rsp);
     }
     KLOG_INFO("SCHED", "  To:");
     KLOG_INFO("SCHED", next->name);
-    KLOG_INFO_HEX("SCHED", "  New ESP: ", next->esp);
+    KLOG_INFO_HEX("SCHED", "  New ESP: ", next->rsp);
     */
 
     uint64_t now = timer_get_ticks();
@@ -1490,8 +1491,8 @@ void scheduler_schedule(void)
     g_current_thread = next;
     
     /* Mettre à jour le TSS */
-    if (next->esp0 != 0) {
-        tss_set_kernel_stack(next->esp0);
+    if (next->rsp0 != 0) {
+        tss_set_rsp0(next->rsp0);
     }
     
     /* Context switch !
@@ -1524,7 +1525,7 @@ void scheduler_schedule(void)
         console_puts(" TID=");
         console_put_dec(next->tid);
         console_puts(" ESP=0x");
-        console_put_hex(next->esp);
+        console_put_hex(next->rsp);
         console_puts(" CR3=0x");
         console_put_hex(new_cr3);
         console_puts("\n");
@@ -1533,10 +1534,10 @@ void scheduler_schedule(void)
     }
     
     if (current) {
-        switch_task(&current->esp, next->esp, new_cr3);
+        switch_task(&current->rsp, next->rsp, new_cr3);
     } else {
         /* Premier switch - utiliser un ESP dummy */
-        switch_task(&g_dummy_esp, next->esp, new_cr3);
+        switch_task(&g_dummy_rsp, next->rsp, new_cr3);
     }
     
     /* On revient ici quand ce thread est reschedulé */
@@ -1657,11 +1658,11 @@ static void reaper_thread_func(void *arg)
                 wait_queue_wake_all(&proc->wait_queue);
                 
                 /* Libérer le Page Directory si ce n'est pas le kernel directory */
-                if (proc->page_directory && 
-                    proc->page_directory != (uint32_t*)vmm_get_kernel_directory()) {
+                if (proc->pml4 && 
+                    proc->pml4 != (uint64_t*)vmm_get_kernel_directory()) {
                     KLOG_INFO("REAPER", "Freeing user page directory");
-                    vmm_free_directory((page_directory_t*)proc->page_directory);
-                    proc->page_directory = NULL;
+                    vmm_free_directory((page_directory_t*)proc->pml4);
+                    proc->pml4 = NULL;
                 }
                 
                 /* Libérer la kernel stack du processus */
