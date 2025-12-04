@@ -11,9 +11,11 @@
 #include "../../mm/kheap.h"
 
 /* ===========================================
- * Tableau des sockets TCP
+ * Tableau des sockets TCP (allocation dynamique)
  * =========================================== */
-static tcp_socket_t tcp_sockets[TCP_MAX_SOCKETS];
+static tcp_socket_t* tcp_sockets = NULL;
+static int tcp_socket_capacity = 0;  /* Nombre de slots alloués */
+static int tcp_socket_count = 0;     /* Nombre de sockets en utilisation */
 
 /* ===========================================
  * Fonctions utilitaires locales
@@ -132,8 +134,83 @@ static uint16_t tcp_checksum(uint8_t* src_ip, uint8_t* dest_ip,
 }
 
 /* ===========================================
- * Initialisation
+ * Initialisation et gestion dynamique
  * =========================================== */
+
+/**
+ * Initialise un socket à l'état par défaut.
+ */
+static void tcp_init_socket(tcp_socket_t* sock)
+{
+    sock->in_use = false;
+    sock->state = TCP_STATE_CLOSED;
+    sock->local_port = 0;
+    sock->remote_port = 0;
+    sock->seq = 0;
+    sock->ack = 0;
+    sock->window = 8192;  /* Fenêtre par défaut */
+    sock->flags = 0;
+    sock->recv_head = 0;
+    sock->recv_tail = 0;
+    sock->recv_count = 0;
+    for (int j = 0; j < 4; j++) {
+        sock->remote_ip[j] = 0;
+    }
+    condvar_init(&sock->state_changed);
+}
+
+/**
+ * Agrandit le tableau de sockets si nécessaire.
+ * Double la capacité jusqu'à TCP_MAX_SOCKETS.
+ * 
+ * @return true si succès, false si échec ou limite atteinte
+ */
+static bool tcp_grow_sockets(void)
+{
+    if (tcp_socket_capacity >= TCP_MAX_SOCKETS) {
+        KLOG_WARN("TCP", "Maximum socket limit reached");
+        return false;
+    }
+    
+    /* Calculer la nouvelle capacité (doubler) */
+    int new_capacity = tcp_socket_capacity * 2;
+    if (new_capacity > TCP_MAX_SOCKETS) {
+        new_capacity = TCP_MAX_SOCKETS;
+    }
+    if (new_capacity < TCP_INITIAL_SOCKETS) {
+        new_capacity = TCP_INITIAL_SOCKETS;
+    }
+    
+    /* Allouer le nouveau tableau */
+    tcp_socket_t* new_sockets = (tcp_socket_t*)kmalloc(new_capacity * sizeof(tcp_socket_t));
+    if (new_sockets == NULL) {
+        KLOG_ERROR("TCP", "Failed to allocate socket array");
+        return false;
+    }
+    
+    /* Copier les sockets existants */
+    if (tcp_sockets != NULL && tcp_socket_capacity > 0) {
+        for (int i = 0; i < tcp_socket_capacity; i++) {
+            new_sockets[i] = tcp_sockets[i];
+        }
+        /* Libérer l'ancien tableau */
+        kfree(tcp_sockets);
+    }
+    
+    /* Initialiser les nouveaux slots */
+    for (int i = tcp_socket_capacity; i < new_capacity; i++) {
+        tcp_init_socket(&new_sockets[i]);
+    }
+    
+    tcp_sockets = new_sockets;
+    int old_capacity = tcp_socket_capacity;
+    tcp_socket_capacity = new_capacity;
+    
+    KLOG_INFO_DEC("TCP", "Socket pool grown from ", old_capacity);
+    KLOG_INFO_DEC("TCP", "Socket pool grown to ", new_capacity);
+    
+    return true;
+}
 
 /**
  * Initialise la stack TCP.
@@ -142,26 +219,17 @@ void tcp_init(void)
 {
     KLOG_INFO("TCP", "Initializing TCP stack...");
     
-    /* Initialiser tous les sockets à CLOSED */
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
-        tcp_sockets[i].in_use = false;
-        tcp_sockets[i].state = TCP_STATE_CLOSED;
-        tcp_sockets[i].local_port = 0;
-        tcp_sockets[i].remote_port = 0;
-        tcp_sockets[i].seq = 0;
-        tcp_sockets[i].ack = 0;
-        tcp_sockets[i].window = 8192;  /* Fenêtre par défaut */
-        tcp_sockets[i].flags = 0;
-        tcp_sockets[i].recv_head = 0;
-        tcp_sockets[i].recv_tail = 0;
-        tcp_sockets[i].recv_count = 0;
-        for (int j = 0; j < 4; j++) {
-            tcp_sockets[i].remote_ip[j] = 0;
-        }
-        condvar_init(&tcp_sockets[i].state_changed);
+    /* Allocation initiale des sockets */
+    tcp_sockets = NULL;
+    tcp_socket_capacity = 0;
+    tcp_socket_count = 0;
+    
+    if (!tcp_grow_sockets()) {
+        KLOG_ERROR("TCP", "Failed to initialize socket pool!");
+        return;
     }
     
-    KLOG_INFO_DEC("TCP", "Sockets available: ", TCP_MAX_SOCKETS);
+    KLOG_INFO_DEC("TCP", "Initial sockets allocated: ", tcp_socket_capacity);
 }
 
 /* ===========================================
@@ -170,15 +238,31 @@ void tcp_init(void)
 
 /**
  * Trouve un slot de socket libre.
+ * Agrandit le tableau si nécessaire.
  */
 static tcp_socket_t* tcp_alloc_socket(void)
 {
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    /* Chercher un slot libre dans le tableau existant */
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (!tcp_sockets[i].in_use) {
             tcp_sockets[i].in_use = true;
+            tcp_socket_count++;
             return &tcp_sockets[i];
         }
     }
+    
+    /* Pas de slot libre - essayer d'agrandir le tableau */
+    if (tcp_grow_sockets()) {
+        /* Réessayer l'allocation après agrandissement */
+        for (int i = 0; i < tcp_socket_capacity; i++) {
+            if (!tcp_sockets[i].in_use) {
+                tcp_sockets[i].in_use = true;
+                tcp_socket_count++;
+                return &tcp_sockets[i];
+            }
+        }
+    }
+    
     return NULL;
 }
 
@@ -188,7 +272,7 @@ static tcp_socket_t* tcp_alloc_socket(void)
  */
 static tcp_socket_t* tcp_find_listening_socket(uint16_t port)
 {
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && 
             tcp_sockets[i].local_port == port &&
             tcp_sockets[i].state == TCP_STATE_LISTEN) {
@@ -205,7 +289,7 @@ static tcp_socket_t* tcp_find_listening_socket(uint16_t port)
  */
 tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
 {
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && 
             tcp_sockets[i].local_port == local_port &&
             tcp_sockets[i].state == TCP_STATE_ESTABLISHED) {
@@ -221,7 +305,7 @@ tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
  */
 static tcp_socket_t* tcp_find_socket_by_local_port(uint16_t port)
 {
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && tcp_sockets[i].local_port == port) {
             return &tcp_sockets[i];
         }
@@ -234,7 +318,7 @@ static tcp_socket_t* tcp_find_socket_by_local_port(uint16_t port)
  */
 static tcp_socket_t* tcp_find_socket(uint16_t local_port, uint8_t* remote_ip, uint16_t remote_port)
 {
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (!tcp_sockets[i].in_use) continue;
         
         if (tcp_sockets[i].local_port == local_port &&
@@ -325,6 +409,7 @@ void tcp_close(tcp_socket_t* sock)
     }
     sock->local_port = 0;  /* Libérer le port pour ce socket */
     sock->in_use = false;  /* Marquer comme libre */
+    tcp_socket_count--;    /* Décrémenter le compteur */
     
     /* Signal state change */
     condvar_broadcast(&sock->state_changed);
@@ -860,7 +945,7 @@ int tcp_bind(tcp_socket_t* sock, uint16_t port)
     }
     
     /* Vérifier si le port est déjà utilisé par un autre socket */
-    for (int i = 0; i < TCP_MAX_SOCKETS; i++) {
+    for (int i = 0; i < tcp_socket_capacity; i++) {
         if (tcp_sockets[i].in_use && 
             &tcp_sockets[i] != sock &&
             tcp_sockets[i].local_port == port) {
@@ -1016,4 +1101,24 @@ tcp_socket_t* tcp_find_connection(uint16_t local_port, uint8_t* remote_ip, uint1
     
     /* Sinon chercher un socket LISTEN sur ce port */
     return tcp_find_listening_socket(local_port);
+}
+
+/* ===========================================
+ * Fonctions d'information sur les sockets
+ * =========================================== */
+
+/**
+ * Retourne le nombre actuel de sockets alloués (capacité).
+ */
+int tcp_get_socket_count(void)
+{
+    return tcp_socket_capacity;
+}
+
+/**
+ * Retourne le nombre de sockets en cours d'utilisation.
+ */
+int tcp_get_active_socket_count(void)
+{
+    return tcp_socket_count;
 }

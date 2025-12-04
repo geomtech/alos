@@ -87,17 +87,12 @@ static void fd_table_init(void)
 static int fd_alloc(void)
 {
     fd_table_init();
-    
-    /* DEBUG: Vérifier l'accès à la table */
-    // console_puts("[DEBUG] fd_alloc: scanning table...\n");
-    
+
     /* Commencer à 3 (après stdin/stdout/stderr) */
     for (int i = 3; i < MAX_FD; i++) {
         if (fd_table[i].type == FILE_TYPE_NONE) {
             fd_table[i].ref_count = 1;
-            console_puts("[DEBUG] fd_alloc: found free fd ");
-            console_put_dec(i);
-            console_puts("\n");
+            KLOG_DEBUG_DEC("SYSCALL", "fd_alloc: found free fd ", i);
             return i;
         }
     }
@@ -569,12 +564,12 @@ static int sys_socket(int domain, int type, int protocol)
     
     /* Vérifier les paramètres */
     if (domain != AF_INET) {
-        console_puts("[SYSCALL] socket: unsupported domain\n");
+        KLOG_ERROR_DEC("SYSCALL", "sys_socket: unsupported domain ", domain);
         return -1;
     }
     
     if (type != SOCK_STREAM) {
-        console_puts("[SYSCALL] socket: only TCP (SOCK_STREAM) supported\n");
+        KLOG_ERROR_DEC("SYSCALL", "sys_socket: unsupported type ", type);
         return -1;
     }
     
@@ -584,7 +579,7 @@ static int sys_socket(int domain, int type, int protocol)
     net_unlock();
     
     if (sock == NULL) {
-        console_puts("[SYSCALL] socket: failed to create TCP socket\n");
+        KLOG_ERROR("SYSCALL", "sys_socket: failed to create TCP socket");
         return -1;
     }
     
@@ -592,29 +587,25 @@ static int sys_socket(int domain, int type, int protocol)
     int fd = fd_alloc();
     if (fd < 0) {
         tcp_close(sock);
-        console_puts("[SYSCALL] socket: no free file descriptors\n");
+        KLOG_ERROR("SYSCALL", "sys_socket: no free file descriptors");
         return -1;
     }
     
-    console_puts("[DEBUG] sys_socket: fd allocated, setting up table...\n");
+    KLOG_DEBUG("SYSCALL", "sys_socket: fd allocated, setting up table...");
     
     /* Associer le socket au FD */
     fd_table[fd].type = FILE_TYPE_SOCKET;
     fd_table[fd].flags = O_RDWR;
     fd_table[fd].socket = sock;
     
-    console_puts("[DEBUG] sys_socket: table entry set\n");
+    KLOG_DEBUG("SYSCALL", "sys_socket: table entry set");
     
     /* Sauvegarder globalement pour contourner le bug fd_table */
     g_server_socket = sock;
     g_server_fd = fd;
     g_server_closing = 0;  /* Reset du flag de fermeture */
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] socket: created fd ");
-    console_put_dec(fd);
-    console_puts(" (global socket saved)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_DEBUG_DEC("SYSCALL", "sys_socket: created fd (global socket saved) ", fd);
     
     return fd;
 }
@@ -639,44 +630,33 @@ static int sys_bind(int fd, sockaddr_in_t* addr, int len)
     
     /* Vérifier le FD */
     if (fd < 0 || fd >= MAX_FD) {
-        console_puts("[SYSCALL] bind: invalid fd\n");
+        KLOG_ERROR_DEC("SYSCALL", "sys_bind: invalid fd ", fd);
         return -1;
     }
     
-    console_puts("[SYSCALL] bind: fd_table[fd].type = ");
-    console_put_dec(fd_table[fd].type);
-    console_puts("\n");
+    KLOG_DEBUG_DEC("SYSCALL", "sys_bind: fd_table[fd].type = ", fd_table[fd].type);
     
     if (fd_table[fd].type != FILE_TYPE_SOCKET) {
-        console_puts("[SYSCALL] bind: not a socket\n");
+        KLOG_ERROR("SYSCALL", "sys_bind: not a socket");
         return -1;
     }
     
     tcp_socket_t* sock = fd_table[fd].socket;
     if (sock == NULL) {
-        console_puts("[SYSCALL] bind: socket is NULL\n");
+        KLOG_ERROR("SYSCALL", "sys_bind: socket is NULL");
         return -1;
     }
     
     /* Vérifier que addr est valide */
     if (addr == NULL) {
-        console_puts("[SYSCALL] bind: addr is NULL\n");
+        KLOG_ERROR("SYSCALL", "sys_bind: addr is NULL");
         return -1;
     }
     
     /* Extraire le port (attention: network byte order) */
     uint16_t port = ntohs(addr->sin_port);
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] bind: fd ");
-    console_put_dec(fd);
-    console_puts(" to port ");
-    console_put_dec(port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_DEBUG_DEC("SYSCALL", "sys_bind: binding to port ", port);
     
     net_lock();
     int result = tcp_bind(sock, port);
@@ -705,7 +685,7 @@ static int sys_listen(int fd, int backlog)
     }
     
     if (fd_table[fd].type != FILE_TYPE_SOCKET) {
-        console_puts("[SYSCALL] listen: not a socket\n");
+        KLOG_ERROR("SYSCALL", "sys_listen: not a socket");
         return -1;
     }
     
@@ -716,7 +696,7 @@ static int sys_listen(int fd, int backlog)
     
     /* Vérifier que le socket est bindé */
     if (sock->local_port == 0) {
-        console_puts("[SYSCALL] listen: socket not bound\n");
+        KLOG_ERROR("SYSCALL", "sys_listen: socket not bound");
         return -1;
     }
     
@@ -725,13 +705,7 @@ static int sys_listen(int fd, int backlog)
     sock->state = TCP_STATE_LISTEN;
     net_unlock();
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] listen: fd ");
-    console_put_dec(fd);
-    console_puts(" listening on port ");
-    console_put_dec(sock->local_port);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_DEBUG_DEC("SYSCALL", "sys_listen: listening on port ", sock->local_port);
     
     return 0;
 }
@@ -774,7 +748,7 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     /* Allouer un nouveau FD pour le socket client */
     int client_fd = fd_alloc();
     if (client_fd < 0) {
-        console_puts("[SYSCALL] accept: no free fd\n");
+        KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
         net_lock();
         tcp_close(client_sock);
         net_unlock();
@@ -796,11 +770,7 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
                          ((uint32_t)client_sock->remote_ip[3] << 24);
     }
     
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] accept: new client fd ");
-    console_put_dec(client_fd);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_DEBUG_DEC("SYSCALL", "sys_accept: new client fd ", client_fd);
     
     /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
     return client_fd;
@@ -941,12 +911,6 @@ void syscall_dispatcher(syscall_regs_t* regs)
     int result = -1;
     
     /* DEBUG: Afficher le syscall reçu */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SYSCALL] #");
-    console_put_dec(syscall_num);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
     KLOG_INFO("SYSCALL", "=== Syscall Dispatcher ===");
     KLOG_INFO_HEX("SYSCALL", "Syscall number (EAX): ", syscall_num);
     KLOG_INFO_HEX("SYSCALL", "Arg1 (EBX): ", regs->ebx);
@@ -1049,11 +1013,6 @@ void syscall_dispatcher(syscall_regs_t* regs)
             
         default:
             KLOG_ERROR("SYSCALL", "Unknown syscall number!");
-            console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-            console_puts("[SYSCALL] Unknown syscall: ");
-            console_put_dec(syscall_num);
-            console_puts("\n");
-            console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
             result = -1;
             break;
     }

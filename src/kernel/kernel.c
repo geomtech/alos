@@ -243,16 +243,14 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
           if (netif != NULL) {
             if (use_dhcp) {
               /* === Configuration IP via DHCP === */
-              KLOG_INFO("NET", "Starting DHCP configuration...");
+              KLOG_INFO("DHCP", "Starting DHCP configuration...");
 
               /* Initialiser et démarrer DHCP */
               dhcp_init(netif);
               dhcp_discover(netif);
 
               /* Attendre la configuration DHCP (polling avec timeout) */
-              console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-              console_puts("[NET] Waiting for DHCP response...\n");
-              console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+              KLOG_INFO("DHCP", "Waiting for DHCP response...\n");
 
               for (int i = 0; i < 200 && !dhcp_is_bound(netif); i++) {
                 /* Polling explicite pour être robuste si les IRQ échouent */
@@ -267,9 +265,9 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
                 asm volatile("hlt");
               }
               if (dhcp_is_bound(netif)) {
-                KLOG_INFO("NET", "DHCP configuration complete!");
+                KLOG_INFO("DHCP", "DHCP configuration complete!");
               } else {
-                KLOG_WARN("NET", "DHCP configuration timed out");
+                KLOG_WARN("DHCP", "DHCP configuration timed out");
               }
             } else {
               KLOG_INFO("NET", "Using static IP configuration");
@@ -282,11 +280,6 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
 
             /* === Initialisation TCP === */
             tcp_init();
-
-            /* Ouvrir le port 80 (HTTP) en écoute */
-            if (tcp_listen(TCP_PORT_HTTP) != NULL) {
-              KLOG_INFO("TCP", "HTTP server listening on port 80");
-            }
           }
         }
       }
@@ -324,7 +317,7 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
 
   /* Exécuter le script de démarrage si présent */
   if (config_run_startup_script() == 0) {
-    console_puts("\n"); /* Ligne vide après le script */
+    KLOG_INFO("STARTUP", "Startup script executed successfully");
   }
 
   shell_run();

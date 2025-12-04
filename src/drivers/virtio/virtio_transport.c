@@ -1067,52 +1067,45 @@ void virtio_dump_info(VirtioDevice *dev) {
     if (dev == NULL) {
         return;
     }
-    
-    console_puts("\n=== VirtIO Device ===\n");
-    console_puts("Transport: ");
+    KLOG_INFO("VIRTIO", "=== VirtIO Device ===");
     switch (dev->transport_type) {
         case VIRTIO_TRANSPORT_PCI_LEGACY:
             if (dev->transport.pci.use_mmio) {
-                console_puts("PCI MMIO\n");
-                console_puts("  MMIO Base: 0x");
-                console_put_hex((uint32_t)(uintptr_t)dev->transport.pci.mmio_base);
-                console_puts("\n  MMIO Phys: 0x");
-                console_put_hex(dev->transport.pci.mmio_phys);
-                console_puts("\n");
+                KLOG_INFO("VIRTIO", "  Transport: PCI MMIO");
+                KLOG_INFO_HEX("VIRTIO", "    MMIO Base: ", (uint32_t)(uintptr_t)dev->transport.pci.mmio_base);
+                KLOG_INFO_HEX("VIRTIO", "    MMIO Phys: ", dev->transport.pci.mmio_phys);
             } else {
-                console_puts("PCI PIO\n");
-                console_puts("  I/O Base: 0x");
-                console_put_hex(dev->transport.pci.io_base);
-                console_puts("\n");
+                KLOG_INFO("VIRTIO", "  Transport: PCI PIO");
+                KLOG_INFO_HEX("VIRTIO", "    I/O Base: ", dev->transport.pci.io_base);
             }
             break;
         case VIRTIO_TRANSPORT_MMIO:
-            console_puts("MMIO Native\n");
-            console_puts("  Phys addr: 0x");
-            console_put_hex(dev->transport.mmio.phys_addr);
-            console_puts("\n  Version: ");
-            console_put_dec(dev->transport.mmio.version);
-            console_puts("\n");
+            KLOG_INFO("VIRTIO", "  Transport: MMIO Native");
+            KLOG_INFO_HEX("VIRTIO", "    Phys addr: ", dev->transport.mmio.phys_addr);
+            KLOG_INFO_HEX("VIRTIO", "    Version: ", dev->transport.mmio.version);
             break;
         default:
-            console_puts("Unknown\n");
+            KLOG_INFO("VIRTIO", "  Transport: Unknown");
+            break;
     }
-    
-    console_puts("Device ID: ");
-    console_put_dec(dev->device_id);
+
     switch (dev->device_id) {
-        case VIRTIO_DEVICE_NET:     console_puts(" (network)\n"); break;
-        case VIRTIO_DEVICE_BLOCK:   console_puts(" (block)\n"); break;
-        case VIRTIO_DEVICE_CONSOLE: console_puts(" (console)\n"); break;
-        default:                    console_puts(" (unknown)\n"); break;
+        case VIRTIO_DEVICE_NET:
+            KLOG_INFO_HEX("VIRTIO", "  Device ID: (network) ", dev->device_id);
+            break;
+        case VIRTIO_DEVICE_BLOCK:
+            KLOG_INFO_HEX("VIRTIO", "  Device ID: (block) ", dev->device_id);
+            break;
+        case VIRTIO_DEVICE_CONSOLE:
+            KLOG_INFO_HEX("VIRTIO", "  Device ID: (console) ", dev->device_id);
+            break;
+        default:
+            KLOG_INFO_HEX("VIRTIO", "  Device ID: (unknown) ", dev->device_id);
+            break;
     }
-    
-    console_puts("Vendor ID: 0x");
-    console_put_hex(dev->vendor_id);
-    console_puts("\nIRQ: ");
-    console_put_dec(dev->irq);
-    console_puts("\nStatus: 0x");
-    console_put_hex(dev->ops->get_status(dev));
-    console_puts("\nInitialized: ");
-    console_puts(dev->initialized ? "yes\n" : "no\n");
+
+    KLOG_INFO_HEX("VIRTIO", "  Vendor ID: ", dev->vendor_id);
+    KLOG_INFO_HEX("VIRTIO", "  IRQ: ", dev->irq);
+    KLOG_INFO_HEX("VIRTIO", "  Status: ", dev->ops->get_status(dev));
+    KLOG_INFO("VIRTIO", dev->initialized ? "  Initialized: yes" : "  Initialized: no");
 }

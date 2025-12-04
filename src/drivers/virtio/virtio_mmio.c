@@ -395,39 +395,27 @@ void virtio_mmio_dump_info(VirtioMmioDevice *dev)
     if (dev == NULL) {
         return;
     }
-    
-    console_puts("\n=== VirtIO MMIO Device ===\n");
-    console_puts("Physical addr: 0x");
-    console_put_hex(dev->phys_addr);
-    console_puts("\nVirtual addr:  0x");
-    console_put_hex((uint32_t)(uintptr_t)dev->base);
-    console_puts("\nVersion:       ");
-    console_put_dec(dev->version);
-    console_puts(dev->version == 2 ? " (modern)\n" : " (legacy)\n");
-    console_puts("Device ID:     ");
-    console_put_dec(dev->device_id);
-    
+    KLOG_INFO("VIRTIO_MMIO", "=== VirtIO MMIO Device ===");
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Physical addr: ", dev->phys_addr);
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Virtual addr:  ", (uint32_t)(uintptr_t)dev->base);
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Version:       ", dev->version);
+    KLOG_INFO("VIRTIO_MMIO", dev->version == 2 ? "    Type: modern" : "    Type: legacy");
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Device ID:     ", dev->device_id);
+
     switch (dev->device_id) {
-        case VIRTIO_DEVICE_ID_NET:     console_puts(" (network)\n"); break;
-        case VIRTIO_DEVICE_ID_BLOCK:   console_puts(" (block)\n"); break;
-        case VIRTIO_DEVICE_ID_CONSOLE: console_puts(" (console)\n"); break;
-        case VIRTIO_DEVICE_ID_ENTROPY: console_puts(" (entropy)\n"); break;
-        default:                       console_puts(" (unknown)\n"); break;
+        case VIRTIO_DEVICE_ID_NET:     KLOG_INFO("VIRTIO_MMIO", "    Device type: network");  break;
+        case VIRTIO_DEVICE_ID_BLOCK:   KLOG_INFO("VIRTIO_MMIO", "    Device type: block");    break;
+        case VIRTIO_DEVICE_ID_CONSOLE: KLOG_INFO("VIRTIO_MMIO", "    Device type: console");  break;
+        case VIRTIO_DEVICE_ID_ENTROPY: KLOG_INFO("VIRTIO_MMIO", "    Device type: entropy");  break;
+        default:                       KLOG_INFO("VIRTIO_MMIO", "    Device type: unknown");  break;
     }
-    
-    console_puts("Vendor ID:     0x");
-    console_put_hex(dev->vendor_id);
-    console_puts("\nIRQ:           ");
-    console_put_dec(dev->irq);
-    console_puts("\nStatus:        0x");
-    console_put_hex(virtio_mmio_get_status(dev));
-    console_puts("\nInitialized:   ");
-    console_puts(dev->initialized ? "yes\n" : "no\n");
-    
-    /* Afficher les features */
+
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Vendor ID:     ", dev->vendor_id);
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  IRQ:           ", dev->irq);
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Status:        ", virtio_mmio_get_status(dev));
+    KLOG_INFO("VIRTIO_MMIO", dev->initialized ? "  Initialized:   yes" : "  Initialized:   no");
+
     uint64_t features = virtio_mmio_get_device_features(dev);
-    console_puts("Features:      0x");
-    console_put_hex((uint32_t)(features >> 32));
-    console_put_hex((uint32_t)(features & 0xFFFFFFFF));
-    console_puts("\n");
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Features (high): ", (uint32_t)(features >> 32));
+    KLOG_INFO_HEX("VIRTIO_MMIO", "  Features (low):  ", (uint32_t)(features & 0xFFFFFFFF));
 }

@@ -10,8 +10,9 @@
 /* TCP Header Size (without options) */
 #define TCP_HEADER_SIZE     20
 
-/* Maximum number of TCP sockets */
-#define TCP_MAX_SOCKETS     16
+/* Initial and maximum number of TCP sockets */
+#define TCP_INITIAL_SOCKETS 8
+#define TCP_MAX_SOCKETS     256
 
 /* Receive buffer size per socket */
 #define TCP_RECV_BUFFER_SIZE    4096
@@ -262,5 +263,15 @@ tcp_socket_t* tcp_accept(tcp_socket_t* listen_sock);
  * @return Socket client prêt, ou NULL si aucun
  */
 tcp_socket_t* tcp_find_ready_client(uint16_t local_port);
+
+/**
+ * Retourne le nombre actuel de sockets alloués.
+ */
+int tcp_get_socket_count(void);
+
+/**
+ * Retourne le nombre de sockets en cours d'utilisation.
+ */
+int tcp_get_active_socket_count(void);
 
 #endif /* NET_TCP_H */

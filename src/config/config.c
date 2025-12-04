@@ -609,12 +609,6 @@ int config_run_script(const char* path)
     
     buffer[bytes] = '\0';
     
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("[SCRIPT] Running: ");
-    console_puts(path);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    
     /* Parser et exécuter chaque ligne */
     char line[CONFIG_LINE_MAX];
     char* argv[16];
@@ -651,12 +645,6 @@ int config_run_script(const char* path)
             line_start = i + 1;
         }
     }
-    
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[SCRIPT] Finished (");
-    console_put_dec(line_count);
-    console_puts(" commands)\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     
     return 0;
 }
