@@ -1,8 +1,9 @@
-lux-os/
-limine/
-iso_root/
+/lux-os/
+/limine/
+/iso_root/
 /alos.bin
 /alos.elf
 /alos.iso
 *.o
 *.pcap
+alos.elf
