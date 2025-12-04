@@ -11,7 +11,7 @@
  * ======================================== */
 
 /* Taille maximale du cache ARP */
-#define ARP_CACHE_SIZE  16
+#define ARP_CACHE_SIZE  1024
 
 /* Entrée du cache ARP */
 typedef struct {
@@ -81,7 +81,7 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
             arp_cache[i].valid = true;
             arp_cache_count++;
             
-            KLOG_INFO("ARP", "Cache entry added");
+            KLOG_DEBUG_DEC("ARP", "Cache entry added: ", i); 
             return;
         }
     }
@@ -90,7 +90,7 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
     arp_ip_copy(arp_cache[0].ip, ip);
     mac_copy(arp_cache[0].mac, mac);
     arp_cache[0].valid = true;
-    
+
     KLOG_WARN("ARP", "Cache full, replaced entry 0");
 }
 
