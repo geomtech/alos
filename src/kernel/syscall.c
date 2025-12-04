@@ -729,19 +729,24 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
     tcp_socket_t* client_sock = NULL;
     
     /* Attendre qu'un socket client soit prêt (ESTABLISHED).
-     * On utilise un sleep court au lieu de thread_yield() pur pour éviter
-     * de monopoliser le CPU et permettre aux IRQ de traiter les paquets.
+     * On utilise une condition variable pour bloquer efficacement
+     * jusqu'à ce que tcp_handle_packet() signale une nouvelle connexion.
      * 
-     * Note: Les interruptions DOIVENT être activées pendant le sleep
+     * Note: Les interruptions DOIVENT être activées pendant l'attente
      * pour que l'IRQ réseau puisse traiter le handshake TCP.
      */
     KLOG_DEBUG("SYSCALL", "sys_accept: waiting for connection...");
     
+    /* Acquérir le mutex avant de vérifier/attendre */
+    mutex_lock(&listen_sock->accept_mutex);
+    
     while ((client_sock = tcp_find_ready_client(port)) == NULL) {
-        /* Sleep 10ms pour permettre aux IRQ de s'exécuter.
-         * thread_sleep_ms réactive les interruptions via RFLAGS. */
-        thread_sleep_ms(10);
+        /* Attendre sur la condition variable - libère le mutex et bloque.
+         * Sera réveillé par tcp_handle_packet() quand un client passe à ESTABLISHED. */
+        condvar_wait(&listen_sock->accept_cv, &listen_sock->accept_mutex);
     }
+    
+    mutex_unlock(&listen_sock->accept_mutex);
     
     KLOG_DEBUG("SYSCALL", "sys_accept: connection ready!");
     

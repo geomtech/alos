@@ -157,6 +157,8 @@ static void tcp_init_socket(tcp_socket_t* sock)
         sock->remote_ip[j] = 0;
     }
     condvar_init(&sock->state_changed);
+    condvar_init(&sock->accept_cv);
+    mutex_init(&sock->accept_mutex, MUTEX_TYPE_NORMAL);
 }
 
 /**
@@ -711,8 +713,14 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     
                     KLOG_INFO("TCP", "Connection ESTABLISHED");
                     
-                    /* Signal connection established */
+                    /* Signal connection established on client socket */
                     condvar_broadcast(&sock->state_changed);
+                    
+                    /* Signal the LISTEN socket that a new client is ready */
+                    tcp_socket_t* listen_sock = tcp_find_listening_socket(sock->local_port);
+                    if (listen_sock != NULL) {
+                        condvar_broadcast(&listen_sock->accept_cv);
+                    }
                     
                     /* Si le paquet ACK contient aussi des données (PSH+ACK), les traiter */
                     if (len > header_len) {
@@ -749,6 +757,12 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                         
                         sock->state = TCP_STATE_ESTABLISHED;
                         condvar_broadcast(&sock->state_changed);
+                        
+                        /* Signal the LISTEN socket that a new client is ready */
+                        tcp_socket_t* listen_sock2 = tcp_find_listening_socket(sock->local_port);
+                        if (listen_sock2 != NULL) {
+                            condvar_broadcast(&listen_sock2->accept_cv);
+                        }
                     }
                 }
             }

@@ -121,12 +121,19 @@ static void clear_debug_registers(void) {
 static uint32_t schedule_counter = 0;
 #define SCHEDULE_INTERVAL 2 /* Scheduler toutes les 2 ticks (~20ms à 100Hz) */
 
+/* Déclaration externe pour réveiller les threads en sleep */
+extern void scheduler_wake_sleeping(void);
+
 void timer_handler_c(void) {
   /* Incrémenter le compteur de ticks */
   timer_tick();
 
   /* Envoyer EOI au PIC (AVANT le schedule pour éviter les problèmes) */
   outb(0x20, 0x20);
+
+  /* CRITIQUE: Réveiller les threads dont le sleep est terminé.
+   * Sans cela, les threads bloqués dans thread_sleep_ms() ne se réveillent jamais! */
+  scheduler_wake_sleeping();
 
   /* Appeler le scheduler périodiquement */
   schedule_counter++;
