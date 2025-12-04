@@ -1,4 +1,16 @@
-/* src/drivers/net/pcnet.h - AMD PCnet-PCI II (Am79C970A) Driver */
+/* src/drivers/net/pcnet.h - AMD PCnet-PCI II (Am79C970A) Driver
+ *
+ * Ce driver supporte deux modes d'accès aux registres:
+ * - PIO (Port I/O) : Mode legacy via instructions IN/OUT
+ * - MMIO (Memory-Mapped I/O) : Mode moderne via accès mémoire
+ *
+ * Le mode MMIO est préféré car il offre de meilleures performances
+ * et utilise n'importe quel registre général (pas limité à EAX).
+ *
+ * La sélection du mode se fait automatiquement selon les BARs PCI:
+ * - BAR0 bit 0 = 1 : PIO
+ * - BAR1 bit 0 = 0 : MMIO (si disponible)
+ */
 #ifndef PCNET_H
 #define PCNET_H
 
@@ -7,7 +19,7 @@
 #include <stdint.h>
 
 /* ============================================ */
-/*           Registres I/O (Mode DWIO 32-bit)   */
+/*           Registres I/O (Mode WIO 16-bit)    */
 /* ============================================ */
 
 /* Offsets depuis BAR0 en mode WIO (16-bit) - QEMU utilise ce mode */
@@ -17,6 +29,18 @@
 #define PCNET_RAP 0x12    /* Register Address Port (sélection CSR/BCR) */
 #define PCNET_RESET 0x14  /* Reset Register (lecture = reset) */
 #define PCNET_BDP 0x16    /* Bus Configuration Register Data Port */
+
+/* ============================================ */
+/*           Registres MMIO (Mode DWIO 32-bit)  */
+/* ============================================ */
+
+/* Offsets depuis BAR1 en mode DWIO (32-bit) pour MMIO */
+#define PCNET_MMIO_APROM0  0x00  /* EEPROM/MAC Address bytes 0-3 */
+#define PCNET_MMIO_APROM4  0x04  /* EEPROM/MAC Address bytes 4-5 */
+#define PCNET_MMIO_RDP     0x10  /* Register Data Port (32-bit) */
+#define PCNET_MMIO_RAP     0x14  /* Register Address Port (32-bit) */
+#define PCNET_MMIO_RESET   0x18  /* Reset Register */
+#define PCNET_MMIO_BDP     0x1C  /* Bus Configuration Register Data Port */
 
 /* ============================================ */
 /*           Control and Status Registers (CSR) */
@@ -157,9 +181,22 @@ typedef struct __attribute__((packed)) {
 /*           Driver State Structure             */
 /* ============================================ */
 
+/* Mode d'accès aux registres */
+typedef enum {
+  PCNET_ACCESS_PIO,   /* Port I/O (legacy) */
+  PCNET_ACCESS_MMIO   /* Memory-Mapped I/O (moderne) */
+} pcnet_access_mode_t;
+
 typedef struct {
   PCIDevice *pci_dev;  /* PCI device info */
-  uint32_t io_base;    /* I/O Base Address (from BAR0) */
+  
+  /* Mode d'accès et adresses */
+  pcnet_access_mode_t access_mode;  /* PIO ou MMIO */
+  uint32_t io_base;                 /* I/O Base Address (from BAR0) pour PIO */
+  volatile void *mmio_base;         /* MMIO Base Address (from BAR1) mappé */
+  uint32_t mmio_phys;               /* Adresse physique MMIO */
+  uint32_t mmio_size;               /* Taille de la région MMIO */
+  
   uint8_t mac_addr[6]; /* MAC Address */
 
   /* DMA Buffers (physiquement contigus) */
@@ -257,5 +294,21 @@ PCNetDevice *pcnet_get_device(void);
  * @param buf Buffer de 6 octets pour recevoir l'adresse MAC
  */
 void pcnet_get_mac(uint8_t *buf);
+
+/**
+ * Vérifie si le driver utilise le mode MMIO.
+ *
+ * @param dev Le périphérique PCnet
+ * @return true si MMIO, false si PIO
+ */
+bool pcnet_is_mmio(PCNetDevice *dev);
+
+/**
+ * Force le mode d'accès (pour tests/debug).
+ * Doit être appelé avant pcnet_init().
+ *
+ * @param mode Mode d'accès souhaité
+ */
+void pcnet_force_access_mode(pcnet_access_mode_t mode);
 
 #endif /* PCNET_H */

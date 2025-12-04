@@ -1,4 +1,11 @@
-/* src/drivers/net/virtio_net.h - Virtio Network Driver (Legacy) */
+/* src/drivers/net/virtio_net.h - Virtio Network Driver (Legacy)
+ *
+ * Ce driver supporte deux modes d'accès aux registres:
+ * - PIO (Port I/O) : Mode legacy via instructions IN/OUT
+ * - MMIO (Memory-Mapped I/O) : Mode moderne via accès mémoire
+ *
+ * Le mode MMIO est préféré pour de meilleures performances.
+ */
 #ifndef VIRTIO_NET_H
 #define VIRTIO_NET_H
 
@@ -137,9 +144,22 @@ typedef struct {
   void **buffers; /* Array of pointers to buffers associated with descriptors */
 } VirtioQueue;
 
+/* Mode d'accès aux registres */
+typedef enum {
+  VIRTIO_ACCESS_PIO,   /* Port I/O (legacy) */
+  VIRTIO_ACCESS_MMIO   /* Memory-Mapped I/O (moderne) */
+} virtio_access_mode_t;
+
 typedef struct {
   PCIDevice *pci_dev;
-  uint32_t io_base;
+  
+  /* Mode d'accès et adresses */
+  virtio_access_mode_t access_mode;  /* PIO ou MMIO */
+  uint32_t io_base;                  /* I/O Base Address pour PIO */
+  volatile void *mmio_base;          /* MMIO Base Address mappé */
+  uint32_t mmio_phys;                /* Adresse physique MMIO */
+  uint32_t mmio_size;                /* Taille de la région MMIO */
+  
   uint8_t mac_addr[6];
   uint8_t irq;
 
@@ -189,5 +209,15 @@ VirtIONetDevice *virtio_net_get_device(void);
  * Ne pas appeler depuis une ISR (n'envoie pas d'EOI).
  */
 void virtio_net_poll(void);
+
+/**
+ * Vérifie si le driver utilise le mode MMIO.
+ */
+bool virtio_net_is_mmio(VirtIONetDevice *dev);
+
+/**
+ * Force le mode d'accès (pour tests/debug).
+ */
+void virtio_net_force_access_mode(virtio_access_mode_t mode);
 
 #endif /* VIRTIO_NET_H */

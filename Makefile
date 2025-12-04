@@ -46,6 +46,10 @@ ARCH_OBJ = src/arch/x86/boot.o src/arch/x86/gdt.o src/arch/x86/idt.o src/arch/x8
 KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c
 KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o
 
+# MMIO subsystem
+MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
+MMIO_OBJ = src/kernel/mmio/mmio.o src/kernel/mmio/pci_mmio.o
+
 # Memory management
 MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
 MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
@@ -84,7 +88,7 @@ CONFIG_SRC = src/config/config.c
 CONFIG_OBJ = src/config/config.o
 
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ)
 
 # Cible finale
 alos.bin: $(OBJ)
@@ -152,9 +156,13 @@ src/shell/%.o: src/shell/%.c
 src/config/%.o: src/config/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# MMIO subsystem
+src/kernel/mmio/%.o: src/kernel/mmio/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage
 clean:
-	rm -f src/arch/x86/*.o src/kernel/*.o src/mm/*.o
+	rm -f src/arch/x86/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
 	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o

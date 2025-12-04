@@ -8,6 +8,7 @@
 #include "../drivers/ata.h"
 #include "../drivers/net/pcnet.h"
 #include "../drivers/pci.h"
+#include "mmio/mmio.h"
 #include "../fs/ext2.h"
 #include "../fs/vfs.h"
 #include "../include/multiboot.h"
@@ -145,6 +146,11 @@ void kernel_main(uint32_t magic, multiboot_info_t *mboot_info) {
       /* Virtual Memory Manager (Paging)              */
       /* ============================================ */
       vmm_init();
+
+      /* ============================================ */
+      /* MMIO Subsystem                               */
+      /* ============================================ */
+      mmio_init();
 
       /* ============================================ */
       /* PCI Bus Enumeration                          */

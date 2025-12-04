@@ -1,7 +1,14 @@
-/* src/drivers/net/virtio_net.c - Virtio Network Driver (Legacy) */
+/* src/drivers/net/virtio_net.c - Virtio Network Driver (Legacy)
+ *
+ * Ce driver supporte deux modes d'accès:
+ * - PIO (Port I/O) : Mode legacy, toujours disponible
+ * - MMIO (Memory-Mapped I/O) : Mode moderne, utilisé si BAR MMIO disponible
+ */
 #include "virtio_net.h"
 #include "../../arch/x86/idt.h"
 #include "../../arch/x86/io.h"
+#include "../../kernel/mmio/mmio.h"
+#include "../../kernel/mmio/pci_mmio.h"
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
@@ -11,35 +18,132 @@
 static VirtIONetDevice *g_virtio_dev = NULL;
 static NetInterface *g_virtio_netif = NULL;
 
+/* Mode d'accès forcé (-1 = auto, 0 = PIO, 1 = MMIO) */
+static int g_virtio_forced_access_mode = -1;
+
 /* ============================================ */
-/*           Helper Functions                   */
+/*           Fonctions PIO (Port I/O)           */
+/* ============================================ */
+
+static uint8_t virtio_read8_pio(VirtIONetDevice *dev, uint16_t offset) {
+  return inb(dev->io_base + offset);
+}
+
+static void virtio_write8_pio(VirtIONetDevice *dev, uint16_t offset,
+                              uint8_t value) {
+  outb(dev->io_base + offset, value);
+}
+
+static uint16_t virtio_read16_pio(VirtIONetDevice *dev, uint16_t offset) {
+  return inw(dev->io_base + offset);
+}
+
+static void virtio_write16_pio(VirtIONetDevice *dev, uint16_t offset,
+                               uint16_t value) {
+  outw(dev->io_base + offset, value);
+}
+
+static uint32_t virtio_read32_pio(VirtIONetDevice *dev, uint16_t offset) {
+  return inl(dev->io_base + offset);
+}
+
+static void virtio_write32_pio(VirtIONetDevice *dev, uint16_t offset,
+                               uint32_t value) {
+  outl(dev->io_base + offset, value);
+}
+
+/* ============================================ */
+/*           Fonctions MMIO                     */
+/* ============================================ */
+
+static uint8_t virtio_read8_mmio(VirtIONetDevice *dev, uint16_t offset) {
+  return mmio_read8(MMIO_REG(dev->mmio_base, offset));
+}
+
+static void virtio_write8_mmio(VirtIONetDevice *dev, uint16_t offset,
+                               uint8_t value) {
+  mmio_write8(MMIO_REG(dev->mmio_base, offset), value);
+  mmiowb();
+}
+
+static uint16_t virtio_read16_mmio(VirtIONetDevice *dev, uint16_t offset) {
+  return mmio_read16(MMIO_REG(dev->mmio_base, offset));
+}
+
+static void virtio_write16_mmio(VirtIONetDevice *dev, uint16_t offset,
+                                uint16_t value) {
+  mmio_write16(MMIO_REG(dev->mmio_base, offset), value);
+  mmiowb();
+}
+
+static uint32_t virtio_read32_mmio(VirtIONetDevice *dev, uint16_t offset) {
+  return mmio_read32(MMIO_REG(dev->mmio_base, offset));
+}
+
+static void virtio_write32_mmio(VirtIONetDevice *dev, uint16_t offset,
+                                uint32_t value) {
+  mmio_write32(MMIO_REG(dev->mmio_base, offset), value);
+  mmiowb();
+}
+
+/* ============================================ */
+/*           Fonctions de dispatch              */
 /* ============================================ */
 
 static uint8_t virtio_read8(VirtIONetDevice *dev, uint16_t offset) {
-  return inb(dev->io_base + offset);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    return virtio_read8_mmio(dev, offset);
+  }
+  return virtio_read8_pio(dev, offset);
 }
 
 static void virtio_write8(VirtIONetDevice *dev, uint16_t offset,
                           uint8_t value) {
-  outb(dev->io_base + offset, value);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    virtio_write8_mmio(dev, offset, value);
+  } else {
+    virtio_write8_pio(dev, offset, value);
+  }
 }
 
 static uint16_t virtio_read16(VirtIONetDevice *dev, uint16_t offset) {
-  return inw(dev->io_base + offset);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    return virtio_read16_mmio(dev, offset);
+  }
+  return virtio_read16_pio(dev, offset);
 }
 
 static void virtio_write16(VirtIONetDevice *dev, uint16_t offset,
                            uint16_t value) {
-  outw(dev->io_base + offset, value);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    virtio_write16_mmio(dev, offset, value);
+  } else {
+    virtio_write16_pio(dev, offset, value);
+  }
 }
 
 static uint32_t virtio_read32(VirtIONetDevice *dev, uint16_t offset) {
-  return inl(dev->io_base + offset);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    return virtio_read32_mmio(dev, offset);
+  }
+  return virtio_read32_pio(dev, offset);
 }
 
 static void virtio_write32(VirtIONetDevice *dev, uint16_t offset,
                            uint32_t value) {
-  outl(dev->io_base + offset, value);
+  if (dev->access_mode == VIRTIO_ACCESS_MMIO && dev->mmio_base != NULL) {
+    virtio_write32_mmio(dev, offset, value);
+  } else {
+    virtio_write32_pio(dev, offset, value);
+  }
+}
+
+bool virtio_net_is_mmio(VirtIONetDevice *dev) {
+  return dev != NULL && dev->access_mode == VIRTIO_ACCESS_MMIO;
+}
+
+void virtio_net_force_access_mode(virtio_access_mode_t mode) {
+  g_virtio_forced_access_mode = (int)mode;
 }
 
 /* ============================================ */
@@ -339,12 +443,95 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
   if (dev == NULL)
     return NULL;
 
+  /* Initialiser la structure */
   dev->pci_dev = pci_dev;
   dev->io_base = pci_dev->bar0 & 0xFFFFFFFC;
+  dev->mmio_base = NULL;
+  dev->mmio_phys = 0;
+  dev->mmio_size = 0;
+  dev->access_mode = VIRTIO_ACCESS_PIO; /* Par défaut PIO */
   dev->initialized = false;
   dev->packets_rx = 0;
   dev->packets_tx = 0;
   dev->errors = 0;
+
+  /* ============================================ */
+  /* Détection et configuration du mode d'accès  */
+  /* ============================================ */
+  
+  pci_device_bars_t bars;
+  if (pci_parse_bars(pci_dev, &bars) == 0) {
+    net_puts("[Virtio] Analyzing PCI BARs...\n");
+    
+    pci_bar_info_t *mmio_bar = pci_find_mmio_bar(&bars);
+    pci_bar_info_t *pio_bar = pci_find_pio_bar(&bars);
+    
+    if (pio_bar != NULL) {
+      net_puts("[Virtio] PIO BAR");
+      net_put_dec(pio_bar->bar_index);
+      net_puts(": 0x");
+      net_put_hex(pio_bar->base_addr);
+      net_puts("\n");
+    }
+    
+    if (mmio_bar != NULL) {
+      net_puts("[Virtio] MMIO BAR");
+      net_put_dec(mmio_bar->bar_index);
+      net_puts(": 0x");
+      net_put_hex(mmio_bar->base_addr);
+      net_puts(" (");
+      net_put_dec(mmio_bar->size);
+      net_puts(" bytes)\n");
+    }
+    
+    /* Sélectionner le mode d'accès
+     * 
+     * NOTE: VirtIO Legacy PCI utilise un layout de registres spécifique
+     * qui est différent du transport VirtIO MMIO standard.
+     * Le BAR MMIO de VirtIO PCI Legacy a le MÊME layout que le BAR PIO,
+     * donc on peut utiliser MMIO mais avec les mêmes offsets.
+     * 
+     * CEPENDANT, QEMU émule VirtIO PCI Legacy avec des registres qui
+     * fonctionnent mieux en PIO. On garde PIO par défaut pour la stabilité.
+     */
+    bool use_mmio = false;
+    
+    if (g_virtio_forced_access_mode == 0) {
+      use_mmio = false;
+      net_puts("[Virtio] Access mode: PIO (forced)\n");
+    } else if (g_virtio_forced_access_mode == 1 && mmio_bar != NULL) {
+      use_mmio = true;
+      net_puts("[Virtio] Access mode: MMIO (forced)\n");
+    } else {
+      /* Par défaut, utiliser PIO pour VirtIO Legacy car plus stable */
+      use_mmio = false;
+      net_puts("[Virtio] Access mode: PIO (default for VirtIO Legacy)\n");
+    }
+    
+    if (use_mmio && mmio_bar != NULL) {
+      dev->mmio_phys = mmio_bar->base_addr;
+      dev->mmio_size = mmio_bar->size;
+      dev->mmio_base = pci_map_bar(mmio_bar);
+      
+      if (dev->mmio_base != NULL) {
+        dev->access_mode = VIRTIO_ACCESS_MMIO;
+        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        net_puts("[Virtio] MMIO mapped at virtual: 0x");
+        net_put_hex((uint32_t)(uintptr_t)dev->mmio_base);
+        net_puts("\n");
+        net_reset_color();
+      } else {
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[Virtio] WARNING: Failed to map MMIO, falling back to PIO\n");
+        net_reset_color();
+        dev->access_mode = VIRTIO_ACCESS_PIO;
+      }
+    }
+  }
+
+  net_puts("[Virtio] I/O Base (PIO): 0x");
+  net_put_hex(dev->io_base);
+  net_puts("\n");
 
   /* Enable Bus Mastering */
   pci_enable_bus_mastering(pci_dev);

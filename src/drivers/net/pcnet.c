@@ -1,7 +1,17 @@
-/* src/drivers/net/pcnet.c - AMD PCnet-PCI II (Am79C970A) Driver */
+/* src/drivers/net/pcnet.c - AMD PCnet-PCI II (Am79C970A) Driver
+ *
+ * Ce driver supporte deux modes d'accès:
+ * - PIO (Port I/O) : Mode legacy, toujours disponible
+ * - MMIO (Memory-Mapped I/O) : Mode moderne, utilisé si BAR1 est MMIO
+ *
+ * Le mode MMIO offre de meilleures performances car il peut utiliser
+ * n'importe quel registre général et bénéficie du pipelining CPU.
+ */
 #include "pcnet.h"
 #include "../../arch/x86/idt.h"
 #include "../../arch/x86/io.h"
+#include "../../kernel/mmio/mmio.h"
+#include "../../kernel/mmio/pci_mmio.h"
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
@@ -14,89 +24,195 @@ static PCNetDevice *g_pcnet_dev = NULL;
 /* NetInterface pour la nouvelle API */
 static NetInterface *g_pcnet_netif = NULL;
 
-/* ============================================ */
-/*           PCI Helper Functions               */
-/* ============================================ */
+/* Mode d'accès forcé (-1 = auto, 0 = PIO, 1 = MMIO) */
+static int g_forced_access_mode = -1;
 
 /* ============================================ */
-/*           PCI Helper Functions               */
+/*           Fonctions d'accès aux registres     */
 /* ============================================ */
 
 /* pci_enable_bus_mastering moved to pci.c */
 
 /* ============================================ */
-/*           Low-Level I/O Functions            */
+/*           Fonctions PIO (Port I/O)           */
 /* ============================================ */
 
 /**
- * Réinitialise la carte PCnet et active le mode DWIO (32-bit).
+ * Reset via PIO (mode WIO 16-bit).
  */
-static void pcnet_reset(PCNetDevice *dev) {
-  /*
-   * Reset en mode WIO (16-bit).
-   * Une lecture du registre RESET déclenche un software reset.
-   */
+static void pcnet_reset_pio(PCNetDevice *dev) {
   inw(dev->io_base + PCNET_RESET);
-
-  /* Pause pour laisser le reset se faire */
   for (volatile int i = 0; i < 100000; i++)
     ;
 }
 
-uint32_t pcnet_read_csr(PCNetDevice *dev, uint32_t csr_no) {
-  /* Désactiver les interruptions pour protéger l'accès RAP/RDP */
+/**
+ * Lit un CSR via PIO.
+ */
+static uint32_t pcnet_read_csr_pio(PCNetDevice *dev, uint32_t csr_no) {
   asm volatile("cli");
-
-  /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
   outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
-  /* Lire la valeur depuis RDP (16-bit WIO) */
   uint32_t value = inw(dev->io_base + PCNET_RDP);
-
-  /* Réactiver les interruptions */
   asm volatile("sti");
-
   return value;
+}
+
+/**
+ * Écrit un CSR via PIO.
+ */
+static void pcnet_write_csr_pio(PCNetDevice *dev, uint32_t csr_no, uint32_t value) {
+  asm volatile("cli");
+  outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
+  outw(dev->io_base + PCNET_RDP, (uint16_t)value);
+  asm volatile("sti");
+}
+
+/**
+ * Lit un BCR via PIO.
+ */
+static uint32_t pcnet_read_bcr_pio(PCNetDevice *dev, uint32_t bcr_no) {
+  asm volatile("cli");
+  outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
+  uint32_t value = inw(dev->io_base + PCNET_BDP);
+  asm volatile("sti");
+  return value;
+}
+
+/**
+ * Écrit un BCR via PIO.
+ */
+static void pcnet_write_bcr_pio(PCNetDevice *dev, uint32_t bcr_no, uint32_t value) {
+  asm volatile("cli");
+  outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
+  outw(dev->io_base + PCNET_BDP, (uint16_t)value);
+  asm volatile("sti");
+}
+
+/* ============================================ */
+/*           Fonctions MMIO                     */
+/* ============================================ */
+
+/**
+ * Reset via MMIO (mode DWIO 32-bit).
+ */
+static void pcnet_reset_mmio(PCNetDevice *dev) {
+  /* Une lecture du registre RESET déclenche un software reset */
+  mmio_read32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RESET));
+  /* Barrier pour s'assurer que le reset est effectué */
+  mmio_mb();
+  for (volatile int i = 0; i < 100000; i++)
+    ;
+}
+
+/**
+ * Lit un CSR via MMIO.
+ * Utilise le mode DWIO 32-bit pour de meilleures performances.
+ */
+static uint32_t pcnet_read_csr_mmio(PCNetDevice *dev, uint32_t csr_no) {
+  asm volatile("cli");
+  /* Écrire le numéro du CSR dans RAP (32-bit) */
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RAP), csr_no);
+  /* Barrier pour garantir l'ordre */
+  mmio_wmb();
+  /* Lire la valeur depuis RDP (32-bit) */
+  uint32_t value = mmio_read32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RDP));
+  asm volatile("sti");
+  return value;
+}
+
+/**
+ * Écrit un CSR via MMIO.
+ */
+static void pcnet_write_csr_mmio(PCNetDevice *dev, uint32_t csr_no, uint32_t value) {
+  asm volatile("cli");
+  /* Écrire le numéro du CSR dans RAP */
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RAP), csr_no);
+  mmio_wmb();
+  /* Écrire la valeur dans RDP */
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RDP), value);
+  /* Barrier pour garantir que l'écriture est visible */
+  mmiowb();
+  asm volatile("sti");
+}
+
+/**
+ * Lit un BCR via MMIO.
+ */
+static uint32_t pcnet_read_bcr_mmio(PCNetDevice *dev, uint32_t bcr_no) {
+  asm volatile("cli");
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RAP), bcr_no);
+  mmio_wmb();
+  uint32_t value = mmio_read32(MMIO_REG(dev->mmio_base, PCNET_MMIO_BDP));
+  asm volatile("sti");
+  return value;
+}
+
+/**
+ * Écrit un BCR via MMIO.
+ */
+static void pcnet_write_bcr_mmio(PCNetDevice *dev, uint32_t bcr_no, uint32_t value) {
+  asm volatile("cli");
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_RAP), bcr_no);
+  mmio_wmb();
+  mmio_write32(MMIO_REG(dev->mmio_base, PCNET_MMIO_BDP), value);
+  mmiowb();
+  asm volatile("sti");
+}
+
+/* ============================================ */
+/*           Fonctions publiques (dispatch)     */
+/* ============================================ */
+
+/**
+ * Réinitialise la carte PCnet.
+ * Sélectionne automatiquement PIO ou MMIO selon le mode configuré.
+ */
+static void pcnet_reset(PCNetDevice *dev) {
+  if (dev->access_mode == PCNET_ACCESS_MMIO && dev->mmio_base != NULL) {
+    pcnet_reset_mmio(dev);
+  } else {
+    pcnet_reset_pio(dev);
+  }
+}
+
+uint32_t pcnet_read_csr(PCNetDevice *dev, uint32_t csr_no) {
+  if (dev->access_mode == PCNET_ACCESS_MMIO && dev->mmio_base != NULL) {
+    return pcnet_read_csr_mmio(dev, csr_no);
+  } else {
+    return pcnet_read_csr_pio(dev, csr_no);
+  }
 }
 
 void pcnet_write_csr(PCNetDevice *dev, uint32_t csr_no, uint32_t value) {
-  /* Désactiver les interruptions pour protéger l'accès RAP/RDP */
-  asm volatile("cli");
-
-  /* Écrire le numéro du CSR dans RAP (16-bit WIO) */
-  outw(dev->io_base + PCNET_RAP, (uint16_t)csr_no);
-  /* Écrire la valeur dans RDP (16-bit WIO) */
-  outw(dev->io_base + PCNET_RDP, (uint16_t)value);
-
-  /* Réactiver les interruptions */
-  asm volatile("sti");
+  if (dev->access_mode == PCNET_ACCESS_MMIO && dev->mmio_base != NULL) {
+    pcnet_write_csr_mmio(dev, csr_no, value);
+  } else {
+    pcnet_write_csr_pio(dev, csr_no, value);
+  }
 }
 
 uint32_t pcnet_read_bcr(PCNetDevice *dev, uint32_t bcr_no) {
-  /* Désactiver les interruptions pour protéger l'accès RAP/BDP */
-  asm volatile("cli");
-
-  /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
-  outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
-  /* Lire la valeur depuis BDP (16-bit WIO) */
-  uint32_t value = inw(dev->io_base + PCNET_BDP);
-
-  /* Réactiver les interruptions */
-  asm volatile("sti");
-
-  return value;
+  if (dev->access_mode == PCNET_ACCESS_MMIO && dev->mmio_base != NULL) {
+    return pcnet_read_bcr_mmio(dev, bcr_no);
+  } else {
+    return pcnet_read_bcr_pio(dev, bcr_no);
+  }
 }
 
 void pcnet_write_bcr(PCNetDevice *dev, uint32_t bcr_no, uint32_t value) {
-  /* Désactiver les interruptions pour protéger l'accès RAP/BDP */
-  asm volatile("cli");
+  if (dev->access_mode == PCNET_ACCESS_MMIO && dev->mmio_base != NULL) {
+    pcnet_write_bcr_mmio(dev, bcr_no, value);
+  } else {
+    pcnet_write_bcr_pio(dev, bcr_no, value);
+  }
+}
 
-  /* Écrire le numéro du BCR dans RAP (16-bit WIO) */
-  outw(dev->io_base + PCNET_RAP, (uint16_t)bcr_no);
-  /* Écrire la valeur dans BDP (16-bit WIO) */
-  outw(dev->io_base + PCNET_BDP, (uint16_t)value);
+bool pcnet_is_mmio(PCNetDevice *dev) {
+  return dev != NULL && dev->access_mode == PCNET_ACCESS_MMIO;
+}
 
-  /* Réactiver les interruptions */
-  asm volatile("sti");
+void pcnet_force_access_mode(pcnet_access_mode_t mode) {
+  g_forced_access_mode = (int)mode;
 }
 
 /* ============================================ */
@@ -373,6 +489,10 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
   /* Initialiser la structure */
   dev->pci_dev = pci_dev;
   dev->io_base = pci_dev->bar0 & 0xFFFFFFFC; /* Masquer les bits de type */
+  dev->mmio_base = NULL;
+  dev->mmio_phys = 0;
+  dev->mmio_size = 0;
+  dev->access_mode = PCNET_ACCESS_PIO; /* Par défaut PIO */
   dev->initialized = false;
   dev->packets_rx = 0;
   dev->packets_tx = 0;
@@ -385,7 +505,84 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
   dev->rx_buffers = NULL;
   dev->tx_buffers = NULL;
 
-  net_puts("[PCnet] I/O Base: ");
+  /* ============================================ */
+  /* Détection et configuration du mode d'accès  */
+  /* ============================================ */
+  
+  /* Parser les BARs PCI pour détecter MMIO */
+  pci_device_bars_t bars;
+  if (pci_parse_bars(pci_dev, &bars) == 0) {
+    net_puts("[PCnet] Analyzing PCI BARs...\n");
+    
+    /* Chercher un BAR MMIO (généralement BAR1 pour PCnet) */
+    pci_bar_info_t *mmio_bar = pci_find_mmio_bar(&bars);
+    pci_bar_info_t *pio_bar = pci_find_pio_bar(&bars);
+    
+    /* Afficher les BARs détectés */
+    if (pio_bar != NULL) {
+      net_puts("[PCnet] PIO BAR");
+      net_put_dec(pio_bar->bar_index);
+      net_puts(": 0x");
+      net_put_hex(pio_bar->base_addr);
+      net_puts(" (");
+      net_put_dec(pio_bar->size);
+      net_puts(" bytes)\n");
+    }
+    
+    if (mmio_bar != NULL) {
+      net_puts("[PCnet] MMIO BAR");
+      net_put_dec(mmio_bar->bar_index);
+      net_puts(": 0x");
+      net_put_hex(mmio_bar->base_addr);
+      net_puts(" (");
+      net_put_dec(mmio_bar->size);
+      net_puts(" bytes)\n");
+    }
+    
+    /* Sélectionner le mode d'accès */
+    bool use_mmio = false;
+    
+    if (g_forced_access_mode == 0) {
+      /* Mode PIO forcé */
+      use_mmio = false;
+      net_puts("[PCnet] Access mode: PIO (forced)\n");
+    } else if (g_forced_access_mode == 1 && mmio_bar != NULL) {
+      /* Mode MMIO forcé */
+      use_mmio = true;
+      net_puts("[PCnet] Access mode: MMIO (forced)\n");
+    } else if (mmio_bar != NULL && mmio_bar->size >= 32) {
+      /* MMIO disponible et suffisamment grand - l'utiliser */
+      use_mmio = true;
+      net_puts("[PCnet] Access mode: MMIO (auto-detected)\n");
+    } else {
+      /* Fallback sur PIO */
+      use_mmio = false;
+      net_puts("[PCnet] Access mode: PIO (fallback)\n");
+    }
+    
+    if (use_mmio && mmio_bar != NULL) {
+      /* Mapper la région MMIO */
+      dev->mmio_phys = mmio_bar->base_addr;
+      dev->mmio_size = mmio_bar->size;
+      dev->mmio_base = pci_map_bar(mmio_bar);
+      
+      if (dev->mmio_base != NULL) {
+        dev->access_mode = PCNET_ACCESS_MMIO;
+        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        net_puts("[PCnet] MMIO mapped at virtual: 0x");
+        net_put_hex((uint32_t)(uintptr_t)dev->mmio_base);
+        net_puts("\n");
+        net_reset_color();
+      } else {
+        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        net_puts("[PCnet] WARNING: Failed to map MMIO, falling back to PIO\n");
+        net_reset_color();
+        dev->access_mode = PCNET_ACCESS_PIO;
+      }
+    }
+  }
+
+  net_puts("[PCnet] I/O Base (PIO): 0x");
   net_put_hex(dev->io_base);
   net_puts("\n");
 
