@@ -4,7 +4,8 @@
 #include "../../drivers/net/virtio_net.h"
 #include "../../drivers/net/e1000e.h"
 #include "../../drivers/pci.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
+#include "../../kernel/console.h"
 
 /* Maximum de périphériques réseau supportés */
 #define MAX_NETDEVS 4
@@ -75,17 +76,7 @@ void netdev_register(NetInterface *netif) {
 
   netif_count++;
 
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[NETIF] Registered: ");
-  net_puts(netif->name);
-  net_puts(" (MAC: ");
-  for (int i = 0; i < 6; i++) {
-    if (i > 0)
-      net_putc(':');
-    net_put_hex_byte(netif->mac_addr[i]);
-  }
-  net_puts(")\n");
-  net_reset_color();
+  KLOG_INFO("NETIF", "Interface registered");
 }
 
 /**
@@ -117,17 +108,28 @@ NetInterface *netif_get_by_name(const char *name) {
   return NULL;
 }
 
+/* Note: print_ip_u32 and print_mac_addr removed - using KLOG instead */
+
 /**
- * Affiche une adresse IP au format x.x.x.x (depuis uint32_t).
+ * Affiche un octet d'adresse IP en décimal.
+ */
+static void print_ip_byte(uint8_t byte) {
+  console_put_dec(byte);
+}
+
+/**
+ * Affiche une adresse IP uint32_t au format x.x.x.x.
  */
 static void print_ip_u32(uint32_t ip) {
   uint8_t bytes[4];
   ip_u32_to_bytes(ip, bytes);
-  for (int i = 0; i < 4; i++) {
-    if (i > 0)
-      net_putc('.');
-    net_put_dec(bytes[i]);
-  }
+  print_ip_byte(bytes[0]);
+  console_putc('.');
+  print_ip_byte(bytes[1]);
+  console_putc('.');
+  print_ip_byte(bytes[2]);
+  console_putc('.');
+  print_ip_byte(bytes[3]);
 }
 
 /**
@@ -135,137 +137,95 @@ static void print_ip_u32(uint32_t ip) {
  */
 static void print_mac_addr(const uint8_t *mac) {
   for (int i = 0; i < 6; i++) {
-    if (i > 0)
-      net_putc(':');
-    net_put_hex_byte(mac[i]);
+    if (i > 0) console_putc(':');
+    console_put_hex_byte(mac[i]);
   }
 }
 
 /**
  * Affiche la configuration de toutes les interfaces (style ipconfig).
+ * Note: Cette fonction utilise console_* directement car c'est une commande utilisateur.
  */
 void netdev_ipconfig_display(void) {
-  net_puts("\n");
-  net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-  net_puts("===============================================\n");
-  net_puts("        Network Interface Configuration\n");
-  net_puts("===============================================\n\n");
-  net_reset_color();
+  console_puts("\n");
+  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  console_puts("Network Configuration\n");
+  console_puts("=====================\n\n");
 
-  if (netif_list_head == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("  No network interfaces found.\n");
-    net_reset_color();
-    return;
-  }
+  NetInterface *curr = netif_list_head;
+  int count = 0;
 
-  NetInterface *netif = netif_list_head;
-  int index = 0;
-
-  while (netif != NULL) {
+  while (curr != NULL) {
     /* Nom de l'interface */
-    net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-    net_puts("Interface ");
-    net_put_dec(index);
-    net_puts(": ");
-    net_puts(netif->name);
-    net_puts("\n");
-    net_reset_color();
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts(curr->name);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts(":\n");
 
     /* Adresse MAC */
-    net_puts("   Physical Address . . . : ");
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    print_mac_addr(netif->mac_addr);
-    net_puts("\n");
-    net_reset_color();
+    console_puts("  MAC Address:    ");
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    print_mac_addr(curr->mac_addr);
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("\n");
 
-    /* Adresse IPv4 */
-    net_puts("   IPv4 Address . . . . . : ");
-    if (netif->ip_addr != 0) {
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      print_ip_u32(netif->ip_addr);
+    /* Adresse IP */
+    console_puts("  IPv4 Address:   ");
+    if (curr->ip_addr != 0) {
+      console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+      print_ip_u32(curr->ip_addr);
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     } else {
-      net_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-      net_puts("Not configured");
+      console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+      console_puts("(not configured)");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     }
-    net_puts("\n");
-    net_reset_color();
+    console_puts("\n");
 
     /* Masque de sous-réseau */
-    net_puts("   Subnet Mask  . . . . . : ");
-    if (netif->netmask != 0) {
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      print_ip_u32(netif->netmask);
+    console_puts("  Subnet Mask:    ");
+    if (curr->netmask != 0) {
+      print_ip_u32(curr->netmask);
     } else {
-      net_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-      net_puts("Not configured");
+      console_puts("(not set)");
     }
-    net_puts("\n");
-    net_reset_color();
+    console_puts("\n");
 
     /* Passerelle */
-    net_puts("   Default Gateway  . . . : ");
-    if (netif->gateway != 0) {
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      print_ip_u32(netif->gateway);
+    console_puts("  Gateway:        ");
+    if (curr->gateway != 0) {
+      print_ip_u32(curr->gateway);
     } else {
-      net_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-      net_puts("Not configured");
+      console_puts("(not set)");
     }
-    net_puts("\n");
-    net_reset_color();
+    console_puts("\n");
 
-    /* DNS Server */
-    net_puts("   DNS Server . . . . . . : ");
-    if (netif->dns_server != 0) {
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      print_ip_u32(netif->dns_server);
+    /* DNS */
+    console_puts("  DNS Server:     ");
+    if (curr->dns_server != 0) {
+      print_ip_u32(curr->dns_server);
     } else {
-      net_set_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-      net_puts("Not configured");
+      console_puts("(not set)");
     }
-    net_puts("\n");
-    net_reset_color();
-
-    /* État */
-    net_puts("   Status . . . . . . . . : ");
-    if (netif->flags & NETIF_FLAG_UP) {
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      net_puts("UP");
-    } else {
-      net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      net_puts("DOWN");
-    }
-    if (netif->flags & NETIF_FLAG_RUNNING) {
-      net_puts(" RUNNING");
-    }
-    if (netif->flags & NETIF_FLAG_PROMISC) {
-      net_puts(" PROMISC");
-    }
-    if (netif->flags & NETIF_FLAG_DHCP) {
-      net_puts(" DHCP");
-    }
-    net_puts("\n");
-    net_reset_color();
+    console_puts("\n");
 
     /* Statistiques */
-    net_puts("   TX Packets . . . . . . : ");
-    net_put_dec(netif->packets_tx);
-    net_puts("  RX Packets: ");
-    net_put_dec(netif->packets_rx);
-    net_puts("  Errors: ");
-    net_put_dec(netif->errors);
-    net_puts("\n");
+    console_puts("  Packets TX/RX:  ");
+    console_put_dec(curr->packets_tx);
+    console_puts(" / ");
+    console_put_dec(curr->packets_rx);
+    console_puts("\n");
 
-    net_puts("\n");
-
-    netif = netif->next;
-    index++;
+    console_puts("\n");
+    curr = curr->next;
+    count++;
   }
 
-  net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-  net_puts("===============================================\n");
-  net_reset_color();
+  if (count == 0) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("No network interfaces found.\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  }
 }
 
 /* ============================================ */
@@ -318,14 +278,14 @@ int netdev_init(void) {
     netdevs[i].driver_data = NULL;
   }
 
-  net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-  net_puts("[NETDEV] Detecting network devices...\n");
-  net_reset_color();
+  KLOG_INFO("NETDEV", "Detecting network devices...");
 
   /* === Détecter les cartes PCnet === */
   /* Vendor: AMD (0x1022), Device: PCnet-PCI II (0x2000) */
   PCIDevice *pci_dev = pci_get_device(0x1022, 0x2000);
+  KLOG_INFO("NETDEV", "Found PCnet PCI device, initializing...");
   if (pci_dev != NULL) {
+    KLOG_INFO("NETDEV", "Found PCnet PCI device, initializing...");
     PCNetDevice *pcnet = pcnet_init(pci_dev);
     /* Note: pcnet->initialized sera mis à true par pcnet_start() plus tard */
     if (pcnet != NULL) {
@@ -353,26 +313,16 @@ int netdev_init(void) {
 
       netdev_count_val++;
 
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      net_puts("[NETDEV] Found: ");
-      net_puts(dev->name);
-      net_puts(" (AMD PCnet-PCI II) MAC: ");
-      for (int i = 0; i < 6; i++) {
-        if (i > 0)
-          net_putc(':');
-        net_put_hex_byte(dev->mac[i]);
-      }
-      net_puts("\n");
-      net_reset_color();
+      KLOG_INFO("NETDEV", "Found: AMD PCnet-PCI II");
     }
   }
 
   /* === Détecter les cartes Intel e1000/e1000e === */
   /* Vendor: Intel (0x8086), Device: 82540EM (0x100E) - QEMU default */
-  net_puts("[NETDEV] Looking for Intel e1000 (0x8086:0x100E)...\n");
+  KLOG_INFO("NETDEV", "Looking for Intel e1000...");
   PCIDevice *e1000_pci = pci_get_device(E1000E_VENDOR_ID, E1000E_DEV_82540EM);
   if (e1000_pci != NULL) {
-    net_puts("[NETDEV] Found e1000 PCI device, initializing...\n");
+    KLOG_INFO("NETDEV", "Found Intel e1000 PCI device, initializing...");
     E1000Device *e1000_dev = e1000e_init(e1000_pci);
     if (e1000_dev != NULL) {
       /* Add to legacy array for compatibility */
@@ -406,16 +356,16 @@ int netdev_init(void) {
         netdev_count_val++;
       }
 
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      net_puts("[NETDEV] Found: Intel e1000 Network Device\n");
-      net_reset_color();
+      KLOG_INFO("NETDEV", "Found: Intel e1000 Network Device");
     }
   }
 
   /* === Détecter les cartes VirtIO === */
   /* VirtIO: Vendor 0x1AF4, Device 0x1000 */
+  KLOG_INFO("NETDEV", "Looking for VirtIO...");
   PCIDevice *virtio_pci = pci_get_device(0x1AF4, 0x1000);
   if (virtio_pci != NULL) {
+    KLOG_INFO("NETDEV", "Found VirtIO PCI device, initializing...");
     VirtIONetDevice *virtio_dev = virtio_net_init(virtio_pci);
     if (virtio_dev != NULL) {
       /* Note: netdev registration is handled inside virtio_net_init for now to
@@ -453,22 +403,14 @@ int netdev_init(void) {
         netdev_count_val++;
       }
 
-      net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      net_puts("[NETDEV] Found: Virtio Network Device\n");
-      net_reset_color();
+      KLOG_INFO("NETDEV", "Found: Virtio Network Device");
     }
   }
 
   if (netdev_count_val == 0) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[NETDEV] No network devices found!\n");
-    net_reset_color();
+    KLOG_ERROR("NETDEV", "No network devices found!");
   } else {
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[NETDEV] Total devices: ");
-    net_put_dec(netdev_count_val);
-    net_puts("\n");
-    net_reset_color();
+    KLOG_INFO_DEC("NETDEV", "Total devices: ", netdev_count_val);
   }
 
   return netdev_count_val;

@@ -3,7 +3,6 @@
 #include "../arch/x86/io.h"
 #include "../kernel/klog.h"
 #include "../mm/kheap.h"
-#include "../net/netlog.h"
 
 /* Liste chaînée globale des périphériques PCI */
 static PCIDevice *pci_devices = NULL;

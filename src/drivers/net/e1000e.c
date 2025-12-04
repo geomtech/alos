@@ -11,7 +11,7 @@
 #include "../../mm/vmm.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
-#include "../../net/netlog.h"
+#include "../../kernel/klog.h"
 
 /* ============================================ */
 /*           Variables globales                 */
@@ -55,7 +55,7 @@ static uint16_t e1000_eeprom_read(E1000Device *dev, uint8_t addr) {
         }
     } while (--timeout > 0);
     
-    net_puts("[E1000E] ERROR: EEPROM read timeout\n");
+    KLOG_ERROR("E1000E", "EEPROM read timeout");
     return 0xFFFF;
 }
 
@@ -135,7 +135,7 @@ static bool e1000_init_rx(E1000Device *dev) {
     size_t desc_size = sizeof(E1000RxDesc) * E1000_NUM_RX_DESC;
     dev->rx_descs = (E1000RxDesc *)kmalloc(desc_size + 16);
     if (dev->rx_descs == NULL) {
-        net_puts("[E1000E] ERROR: Failed to allocate RX descriptors\n");
+        KLOG_ERROR("E1000E", "Failed to allocate RX descriptors");
         return false;
     }
     
@@ -150,7 +150,7 @@ static bool e1000_init_rx(E1000Device *dev) {
     for (int i = 0; i < E1000_NUM_RX_DESC; i++) {
         dev->rx_buffers[i] = (uint8_t *)kmalloc(E1000_RX_BUFFER_SIZE + 16);
         if (dev->rx_buffers[i] == NULL) {
-            net_puts("[E1000E] ERROR: Failed to allocate RX buffer\n");
+            KLOG_ERROR("E1000E", "Failed to allocate RX buffer");
             return false;
         }
         
@@ -179,11 +179,7 @@ static bool e1000_init_rx(E1000Device *dev) {
     
     dev->rx_cur = 0;
     
-    net_puts("[E1000E] RX ring at 0x");
-    net_put_hex(rx_ring_addr);
-    net_puts(" (");
-    net_put_dec(E1000_NUM_RX_DESC);
-    net_puts(" descriptors)\n");
+    KLOG_INFO_HEX("E1000E", "RX ring at: ", rx_ring_addr);
     
     return true;
 }
@@ -196,7 +192,7 @@ static bool e1000_init_tx(E1000Device *dev) {
     size_t desc_size = sizeof(E1000TxDesc) * E1000_NUM_TX_DESC;
     dev->tx_descs = (E1000TxDesc *)kmalloc(desc_size + 16);
     if (dev->tx_descs == NULL) {
-        net_puts("[E1000E] ERROR: Failed to allocate TX descriptors\n");
+        KLOG_ERROR("E1000E", "Failed to allocate TX descriptors");
         return false;
     }
     
@@ -229,11 +225,7 @@ static bool e1000_init_tx(E1000Device *dev) {
     
     dev->tx_cur = 0;
     
-    net_puts("[E1000E] TX ring at 0x");
-    net_put_hex(tx_ring_addr);
-    net_puts(" (");
-    net_put_dec(E1000_NUM_TX_DESC);
-    net_puts(" descriptors)\n");
+    KLOG_INFO_HEX("E1000E", "TX ring at: ", tx_ring_addr);
     
     return true;
 }
@@ -251,9 +243,7 @@ static void e1000_enable_rx(E1000Device *dev) {
     
     e1000_write_reg(dev, E1000_RCTL, rctl);
     
-    net_puts("[E1000E] RX enabled (RCTL=0x");
-    net_put_hex(rctl);
-    net_puts(")\n");
+    KLOG_INFO_HEX("E1000E", "RX enabled, RCTL: ", rctl);
 }
 
 /**
@@ -272,9 +262,7 @@ static void e1000_enable_tx(E1000Device *dev) {
     /* Set Inter-Packet Gap */
     e1000_write_reg(dev, E1000_TIPG, 0x0060200A);
     
-    net_puts("[E1000E] TX enabled (TCTL=0x");
-    net_put_hex(tctl);
-    net_puts(")\n");
+    KLOG_INFO_HEX("E1000E", "TX enabled, TCTL: ", tctl);
 }
 
 /**
@@ -298,37 +286,11 @@ static void e1000_setup_link(E1000Device *dev) {
     uint32_t status = e1000_read_reg(dev, E1000_STATUS);
     dev->link_up = (status & E1000_STATUS_LU) != 0;
     
-    net_puts("[E1000E] Link status: ");
     if (dev->link_up) {
-        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        net_puts("UP");
-        net_reset_color();
-        
-        /* Print speed */
-        net_puts(" (");
-        switch (status & E1000_STATUS_SPEED_MASK) {
-            case E1000_STATUS_SPEED_10:
-                net_puts("10 Mbps");
-                break;
-            case E1000_STATUS_SPEED_100:
-                net_puts("100 Mbps");
-                break;
-            case E1000_STATUS_SPEED_1000:
-                net_puts("1000 Mbps");
-                break;
-        }
-        if (status & E1000_STATUS_FD) {
-            net_puts(", Full Duplex");
-        } else {
-            net_puts(", Half Duplex");
-        }
-        net_puts(")");
+        KLOG_INFO("E1000E", "Link status: UP");
     } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("DOWN");
-        net_reset_color();
+        KLOG_WARN("E1000E", "Link status: DOWN");
     }
-    net_puts("\n");
 }
 
 /**
@@ -402,9 +364,11 @@ static void e1000_irq_handler_internal(void) {
         /* Link status change */
         uint32_t status = e1000_read_reg(g_e1000_dev, E1000_STATUS);
         g_e1000_dev->link_up = (status & E1000_STATUS_LU) != 0;
-        net_puts("[E1000E] Link status changed: ");
-        net_puts(g_e1000_dev->link_up ? "UP" : "DOWN");
-        net_puts("\n");
+        if (g_e1000_dev->link_up) {
+            KLOG_INFO("E1000E", "Link status changed: UP");
+        } else {
+            KLOG_INFO("E1000E", "Link status changed: DOWN");
+        }
     }
     
     if (icr & E1000_ICR_TXDW) {
@@ -507,19 +471,17 @@ bool e1000e_is_supported(uint16_t vendor_id, uint16_t device_id) {
 }
 
 E1000Device *e1000e_init(PCIDevice *pci_dev) {
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("\n=== Intel e1000e Network Driver ===\n");
-    net_reset_color();
+    KLOG_INFO("E1000E", "=== Intel e1000e Network Driver ===");
     
     if (pci_dev == NULL) {
-        net_puts("[E1000E] ERROR: No PCI device provided\n");
+        KLOG_ERROR("E1000E", "No PCI device provided");
         return NULL;
     }
     
     /* Allocate device structure */
     E1000Device *dev = (E1000Device *)kmalloc(sizeof(E1000Device));
     if (dev == NULL) {
-        net_puts("[E1000E] ERROR: Failed to allocate device structure\n");
+        KLOG_ERROR("E1000E", "Failed to allocate device structure");
         return NULL;
     }
     
@@ -546,7 +508,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     uint32_t bar0 = pci_dev->bar0;
     if (bar0 & 1) {
         /* I/O space - not supported, we need MMIO */
-        net_puts("[E1000E] ERROR: BAR0 is I/O space, MMIO required\n");
+        KLOG_ERROR("E1000E", "BAR0 is I/O space, MMIO required");
         kfree(dev);
         return NULL;
     }
@@ -554,31 +516,27 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     dev->mmio_phys = bar0 & ~0xF;
     dev->mmio_size = 128 * 1024;  /* 128KB typical for e1000 */
     
-    net_puts("[E1000E] MMIO Physical: 0x");
-    net_put_hex(dev->mmio_phys);
-    net_puts("\n");
+    KLOG_INFO_HEX("E1000E", "MMIO Physical: ", dev->mmio_phys);
     
     /* Map MMIO region */
     dev->mmio_base = vmm_map_mmio(dev->mmio_phys, dev->mmio_size);
     if (dev->mmio_base == NULL) {
-        net_puts("[E1000E] ERROR: Failed to map MMIO region\n");
+        KLOG_ERROR("E1000E", "Failed to map MMIO region");
         kfree(dev);
         return NULL;
     }
     
-    net_puts("[E1000E] MMIO Virtual: 0x");
-    net_put_hex((uint32_t)(uintptr_t)dev->mmio_base);
-    net_puts("\n");
+    KLOG_INFO_HEX("E1000E", "MMIO Virtual: ", (uint32_t)(uintptr_t)dev->mmio_base);
     
     /* Enable Bus Mastering */
     pci_enable_bus_mastering(pci_dev);
     
     /* Reset the device */
-    net_puts("[E1000E] Resetting device...\n");
+    KLOG_INFO("E1000E", "Resetting device...");
     e1000_reset(dev);
     
     /* Read MAC address */
-    net_puts("[E1000E] Reading MAC address...\n");
+    KLOG_INFO("E1000E", "Reading MAC address...");
     if (!e1000_read_mac_eeprom(dev)) {
         /* Fallback to RAL/RAH registers */
         e1000_read_mac_ral(dev);
@@ -594,7 +552,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     }
     
     if (!valid_mac) {
-        net_puts("[E1000E] WARNING: Invalid MAC address, using default\n");
+        KLOG_WARN("E1000E", "Invalid MAC address, using default");
         dev->mac_addr[0] = 0x52;
         dev->mac_addr[1] = 0x54;
         dev->mac_addr[2] = 0x00;
@@ -603,12 +561,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
         dev->mac_addr[5] = 0x56;
     }
     
-    net_puts("[E1000E] MAC Address: ");
-    for (int i = 0; i < 6; i++) {
-        net_put_hex_byte(dev->mac_addr[i]);
-        if (i < 5) net_putc(':');
-    }
-    net_puts("\n");
+    KLOG_INFO("E1000E", "MAC Address read from device");
     
     /* Program MAC address into RAL/RAH */
     uint32_t ral = dev->mac_addr[0] | 
@@ -641,9 +594,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     
     /* Setup IRQ */
     dev->irq = pci_dev->interrupt_line;
-    net_puts("[E1000E] IRQ: ");
-    net_put_dec(dev->irq);
-    net_puts("\n");
+    KLOG_INFO_DEC("E1000E", "IRQ: ", dev->irq);
     
     /* Patch IDT if needed */
     if (dev->irq != 11) {
@@ -684,9 +635,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
         netdev_register(g_e1000_netif);
     }
     
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[E1000E] Driver initialized successfully!\n");
-    net_reset_color();
+    KLOG_INFO("E1000E", "Driver initialized successfully!");
     
     return dev;
 }
@@ -696,7 +645,7 @@ bool e1000e_start(E1000Device *dev) {
         return false;
     }
     
-    net_puts("[E1000E] Starting device...\n");
+    KLOG_INFO("E1000E", "Starting device...");
     
     /* Setup link */
     e1000_setup_link(dev);
@@ -718,9 +667,7 @@ bool e1000e_start(E1000Device *dev) {
         g_e1000_netif->flags |= NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
     }
     
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[E1000E] Device started!\n");
-    net_reset_color();
+    KLOG_INFO("E1000E", "Device started!");
     
     return true;
 }

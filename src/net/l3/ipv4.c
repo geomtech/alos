@@ -7,21 +7,12 @@
 #include "../core/netdev.h"
 #include "../l2/ethernet.h"
 #include "../utils.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
 
 /* Compteur d'identification pour les paquets sortants */
 static uint16_t ip_id_counter = 0;
 
-/**
- * Affiche une adresse IP au format X.X.X.X
- */
-static void print_ip(const uint8_t* ip)
-{
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) net_putc('.');
-        net_put_dec(ip[i]);
-    }
-}
+/* Note: print_ip removed - using KLOG instead */
 
 /**
  * Compare deux adresses IP.
@@ -68,11 +59,7 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < IPV4_HEADER_SIZE) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[IPv4] Packet too short: ");
-        net_put_dec(len);
-        net_puts(" bytes\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("IPv4", "Packet too short: ", len);
         return;
     }
     
@@ -88,21 +75,13 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
     
     /* Vérifier que c'est bien IPv4 */
     if (version != 4) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[IPv4] Invalid version: ");
-        net_put_dec(version);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("IPv4", "Invalid version: ", version);
         return;
     }
     
     /* Vérifier que le header est assez grand */
     if (header_len < IPV4_HEADER_SIZE || header_len > len) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[IPv4] Invalid header length: ");
-        net_put_dec(header_len);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("IPv4", "Invalid header length: ", header_len);
         return;
     }
     
@@ -155,11 +134,7 @@ void ipv4_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* da
             break;
             
         default:
-            net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-            net_puts("[IPv4] Unknown protocol: ");
-            net_put_dec(ip->protocol);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_WARN_DEC("IPv4", "Unknown protocol: ", ip->protocol);
             break;
     }
 }
@@ -259,20 +234,7 @@ void ipv4_send_packet(NetInterface* netif, uint8_t* dest_mac, uint8_t* dest_ip,
         sent = netdev_send(buffer, total_len);
     }
     
-    if (sent) {
-        /* Log */
-        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        net_puts("[IPv4] Sent to ");
-        print_ip(dest_ip);
-        net_puts(" (Proto=");
-        net_put_dec(protocol);
-        net_puts(", ");
-        net_put_dec(payload_len);
-        net_puts(" bytes)\n");
-        net_reset_color();
-    } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[IPv4] Error: No network device!\n");
-        net_reset_color();
+    if (!sent) {
+        KLOG_ERROR("IPv4", "Error: No network device!");
     }
 }

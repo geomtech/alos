@@ -3,23 +3,12 @@
 CC = ~/opt/cross/bin/i686-elf-gcc
 AS = nasm
 
-# ===========================================
-# Options de debug réseau
-# Pour activer les logs réseau: make NET_DEBUG=1
-# Pour désactiver (par défaut): make ou make NET_DEBUG=0
-# ===========================================
-NET_DEBUG ?= 0
-
 # CFLAGS:
 # -mno-sse -mno-sse2 -mno-mmx : Désactive les instructions SIMD (évite Invalid Opcode)
 # -mno-red-zone : Désactive la red zone (nécessaire pour les interruptions)
 # -fno-stack-protector : Pas de protection de pile (pas de libc)
 CFLAGS = -std=gnu99 -ffreestanding -O0 -g -Wall -Wextra -mno-sse -mno-sse2 -mno-mmx -mno-red-zone -fno-stack-protector
 
-# Activer les logs réseau si NET_DEBUG=1
-ifeq ($(NET_DEBUG),1)
-CFLAGS += -DNET_DEBUG
-endif
 ASFLAGS = -felf32 -g
 LDFLAGS = -ffreestanding -O0 -nostdlib -lgcc
 

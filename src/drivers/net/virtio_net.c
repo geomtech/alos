@@ -15,7 +15,6 @@
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
-#include "../../net/netlog.h"
 #include "../../kernel/klog.h"
 
 /* ============================================ */
@@ -247,9 +246,7 @@ static int virtio_netif_send(NetInterface *netif, uint8_t *data, int len) {
 /* ============================================ */
 
 VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("\n=== VirtIO Network Driver (MMIO) ===\n");
-    net_reset_color();
+    KLOG_INFO("VIRTIO-NET", "=== VirtIO Network Driver (MMIO) ===");
     
     if (pci_dev == NULL) {
         return NULL;
@@ -258,7 +255,7 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
     /* Créer le device VirtIO via l'abstraction de transport */
     VirtioDevice *vdev = virtio_create_from_pci(pci_dev);
     if (vdev == NULL) {
-        net_puts("[VirtIO-Net] Failed to create VirtIO device\n");
+        KLOG_ERROR("VIRTIO-NET", "Failed to create VirtIO device");
         return NULL;
     }
     
@@ -266,10 +263,8 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
      * Note: VirtIO PCI Legacy utilise toujours PIO car BAR0 est un I/O BAR.
      * Le BAR1 MMIO est pour MSI-X, pas pour les registres.
      */
-    net_puts("[VirtIO-Net] Transport: PCI Legacy (PIO)\n");
-    net_puts("[VirtIO-Net] I/O Base: 0x");
-    net_put_hex(vdev->transport.pci.io_base);
-    net_puts("\n");
+    KLOG_INFO("VIRTIO-NET", "Transport: PCI Legacy (PIO)");
+    KLOG_INFO_HEX("VIRTIO-NET", "I/O Base: ", vdev->transport.pci.io_base);
     
     /* Allouer le driver */
     VirtioNetDriver *drv = (VirtioNetDriver *)kmalloc(sizeof(VirtioNetDriver));
@@ -295,24 +290,24 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
     /* Initialiser le device VirtIO */
     uint32_t required_features = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
     if (virtio_init_device(vdev, required_features) < 0) {
-        net_puts("[VirtIO-Net] Device initialization failed!\n");
+        KLOG_ERROR("VIRTIO-NET", "Device initialization failed!");
         kfree(drv);
         virtio_destroy(vdev);
         return NULL;
     }
     
     /* Configurer les queues */
-    net_puts("[VirtIO-Net] Setting up RX queue...\n");
+    KLOG_INFO("VIRTIO-NET", "Setting up RX queue...");
     if (virtio_setup_queue(vdev, &drv->rx_queue, 0) < 0) {
-        net_puts("[VirtIO-Net] RX queue setup failed!\n");
+        KLOG_ERROR("VIRTIO-NET", "RX queue setup failed!");
         kfree(drv);
         virtio_destroy(vdev);
         return NULL;
     }
     
-    net_puts("[VirtIO-Net] Setting up TX queue...\n");
+    KLOG_INFO("VIRTIO-NET", "Setting up TX queue...");
     if (virtio_setup_queue(vdev, &drv->tx_queue, 1) < 0) {
-        net_puts("[VirtIO-Net] TX queue setup failed!\n");
+        KLOG_ERROR("VIRTIO-NET", "TX queue setup failed!");
         kfree(drv);
         virtio_destroy(vdev);
         return NULL;
@@ -323,18 +318,11 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
         drv->mac_addr[i] = vdev->ops->read_config8(vdev, i);
     }
     
-    net_puts("[VirtIO-Net] MAC Address: ");
-    for (int i = 0; i < 6; i++) {
-        net_put_hex_byte(drv->mac_addr[i]);
-        if (i < 5) net_putc(':');
-    }
-    net_puts("\n");
+    KLOG_INFO("VIRTIO-NET", "MAC Address read from device config");
     
     /* Configurer l'IRQ */
     uint8_t irq = pci_dev->interrupt_line;
-    net_puts("[VirtIO-Net] IRQ: ");
-    net_put_dec(irq);
-    net_puts("\n");
+    KLOG_INFO_DEC("VIRTIO-NET", "IRQ: ", irq);
     
     if (irq != 11) {
         extern void irq11_handler(void);
@@ -346,7 +334,7 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
     
     /* Finaliser l'initialisation */
     if (virtio_finalize_init(vdev) < 0) {
-        net_puts("[VirtIO-Net] Failed to finalize init!\n");
+        KLOG_ERROR("VIRTIO-NET", "Failed to finalize init!");
         kfree(drv);
         virtio_destroy(vdev);
         return NULL;
@@ -384,9 +372,7 @@ VirtIONetDevice *virtio_net_init(PCIDevice *pci_dev) {
         netdev_register(g_netif);
     }
     
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[VirtIO-Net] Driver initialized successfully!\n");
-    net_reset_color();
+    KLOG_INFO("VIRTIO-NET", "Driver initialized successfully!");
     
     /* Retourner un pointeur compatible avec l'ancienne API */
     return (VirtIONetDevice *)drv;

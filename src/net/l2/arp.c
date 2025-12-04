@@ -4,7 +4,7 @@
 #include "../core/netdev.h"
 #include "ethernet.h"
 #include "../utils.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
 
 /* ========================================
  * Cache ARP
@@ -53,27 +53,7 @@ static void arp_ip_copy(uint8_t* dest, const uint8_t* src)
     }
 }
 
-/**
- * Affiche une adresse MAC au format XX:XX:XX:XX:XX:XX
- */
-static void print_mac(const uint8_t* mac)
-{
-    for (int i = 0; i < 6; i++) {
-        if (i > 0) net_putc(':');
-        net_put_hex_byte(mac[i]);
-    }
-}
-
-/**
- * Affiche une adresse IP au format X.X.X.X
- */
-static void print_ip(const uint8_t* ip)
-{
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) net_putc('.');
-        net_put_dec(ip[i]);
-    }
-}
+/* Note: print_mac and print_ip removed - using KLOG instead */
 
 /* ========================================
  * Fonctions du cache ARP
@@ -101,13 +81,7 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
             arp_cache[i].valid = true;
             arp_cache_count++;
             
-            net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-            net_puts("[ARP] Cache: Added ");
-            print_ip(ip);
-            net_puts(" -> ");
-            print_mac(mac);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_INFO("ARP", "Cache entry added");
             return;
         }
     }
@@ -117,9 +91,7 @@ void arp_cache_add(uint8_t* ip, uint8_t* mac)
     mac_copy(arp_cache[0].mac, mac);
     arp_cache[0].valid = true;
     
-    net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-    net_puts("[ARP] Cache full, replaced entry 0\n");
-    net_reset_color();
+    KLOG_WARN("ARP", "Cache full, replaced entry 0");
 }
 
 /**
@@ -214,15 +186,9 @@ void arp_send_request(NetInterface* netif, uint8_t* target_ip)
     }
     
     if (sent) {
-        net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-        net_puts("[ARP] Request: Who has ");
-        print_ip(target_ip);
-        net_puts("?\n");
-        net_reset_color();
+        KLOG_INFO("ARP", "Request sent");
     } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[ARP] Error sending request!\n");
-        net_reset_color();
+        KLOG_ERROR("ARP", "Error sending request!");
     }
 }
 
@@ -322,20 +288,9 @@ void arp_send_reply(NetInterface* netif, uint8_t* target_mac, uint8_t* target_ip
     }
     
     if (sent) {
-        /* Log */
-        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        net_puts("[ARP] Sent Reply: ");
-        print_ip(my_ip);
-        net_puts(" is at ");
-        print_mac(my_mac);
-        net_puts(" -> ");
-        print_mac(target_mac);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_INFO("ARP", "Reply sent");
     } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[ARP] Error: No network device!\n");
-        net_reset_color();
+        KLOG_ERROR("ARP", "Error: No network device!");
     }
 }
 
@@ -348,11 +303,7 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     
     /* Vérifier la taille minimale */
     if (len < ARP_PACKET_SIZE) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[ARP] Packet too short: ");
-        net_put_dec(len);
-        net_puts(" bytes\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("ARP", "Packet too short: ", len);
         return;
     }
     
@@ -365,13 +316,7 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     uint16_t opcode = ntohs(arp->opcode);
     
     if (hw_type != ARP_HW_ETHERNET || proto_type != ARP_PROTO_IPV4) {
-        net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-        net_puts("[ARP] Unsupported HW/Proto type: ");
-        net_put_hex(hw_type);
-        net_puts("/");
-        net_put_hex(proto_type);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_WARN("ARP", "Unsupported HW/Proto type");
         return;
     }
     
@@ -389,24 +334,14 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
     switch (opcode) {
         case ARP_OP_REQUEST:
             /* ARP Request - quelqu'un cherche une adresse MAC */
-            net_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-            net_puts("[ARP] Request: Who has ");
-            print_ip(arp->dest_ip);
-            net_puts("? Tell ");
-            print_ip(arp->src_ip);
-            net_puts(" (");
-            print_mac(arp->src_mac);
-            net_puts(")\n");
-            net_reset_color();
+            KLOG_DEBUG("ARP", "Request received");
             
             /* Ajouter l'émetteur au cache ARP (on apprend de chaque request) */
             arp_cache_add(arp->src_ip, arp->src_mac);
             
             /* Vérifier si c'est pour nous */
             if (arp_ip_equals(arp->dest_ip, my_ip)) {
-                net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                net_puts("[ARP] >>> That's us! Sending reply... <<<\n");
-                net_reset_color();
+                KLOG_INFO("ARP", "Request for us, sending reply");
                 
                 /* Envoyer la réponse ARP via l'interface */
                 arp_send_reply(netif, arp->src_mac, arp->src_ip);
@@ -415,24 +350,14 @@ void arp_handle_packet(NetInterface* netif, ethernet_header_t* eth, uint8_t* pac
             
         case ARP_OP_REPLY:
             /* ARP Reply - quelqu'un nous donne son adresse MAC */
-            net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-            net_puts("[ARP] Reply: ");
-            print_ip(arp->src_ip);
-            net_puts(" is at ");
-            print_mac(arp->src_mac);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_INFO("ARP", "Reply received");
             
             /* Ajouter au cache ARP */
             arp_cache_add(arp->src_ip, arp->src_mac);
             break;
             
         default:
-            net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-            net_puts("[ARP] Unknown opcode: ");
-            net_put_dec(opcode);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_WARN_DEC("ARP", "Unknown opcode: ", opcode);
             break;
     }
 }

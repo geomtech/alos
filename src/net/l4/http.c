@@ -5,7 +5,7 @@
 #include "../core/netdev.h"
 #include "../../include/string.h"
 #include "../../fs/vfs.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
 #include "../../kernel/thread.h"
 #include "../../mm/kheap.h"
 
@@ -149,9 +149,7 @@ int http_get(const char* host, const char* path, uint16_t port,
         }
     } else {
         /* Resolve hostname via DNS */
-        net_puts("Resolving ");
-        net_puts(host);
-        net_puts("...\n");
+        KLOG_INFO("HTTP", "Resolving hostname...");
         
         dns_send_query(host);
         
@@ -162,30 +160,22 @@ int http_get(const char* host, const char* path, uint16_t port,
         }
         
         if (!dns_get_result(server_ip)) {
-            net_puts("DNS resolution failed\n");
+            KLOG_ERROR("HTTP", "DNS resolution failed");
             return -1;
         }
         
-        net_puts("Resolved to ");
-        net_put_dec(server_ip[0]);
-        net_putc('.');
-        net_put_dec(server_ip[1]);
-        net_putc('.');
-        net_put_dec(server_ip[2]);
-        net_putc('.');
-        net_put_dec(server_ip[3]);
-        net_puts("\n");
+        KLOG_INFO("HTTP", "DNS resolved");
     }
     
     /* Connect to server */
-    net_puts("Connecting to server...\n");
+    KLOG_INFO("HTTP", "Connecting to server...");
     tcp_socket_t* sock = tcp_connect_timeout(server_ip, port, 5000);
     if (!sock) {
-        net_puts("Connection failed\n");
+        KLOG_ERROR("HTTP", "Connection failed");
         return -1;
     }
     
-    net_puts("Connected!\n");
+    KLOG_INFO("HTTP", "Connected!");
     
     /* Build HTTP request */
     char request[512];
@@ -198,15 +188,15 @@ int http_get(const char* host, const char* path, uint16_t port,
     len = str_append(request, sizeof(request), len, "Connection: close\r\n\r\n");
     
     /* Send request */
-    net_puts("Sending HTTP request...\n");
+    KLOG_INFO("HTTP", "Sending HTTP request...");
     if (tcp_send(sock, (uint8_t*)request, len) < 0) {
-        net_puts("Failed to send request\n");
+        KLOG_ERROR("HTTP", "Failed to send request");
         tcp_close(sock);
         return -1;
     }
     
     /* Receive response */
-    net_puts("Waiting for response...\n");
+    KLOG_INFO("HTTP", "Waiting for response...");
     uint32_t total_received = 0;
     int timeout = 1000;  /* 10 seconds */
     
@@ -233,9 +223,7 @@ int http_get(const char* host, const char* path, uint16_t port,
         thread_sleep_ms(10);
     }
     
-    net_puts("Received ");
-    net_put_dec(total_received);
-    net_puts(" bytes\n");
+    KLOG_INFO_DEC("HTTP", "Received bytes: ", total_received);
     
     tcp_close(sock);
     return total_received;
@@ -248,34 +236,24 @@ int http_download_file(const char* url, const char* dest_path) {
     
     /* Parse URL */
     if (parse_url(url, host, &port, path) != 0) {
-        net_puts("Invalid URL format\n");
+        KLOG_ERROR("HTTP", "Invalid URL format");
         return -1;
     }
     
-    net_puts("URL: ");
-    net_puts(url);
-    net_puts("\n");
-    net_puts("Host: ");
-    net_puts(host);
-    net_puts("\n");
-    net_puts("Port: ");
-    net_put_dec(port);
-    net_puts("\n");
-    net_puts("Path: ");
-    net_puts(path);
-    net_puts("\n\n");
+    KLOG_INFO("HTTP", "Downloading file...");
+    KLOG_INFO_DEC("HTTP", "Port: ", port);
     
     /* Allocate buffer for HTTP response */
     uint8_t* buffer = (uint8_t*)kmalloc(65536);  /* 64KB buffer */
     if (!buffer) {
-        net_puts("Out of memory\n");
+        KLOG_ERROR("HTTP", "Out of memory");
         return -1;
     }
     
     /* Download file */
     int received = http_get(host, path, port, buffer, 65536);
     if (received <= 0) {
-        net_puts("Download failed\n");
+        KLOG_ERROR("HTTP", "Download failed");
         kfree(buffer);
         return -1;
     }
@@ -302,25 +280,21 @@ int http_download_file(const char* url, const char* dest_path) {
         status[2] = buffer[11];
         int status_code = atoi(status);
         
-        net_puts("HTTP Status: ");
-        net_put_dec(status_code);
-        net_puts("\n");
+        KLOG_INFO_DEC("HTTP", "HTTP Status: ", status_code);
         
         if (status_code != HTTP_OK) {
-            net_puts("HTTP error\n");
+            KLOG_ERROR("HTTP", "HTTP error");
             kfree(buffer);
             return -1;
         }
     }
     
     /* Save to file */
-    net_puts("Saving to ");
-    net_puts(dest_path);
-    net_puts("...\n");
+    KLOG_INFO("HTTP", "Saving to file...");
     
     vfs_node_t* file = vfs_open(dest_path, VFS_O_WRONLY | VFS_O_CREAT);
     if (!file) {
-        net_puts("Failed to create file\n");
+        KLOG_ERROR("HTTP", "Failed to create file");
         kfree(buffer);
         return -1;
     }
@@ -329,14 +303,12 @@ int http_download_file(const char* url, const char* dest_path) {
     vfs_close(file);
     
     if (written != body_len) {
-        net_puts("Failed to write all data\n");
+        KLOG_ERROR("HTTP", "Failed to write all data");
         kfree(buffer);
         return -1;
     }
     
-    net_puts("Downloaded ");
-    net_put_dec(body_len);
-    net_puts(" bytes\n");
+    KLOG_INFO_DEC("HTTP", "Downloaded bytes: ", body_len);
     
     kfree(buffer);
     return 0;

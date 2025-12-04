@@ -5,8 +5,8 @@
 #include "../l2/ethernet.h"
 #include "../l3/ipv4.h"
 #include "../l3/route.h"
-#include "../netlog.h"
 #include "../utils.h"
+#include "../../kernel/klog.h"
 #include "udp.h"
 
 /* ========================================
@@ -23,18 +23,7 @@ static uint32_t dhcp_xid_counter = 0x12345678;
  * Fonctions utilitaires
  * ======================================== */
 
-/**
- * Affiche une adresse IP au format X.X.X.X
- */
-static void print_ip_u32(uint32_t ip) {
-  uint8_t bytes[4];
-  ip_u32_to_bytes(ip, bytes);
-  for (int i = 0; i < 4; i++) {
-    if (i > 0)
-      net_putc('.');
-    net_put_dec(bytes[i]);
-  }
-}
+/* Note: print_ip_u32 removed - using KLOG instead */
 
 /**
  * Génère un transaction ID pseudo-aléatoire.
@@ -223,9 +212,7 @@ static void dhcp_send_raw(NetInterface *netif, uint8_t *dhcp_data,
   if (netif->send != NULL) {
     netif->send(netif, packet, offset);
   } else {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[DHCP] No send function on interface!\n");
-    net_reset_color();
+    KLOG_ERROR("DHCP", "No send function on interface!");
   }
 }
 
@@ -245,11 +232,7 @@ void dhcp_init(NetInterface *netif) {
 
   dhcp_initialized = true;
 
-  net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-  net_puts("[DHCP] Client initialized for interface: ");
-  net_puts(netif->name);
-  net_puts("\n");
-  net_reset_color();
+  KLOG_INFO("DHCP", "Client initialized");
 }
 
 /**
@@ -265,9 +248,7 @@ int dhcp_discover(NetInterface *netif) {
   dhcp_ctx.state = DHCP_STATE_SELECTING;
   dhcp_ctx.discover_count++;
 
-  net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-  net_puts("[DHCP] Discovering...\n");
-  net_reset_color();
+  KLOG_INFO("DHCP", "Discovering...");
 
   /* Construire le paquet DHCP DISCOVER */
   uint8_t dhcp_packet[576]; /* Taille minimale BOOTP */
@@ -463,9 +444,7 @@ static void dhcp_handle_ack(NetInterface *netif, dhcp_header_t *dhcp,
                      &router, &dns, &lease_time);
 
   if (msg_type == DHCPNAK) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[DHCP] Received NAK - configuration rejected!\n");
-    net_reset_color();
+    KLOG_ERROR("DHCP", "Received NAK - configuration rejected!");
     dhcp_ctx.state = DHCP_STATE_INIT;
     return;
   }
@@ -486,26 +465,9 @@ static void dhcp_handle_ack(NetInterface *netif, dhcp_header_t *dhcp,
   netif->gateway = router;
   netif->dns_server = dns;
 
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[DHCP] *** BOUND ***\n");
-  net_puts("       IP Address:  ");
-  print_ip_u32(netif->ip_addr);
-  net_puts("\n       Subnet Mask: ");
-  print_ip_u32(netif->netmask);
-  net_puts("\n       Gateway:     ");
-  print_ip_u32(netif->gateway);
-  net_puts("\n       DNS Server:  ");
-  print_ip_u32(netif->dns_server);
-  net_puts("\n       Lease Time:  ");
-  net_put_dec(lease_time);
-  net_puts(" seconds\n");
-  net_reset_color();
-
-  /* Mettre à jour les globales legacy pour compatibilité */
-  ip_u32_to_bytes(netif->ip_addr, MY_IP);
-  ip_u32_to_bytes(netif->gateway, GATEWAY_IP);
-  ip_u32_to_bytes(netif->dns_server, DNS_IP);
-  ip_u32_to_bytes(netif->netmask, NETMASK);
+  KLOG_INFO("DHCP", "*** BOUND ***");
+  KLOG_INFO_HEX("DHCP", "IP Address: ", netif->ip_addr);
+  KLOG_INFO_DEC("DHCP", "Lease Time: ", lease_time);
 
   /* Mettre à jour la table de routage avec la nouvelle configuration */
   route_update_from_netif(netif);
@@ -562,11 +524,7 @@ void dhcp_handle_packet(NetInterface *netif, uint8_t *data, int len) {
   dhcp_parse_options(options, opt_len, &msg_type, &dummy1, &dummy2, &dummy3,
                      &dummy4, &dummy5);
 
-  net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-  net_puts("[DHCP] Message type: ");
-  net_put_dec(msg_type);
-  net_puts(" (1=DISCOVER, 2=OFFER, 3=REQUEST, 5=ACK, 6=NAK)\n");
-  net_reset_color();
+  KLOG_DEBUG_DEC("DHCP", "Message type: ", msg_type);
 
   /* Traiter selon l'état */
   switch (dhcp_ctx.state) {
@@ -581,7 +539,7 @@ void dhcp_handle_packet(NetInterface *netif, uint8_t *data, int len) {
     break;
 
   default:
-    net_puts("[DHCP] Unexpected state, ignoring\n");
+    KLOG_WARN("DHCP", "Unexpected state, ignoring");
     break;
   }
 }
@@ -594,11 +552,7 @@ void dhcp_release(NetInterface *netif) {
     return;
   }
 
-  net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-  net_puts("[DHCP] Releasing lease for ");
-  print_ip_u32(netif->ip_addr);
-  net_puts("\n");
-  net_reset_color();
+  KLOG_INFO("DHCP", "Releasing lease");
 
   /* Remettre l'interface à zéro */
   netif->ip_addr = 0;

@@ -3,7 +3,7 @@
 #include "udp.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
 #include "../../mm/kheap.h"
 
 /* ========================================
@@ -33,13 +33,7 @@ static void ip_to_bytes(uint32_t ip, uint8_t* out)
     out[3] = ip & 0xFF;
 }
 
-static void print_ip_addr(const uint8_t* ip)
-{
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) net_putc('.');
-        net_put_dec(ip[i]);
-    }
-}
+/* Note: print_ip_addr removed - using KLOG instead */
 
 static void str_copy(char* dest, const char* src, int max_len)
 {
@@ -84,9 +78,7 @@ void dns_cache_flush(void)
     g_cache_hits = 0;
     g_cache_misses = 0;
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Cache flushed\n");
-    net_reset_color();
+    KLOG_INFO("DNS", "Cache flushed");
 }
 
 static int dns_cache_find_slot(void)
@@ -144,13 +136,7 @@ bool dns_cache_lookup(const char* hostname, uint8_t* out_ip)
                 out_ip[3] = entry->ip[3];
                 g_cache_hits++;
                 
-                net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-                net_puts("[DNS] Cache hit: ");
-                net_puts(hostname);
-                net_puts(" -> ");
-                print_ip_addr(out_ip);
-                net_puts("\n");
-                net_reset_color();
+                KLOG_INFO("DNS", "Cache hit");
                 return true;
             }
         }
@@ -182,17 +168,9 @@ void dns_cache_stats(void)
         if (g_dns_cache[i].valid) count++;
     }
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Cache stats: ");
-    net_put_dec(count);
-    net_puts("/");
-    net_put_dec(DNS_CACHE_SIZE);
-    net_puts(" entries, ");
-    net_put_dec(g_cache_hits);
-    net_puts(" hits, ");
-    net_put_dec(g_cache_misses);
-    net_puts(" misses\n");
-    net_reset_color();
+    KLOG_INFO_DEC("DNS", "Cache entries: ", count);
+    KLOG_INFO_DEC("DNS", "Cache hits: ", g_cache_hits);
+    KLOG_INFO_DEC("DNS", "Cache misses: ", g_cache_misses);
 }
 
 /* ========================================
@@ -214,11 +192,7 @@ void dns_init(uint32_t dns_server)
     /* Initialiser le cache */
     dns_cache_flush();
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Resolver initialized, server: ");
-    print_ip_addr(g_dns_server_bytes);
-    net_puts("\n");
-    net_reset_color();
+    KLOG_INFO("DNS", "Resolver initialized");
 }
 
 int dns_encode_name(uint8_t* buffer, const char* hostname)
@@ -290,9 +264,7 @@ static int dns_decode_name(uint8_t* packet, int offset, int max_len,
 void dns_send_query(const char* hostname)
 {
     if (!g_dns_initialized) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[DNS] Error: resolver not initialized!\n");
-        net_reset_color();
+        KLOG_ERROR("DNS", "Resolver not initialized!");
         return;
     }
     
@@ -340,13 +312,7 @@ void dns_send_query(const char* hostname)
     g_pending_query.has_cname = false;
     g_pending_query.cname[0] = '\0';
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Resolving: ");
-    net_puts(hostname);
-    net_puts(" (ID: 0x");
-    net_put_hex(g_dns_transaction_id);
-    net_puts(")\n");
-    net_reset_color();
+    KLOG_INFO("DNS", "Resolving hostname");
     
     udp_send_packet(g_dns_server_bytes, 12345, DNS_PORT, buffer, offset);
 }
@@ -354,9 +320,7 @@ void dns_send_query(const char* hostname)
 void dns_send_reverse_query(const uint8_t* ip)
 {
     if (!g_dns_initialized) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[DNS] Error: resolver not initialized!\n");
-        net_reset_color();
+        KLOG_ERROR("DNS", "Resolver not initialized!");
         return;
     }
     
@@ -430,13 +394,7 @@ void dns_send_reverse_query(const uint8_t* ip)
     g_pending_query.completed = false;
     g_pending_query.success = false;
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Reverse lookup: ");
-    print_ip_addr(ip);
-    net_puts(" (ID: 0x");
-    net_put_hex(g_dns_transaction_id);
-    net_puts(")\n");
-    net_reset_color();
+    KLOG_INFO("DNS", "Reverse lookup");
     
     udp_send_packet(g_dns_server_bytes, 12345, DNS_PORT, buffer, offset);
 }
@@ -470,9 +428,7 @@ static int dns_skip_name(uint8_t* data, int offset, int max_len)
 void dns_handle_packet(uint8_t* data, int len)
 {
     if (data == NULL || len < DNS_HEADER_SIZE) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[DNS] Packet too short\n");
-        net_reset_color();
+        KLOG_ERROR("DNS", "Packet too short");
         return;
     }
     
@@ -488,33 +444,20 @@ void dns_handle_packet(uint8_t* data, int len)
     }
     
     if (id != g_pending_query.id) {
-        net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-        net_puts("[DNS] Transaction ID mismatch\n");
-        net_reset_color();
+        KLOG_WARN("DNS", "Transaction ID mismatch");
         return;
     }
     
     uint8_t rcode = flags & DNS_FLAG_RCODE;
     if (rcode != DNS_RCODE_OK) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[DNS] Error RCODE: ");
-        net_put_dec(rcode);
-        if (rcode == DNS_RCODE_NXDOMAIN) {
-            net_puts(" (NXDOMAIN)");
-        }
-        net_puts("\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("DNS", "Error RCODE: ", rcode);
         
         g_pending_query.completed = true;
         g_pending_query.success = false;
         return;
     }
     
-    net_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    net_puts("[DNS] Response: ");
-    net_put_dec(an_count);
-    net_puts(" answer(s)\n");
-    net_reset_color();
+    KLOG_INFO_DEC("DNS", "Response answers: ", an_count);
     
     if (an_count == 0) {
         g_pending_query.completed = true;
@@ -564,18 +507,7 @@ void dns_handle_packet(uint8_t* data, int len)
             /* Ajouter au cache */
             dns_cache_add(g_pending_query.hostname, g_pending_query.resolved_ip, ttl);
             
-            net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-            net_puts("[DNS] Resolved ");
-            net_puts(g_pending_query.hostname);
-            net_puts(" -> ");
-            print_ip_addr(g_pending_query.resolved_ip);
-            if (g_pending_query.has_cname) {
-                net_puts(" (via CNAME: ");
-                net_puts(g_pending_query.cname);
-                net_puts(")");
-            }
-            net_puts("\n");
-            net_reset_color();
+            KLOG_INFO("DNS", "Hostname resolved");
             
             return;
         }
@@ -587,13 +519,7 @@ void dns_handle_packet(uint8_t* data, int len)
             str_copy(g_pending_query.cname, cname, sizeof(g_pending_query.cname));
             g_pending_query.has_cname = true;
             
-            net_set_color(VGA_COLOR_LIGHT_MAGENTA, VGA_COLOR_BLACK);
-            net_puts("[DNS] CNAME: ");
-            net_puts(g_pending_query.hostname);
-            net_puts(" -> ");
-            net_puts(cname);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_DEBUG("DNS", "CNAME found");
             
             /* Continuer pour trouver le A record */
         }
@@ -610,13 +536,7 @@ void dns_handle_packet(uint8_t* data, int len)
             /* Ajouter au cache */
             dns_cache_add_ptr(g_pending_query.resolved_ip, ptr_name, ttl);
             
-            net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-            net_puts("[DNS] Reverse: ");
-            print_ip_addr(g_pending_query.resolved_ip);
-            net_puts(" -> ");
-            net_puts(ptr_name);
-            net_puts("\n");
-            net_reset_color();
+            KLOG_INFO("DNS", "Reverse lookup resolved");
             
             return;
         }
@@ -625,9 +545,7 @@ void dns_handle_packet(uint8_t* data, int len)
     }
     
     if (!g_pending_query.success) {
-        net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-        net_puts("[DNS] No matching record found\n");
-        net_reset_color();
+        KLOG_WARN("DNS", "No matching record found");
         
         g_pending_query.completed = true;
         g_pending_query.success = false;

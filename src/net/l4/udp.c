@@ -7,18 +7,9 @@
 #include "../l2/arp.h"
 #include "../core/netdev.h"
 #include "../utils.h"
-#include "../netlog.h"
+#include "../../kernel/klog.h"
 
-/**
- * Affiche une adresse IP au format X.X.X.X
- */
-static void print_ip(const uint8_t* ip)
-{
-    for (int i = 0; i < 4; i++) {
-        if (i > 0) net_putc('.');
-        net_put_dec(ip[i]);
-    }
-}
+/* Note: print_ip removed - using KLOG instead */
 
 /**
  * Traite un paquet UDP reçu.
@@ -27,11 +18,7 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 {
     /* Vérifier la taille minimale */
     if (data == NULL || len < UDP_HEADER_SIZE) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[UDP] Packet too short: ");
-        net_put_dec(len);
-        net_puts(" bytes\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("UDP", "Packet too short: ", len);
         return;
     }
 
@@ -45,11 +32,7 @@ void udp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
 
     /* Vérifier la longueur */
     if (udp_len < UDP_HEADER_SIZE || udp_len > len) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[UDP] Invalid length: ");
-        net_put_dec(udp_len);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("UDP", "Invalid length: ", udp_len);
         return;
     }
 
@@ -99,11 +82,7 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     
     /* Vérifier que le paquet n'est pas trop grand */
     if (len > (int)(sizeof(buffer) - UDP_HEADER_SIZE)) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[UDP] Payload too large: ");
-        net_put_dec(len);
-        net_puts(" bytes\n");
-        net_reset_color();
+        KLOG_ERROR_DEC("UDP", "Payload too large: ", len);
         return;
     }
 
@@ -127,11 +106,7 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     
     /* Trouver le next hop (gateway si nécessaire) */
     if (!route_get_next_hop(dest_ip, next_hop)) {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[UDP] No route to ");
-        print_ip(dest_ip);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_ERROR("UDP", "No route to destination");
         return;
     }
     
@@ -141,19 +116,13 @@ void udp_send_packet(uint8_t* dest_ip, uint16_t src_port, uint16_t dest_port,
     /* Résoudre la MAC via ARP cache */
     if (!arp_cache_lookup(next_hop, dest_mac)) {
         /* MAC pas dans le cache, envoyer une requête ARP */
-        net_set_color(VGA_COLOR_BROWN, VGA_COLOR_BLACK);
-        net_puts("[UDP] MAC unknown for ");
-        print_ip(next_hop);
-        net_puts(", sending ARP request...\n");
-        net_reset_color();
+        KLOG_WARN("UDP", "MAC unknown, sending ARP request...");
         
         arp_send_request(netif, next_hop);
         
         /* Pour l'instant, on abandonne - dans un vrai OS, on mettrait
          * le paquet en queue et on réessaierait après la réponse ARP */
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[UDP] Packet dropped (ARP pending)\n");
-        net_reset_color();
+        KLOG_ERROR("UDP", "Packet dropped (ARP pending)");
         return;
     }
 

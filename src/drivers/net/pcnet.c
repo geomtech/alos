@@ -15,8 +15,8 @@
 #include "../../mm/kheap.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
-#include "../../net/netlog.h"
 #include "../../net/utils.h"
+#include "../../kernel/klog.h"
 
 /* Instance globale du driver PCnet */
 static PCNetDevice *g_pcnet_dev = NULL;
@@ -240,11 +240,7 @@ static void pcnet_receive(PCNetDevice *dev) {
 
     /* Vérifier les erreurs */
     if (desc->status & 0x4000) {
-      net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      net_puts("[RX] Error in packet! Status: ");
-      net_put_hex(desc->status);
-      net_puts("\n");
-      net_reset_color();
+      KLOG_ERROR_HEX("PCNET", "RX Error, Status: ", desc->status);
     } else {
       /* Paquet valide - récupérer la taille */
       /* mcnt contient la taille du message (12 bits bas) */
@@ -352,21 +348,8 @@ static void pcnet_read_mac(PCNetDevice *dev) {
  * Affiche l'adresse MAC de manière formatée.
  */
 static void pcnet_print_mac(PCNetDevice *dev) {
-  const char hex[] = "0123456789ABCDEF";
-
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[PCnet] MAC Address: ");
-  net_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
-
-  for (int i = 0; i < 6; i++) {
-    net_putc(hex[(dev->mac_addr[i] >> 4) & 0x0F]);
-    net_putc(hex[dev->mac_addr[i] & 0x0F]);
-    if (i < 5) {
-      net_putc(':');
-    }
-  }
-  net_puts("\n");
-  net_reset_color();
+  (void)dev;
+  KLOG_INFO("PCNET", "MAC Address read from device");
 }
 
 /* ============================================ */
@@ -378,28 +361,7 @@ static void pcnet_print_mac(PCNetDevice *dev) {
  */
 static void pcnet_print_status(PCNetDevice *dev) {
   uint32_t csr0 = pcnet_read_csr(dev, CSR0);
-
-  net_reset_color();
-  net_puts("[PCnet] CSR0 Status: ");
-  net_put_hex(csr0);
-  net_puts(" (");
-
-  if (csr0 & CSR0_STOP)
-    net_puts("STOP ");
-  if (csr0 & CSR0_STRT)
-    net_puts("STRT ");
-  if (csr0 & CSR0_INIT)
-    net_puts("INIT ");
-  if (csr0 & CSR0_TXON)
-    net_puts("TXON ");
-  if (csr0 & CSR0_RXON)
-    net_puts("RXON ");
-  if (csr0 & CSR0_IDON)
-    net_puts("IDON ");
-  if (csr0 & CSR0_ERR)
-    net_puts("ERR ");
-
-  net_puts(")\n");
+  KLOG_INFO_HEX("PCNET", "CSR0 Status: ", csr0);
 }
 
 /**
@@ -409,8 +371,6 @@ static void pcnet_print_status(PCNetDevice *dev) {
 static void pcnet_set_software_style(PCNetDevice *dev) {
   /* Lire BCR20 (Software Style) */
   uint32_t bcr20 = pcnet_read_bcr(dev, BCR20);
-  net_puts("[PCnet] BCR20 before: ");
-  net_put_hex(bcr20);
 
   /*
    * BCR20 bits:
@@ -428,20 +388,11 @@ static void pcnet_set_software_style(PCNetDevice *dev) {
 
   /* Vérifier que ça a pris */
   bcr20 = pcnet_read_bcr(dev, BCR20);
-  net_puts(" -> after: ");
-  net_put_hex(bcr20);
-  net_puts("\n");
 
   if ((bcr20 & 0xFF) == SWSTYLE_PCNET_PCI) {
-    net_puts("[PCnet] Software Style set to PCNET-PCI (32-bit descriptors");
-    if (bcr20 & 0x100) {
-      net_puts(", SSIZE32");
-    }
-    net_puts(")\n");
+    KLOG_INFO("PCNET", "Software Style set to PCNET-PCI (32-bit)");
   } else {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] WARNING: Failed to set SWSTYLE!\n");
-    net_reset_color();
+    KLOG_ERROR("PCNET", "Failed to set SWSTYLE!");
   }
 }
 
@@ -468,21 +419,17 @@ static int pcnet_netif_send(NetInterface *netif, uint8_t *data, int len) {
 }
 
 PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("\n=== PCnet Driver Initialization ===\n");
-  net_reset_color();
+  KLOG_INFO("PCNET", "=== PCnet Driver Initialization ===");
 
   if (pci_dev == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: No PCI device provided!\n");
+    KLOG_ERROR("PCNET", "No PCI device provided!");
     return NULL;
   }
 
   /* Allouer la structure du driver */
   PCNetDevice *dev = (PCNetDevice *)kmalloc(sizeof(PCNetDevice));
   if (dev == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: Failed to allocate driver structure!\n");
+    KLOG_ERROR("PCNET", "Failed to allocate driver structure!");
     return NULL;
   }
 
@@ -512,7 +459,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
   /* Parser les BARs PCI pour détecter MMIO */
   pci_device_bars_t bars;
   if (pci_parse_bars(pci_dev, &bars) == 0) {
-    net_puts("[PCnet] Analyzing PCI BARs...\n");
+    KLOG_INFO("PCNET", "Analyzing PCI BARs...");
     
     /* Chercher un BAR MMIO (généralement BAR1 pour PCnet) */
     pci_bar_info_t *mmio_bar = pci_find_mmio_bar(&bars);
@@ -520,23 +467,11 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     
     /* Afficher les BARs détectés */
     if (pio_bar != NULL) {
-      net_puts("[PCnet] PIO BAR");
-      net_put_dec(pio_bar->bar_index);
-      net_puts(": 0x");
-      net_put_hex(pio_bar->base_addr);
-      net_puts(" (");
-      net_put_dec(pio_bar->size);
-      net_puts(" bytes)\n");
+      KLOG_INFO_HEX("PCNET", "PIO BAR: ", pio_bar->base_addr);
     }
     
     if (mmio_bar != NULL) {
-      net_puts("[PCnet] MMIO BAR");
-      net_put_dec(mmio_bar->bar_index);
-      net_puts(": 0x");
-      net_put_hex(mmio_bar->base_addr);
-      net_puts(" (");
-      net_put_dec(mmio_bar->size);
-      net_puts(" bytes)\n");
+      KLOG_INFO_HEX("PCNET", "MMIO BAR: ", mmio_bar->base_addr);
     }
     
     /* Sélectionner le mode d'accès */
@@ -545,19 +480,19 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     if (g_forced_access_mode == 0) {
       /* Mode PIO forcé */
       use_mmio = false;
-      net_puts("[PCnet] Access mode: PIO (forced)\n");
+      KLOG_INFO("PCNET", "Access mode: PIO (forced)");
     } else if (g_forced_access_mode == 1 && mmio_bar != NULL) {
       /* Mode MMIO forcé */
       use_mmio = true;
-      net_puts("[PCnet] Access mode: MMIO (forced)\n");
+      KLOG_INFO("PCNET", "Access mode: MMIO (forced)");
     } else if (mmio_bar != NULL && mmio_bar->size >= 32) {
       /* MMIO disponible et suffisamment grand - l'utiliser */
       use_mmio = true;
-      net_puts("[PCnet] Access mode: MMIO (auto-detected)\n");
+      KLOG_INFO("PCNET", "Access mode: MMIO (auto-detected)");
     } else {
       /* Fallback sur PIO */
       use_mmio = false;
-      net_puts("[PCnet] Access mode: PIO (fallback)\n");
+      KLOG_INFO("PCNET", "Access mode: PIO (fallback)");
     }
     
     if (use_mmio && mmio_bar != NULL) {
@@ -568,39 +503,19 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
       
       if (dev->mmio_base != NULL) {
         dev->access_mode = PCNET_ACCESS_MMIO;
-        net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-        net_puts("[PCnet] MMIO mapped at virtual: 0x");
-        net_put_hex((uint32_t)(uintptr_t)dev->mmio_base);
-        net_puts("\n");
-        net_reset_color();
+        KLOG_INFO_HEX("PCNET", "MMIO mapped at virtual: ", (uint32_t)(uintptr_t)dev->mmio_base);
       } else {
-        net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        net_puts("[PCnet] WARNING: Failed to map MMIO, falling back to PIO\n");
-        net_reset_color();
+        KLOG_WARN("PCNET", "Failed to map MMIO, falling back to PIO");
         dev->access_mode = PCNET_ACCESS_PIO;
       }
     }
   }
 
-  net_puts("[PCnet] I/O Base (PIO): 0x");
-  net_put_hex(dev->io_base);
-  net_puts("\n");
-
-  net_puts("[PCnet] PCI Interrupt Line: ");
-  net_put_dec(pci_dev->interrupt_line);
-  net_puts("\n");
+  KLOG_INFO_HEX("PCNET", "I/O Base (PIO): ", dev->io_base);
+  KLOG_INFO_DEC("PCNET", "PCI Interrupt Line: ", pci_dev->interrupt_line);
 
   if (pci_dev->interrupt_line != 11) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] WARNING: Card uses IRQ ");
-    net_put_dec(pci_dev->interrupt_line);
-    net_puts(" but IDT expects IRQ 11!\n");
-    net_reset_color();
-
-    /* Attempt to patch IDT */
-    net_puts("[PCnet] Patching IDT for IRQ ");
-    net_put_dec(pci_dev->interrupt_line);
-    net_puts("...\n");
+    KLOG_WARN_DEC("PCNET", "Card uses IRQ (patching IDT): ", pci_dev->interrupt_line);
 
     /* Utiliser le wrapper ASM existant pour IRQ 11 car il fait ce qu'on veut
      * (EOI) */
@@ -613,7 +528,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
   pci_enable_bus_mastering(pci_dev);
 
   /* Étape 2: Reset de la carte */
-  net_puts("[PCnet] Resetting card...\n");
+  KLOG_INFO("PCNET", "Resetting card...");
   pcnet_reset(dev);
 
   /* Petite pause post-reset */
@@ -638,8 +553,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
    */
   dev->init_block = (PCNetInitBlock *)kmalloc(sizeof(PCNetInitBlock) + 16);
   if (dev->init_block == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: Failed to allocate Init Block!\n");
+    KLOG_ERROR("PCNET", "Failed to allocate Init Block!");
     kfree(dev);
     return NULL;
   }
@@ -651,19 +565,13 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     dev->init_block = (PCNetInitBlock *)(uintptr_t)init_block_addr;
   }
 
-  net_puts("[PCnet] Init Block allocated at: ");
-  net_put_hex((uint32_t)(uintptr_t)dev->init_block);
-  net_puts(" (size: ");
-  net_put_dec(sizeof(PCNetInitBlock));
-  net_puts(" bytes)\n");
+  KLOG_INFO_HEX("PCNET", "Init Block allocated at: ", (uint32_t)(uintptr_t)dev->init_block);
 
   /* Vérifier l'alignement */
   if ((uint32_t)(uintptr_t)dev->init_block & 0x3) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] WARNING: Init Block not 4-byte aligned!\n");
+    KLOG_WARN("PCNET", "Init Block not 4-byte aligned!");
   } else {
-    net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    net_puts("[PCnet] Init Block alignment: OK (4-byte aligned)\n");
+    KLOG_INFO("PCNET", "Init Block alignment: OK");
   }
 
   /* Étape 6: Allouer les Descriptor Rings (alignés sur 16 octets) */
@@ -673,8 +581,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
       (PCNetTxDesc *)kmalloc(sizeof(PCNetTxDesc) * PCNET_TX_BUFFERS + 16);
 
   if (dev->rx_ring == NULL || dev->tx_ring == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: Failed to allocate descriptor rings!\n");
+    KLOG_ERROR("PCNET", "Failed to allocate descriptor rings!");
     return NULL;
   }
 
@@ -691,27 +598,20 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     dev->tx_ring = (PCNetTxDesc *)(uintptr_t)tx_ring_addr;
   }
 
-  net_puts("[PCnet] RX Ring at: ");
-  net_put_hex((uint32_t)(uintptr_t)dev->rx_ring);
-  net_puts(", TX Ring at: ");
-  net_put_hex((uint32_t)(uintptr_t)dev->tx_ring);
-  net_puts("\n");
+  KLOG_INFO_HEX("PCNET", "RX Ring at: ", (uint32_t)(uintptr_t)dev->rx_ring);
+  KLOG_INFO_HEX("PCNET", "TX Ring at: ", (uint32_t)(uintptr_t)dev->tx_ring);
 
   /* Étape 7: Allouer les buffers de données */
   dev->rx_buffers = (uint8_t *)kmalloc(PCNET_BUFFER_SIZE * PCNET_RX_BUFFERS);
   dev->tx_buffers = (uint8_t *)kmalloc(PCNET_BUFFER_SIZE * PCNET_TX_BUFFERS);
 
   if (dev->rx_buffers == NULL || dev->tx_buffers == NULL) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: Failed to allocate data buffers!\n");
+    KLOG_ERROR("PCNET", "Failed to allocate data buffers!");
     return NULL;
   }
 
-  net_puts("[PCnet] RX Buffers at: ");
-  net_put_hex((uint32_t)(uintptr_t)dev->rx_buffers);
-  net_puts(", TX Buffers at: ");
-  net_put_hex((uint32_t)(uintptr_t)dev->tx_buffers);
-  net_puts("\n");
+  KLOG_INFO_HEX("PCNET", "RX Buffers at: ", (uint32_t)(uintptr_t)dev->rx_buffers);
+  KLOG_INFO_HEX("PCNET", "TX Buffers at: ", (uint32_t)(uintptr_t)dev->tx_buffers);
 
   /* Étape 8: Initialiser les descripteurs RX */
   for (int i = 0; i < PCNET_RX_BUFFERS; i++) {
@@ -736,11 +636,8 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     dev->tx_ring[i].user = 0;
   }
 
-  net_puts("[PCnet] Descriptors initialized (");
-  net_put_dec(PCNET_RX_BUFFERS);
-  net_puts(" RX, ");
-  net_put_dec(PCNET_TX_BUFFERS);
-  net_puts(" TX)\n");
+  KLOG_INFO_DEC("PCNET", "RX Descriptors: ", PCNET_RX_BUFFERS);
+  KLOG_INFO_DEC("PCNET", "TX Descriptors: ", PCNET_TX_BUFFERS);
 
   /* Étape 10: Configurer l'Initialization Block */
   dev->init_block->mode = 0; /* Normal operation */
@@ -765,7 +662,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
   dev->init_block->rdra = (uint32_t)(uintptr_t)dev->rx_ring;
   dev->init_block->tdra = (uint32_t)(uintptr_t)dev->tx_ring;
 
-  net_puts("[PCnet] Init Block configured\n");
+  KLOG_INFO("PCNET", "Init Block configured");
 
   /* Stocker l'instance globale */
   g_pcnet_dev = dev;
@@ -816,9 +713,7 @@ PCNetDevice *pcnet_init(PCIDevice *pci_dev) {
     netdev_register(g_pcnet_netif);
   }
 
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[PCnet] Driver initialized successfully!\n");
-  net_reset_color();
+  KLOG_INFO("PCNET", "Driver initialized successfully!");
 
   return dev;
 }
@@ -827,8 +722,7 @@ bool pcnet_start(PCNetDevice *dev) {
   if (dev == NULL)
     return false;
 
-  net_reset_color();
-  net_puts("[PCnet] Starting card...\n");
+  KLOG_INFO("PCNET", "Starting card...");
 
   /* Étape 1: Écrire l'adresse de l'Init Block dans CSR1 et CSR2 */
   uint32_t init_addr = (uint32_t)(uintptr_t)dev->init_block;
@@ -836,14 +730,12 @@ bool pcnet_start(PCNetDevice *dev) {
   pcnet_write_csr(dev, CSR1, init_addr & 0xFFFF);         /* 16 bits bas */
   pcnet_write_csr(dev, CSR2, (init_addr >> 16) & 0xFFFF); /* 16 bits hauts */
 
-  net_puts("[PCnet] Init Block address written to CSR1/CSR2: ");
-  net_put_hex(init_addr);
-  net_puts("\n");
+  KLOG_INFO_HEX("PCNET", "Init Block address written: ", init_addr);
 
   /* Étape 2: Lancer l'initialisation SANS interruptions (juste INIT) */
   pcnet_write_csr(dev, CSR0, CSR0_INIT);
 
-  net_puts("[PCnet] Waiting for IDON...\n");
+  KLOG_INFO("PCNET", "Waiting for IDON...");
 
   /* Étape 3: Attendre IDON (Initialization Done) par polling */
   int timeout = 100000;
@@ -857,18 +749,11 @@ bool pcnet_start(PCNetDevice *dev) {
   }
 
   if (timeout == 0) {
-    net_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    net_puts("[PCnet] ERROR: Timeout waiting for IDON!\n");
-    net_puts("[PCnet] CSR0 = ");
-    net_put_hex(csr0);
-    net_puts("\n");
+    KLOG_ERROR_HEX("PCNET", "Timeout waiting for IDON! CSR0: ", csr0);
     return false;
   }
 
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[PCnet] IDON received! CSR0 = ");
-  net_put_hex(csr0);
-  net_puts("\n");
+  KLOG_INFO_HEX("PCNET", "IDON received! CSR0: ", csr0);
 
   /* Acquitter IDON en écrivant 1 */
   pcnet_write_csr(dev, CSR0, CSR0_IDON);
@@ -879,19 +764,7 @@ bool pcnet_start(PCNetDevice *dev) {
   /* Vérifier que la carte est démarrée */
   csr0 = pcnet_read_csr(dev, CSR0);
 
-  net_reset_color();
-  net_puts("[PCnet] After START, CSR0 = ");
-  net_put_hex(csr0);
-  net_puts(" (");
-  if (csr0 & CSR0_TXON)
-    net_puts("TXON ");
-  if (csr0 & CSR0_RXON)
-    net_puts("RXON ");
-  if (csr0 & CSR0_IENA)
-    net_puts("IENA ");
-  if (csr0 & CSR0_STRT)
-    net_puts("STRT ");
-  net_puts(")\n");
+  KLOG_INFO_HEX("PCNET", "After START, CSR0: ", csr0);
 
   dev->initialized = true;
 
@@ -901,9 +774,7 @@ bool pcnet_start(PCNetDevice *dev) {
     g_pcnet_netif->flags |= NETIF_FLAG_UP | NETIF_FLAG_RUNNING;
   }
 
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("\n*** PCnet Started! Ready to send/receive packets ***\n\n");
-  net_reset_color();
+  KLOG_INFO("PCNET", "PCnet Started! Ready to send/receive packets");
 
   return true;
 }
@@ -924,7 +795,7 @@ bool pcnet_send(PCNetDevice *dev, const uint8_t *data, uint16_t len) {
   /* Vérifier que le descripteur est libre (OWN = 0) */
   if (desc->status & 0x8000) {
     /* Descripteur encore possédé par la carte */
-    net_puts("[PCnet] TX buffer busy!\n");
+    KLOG_WARN("PCNET", "TX buffer busy!");
     return false;
   }
 
@@ -971,7 +842,7 @@ void pcnet_stop(PCNetDevice *dev) {
   /* Écrire STOP dans CSR0 */
   pcnet_write_csr(dev, CSR0, CSR0_STOP);
 
-  net_puts("[PCnet] Card stopped\n");
+  KLOG_INFO("PCNET", "Card stopped");
 }
 
 PCNetDevice *pcnet_get_device(void) { return g_pcnet_dev; }

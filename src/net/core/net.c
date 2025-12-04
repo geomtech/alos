@@ -3,8 +3,8 @@
 #include "../../drivers/net/pcnet.h"
 #include "../../drivers/net/virtio_net.h"
 #include "../../drivers/net/e1000e.h"
-#include "../netlog.h"
 #include "netdev.h"
+#include "../../kernel/klog.h"
 
 /*
  * Variables globales LEGACY - DEPRECATED
@@ -33,16 +33,8 @@ void net_init(uint8_t *mac) {
   }
 
   /* Afficher l'état initial (en attente de DHCP) */
-  net_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  net_puts("[NET] Network layer initialized\n");
-  net_puts("      MAC:     ");
-  for (int i = 0; i < 6; i++) {
-    if (i > 0)
-      net_putc(':');
-    net_put_hex_byte(MY_MAC[i]);
-  }
-  net_puts("\n      Status:  Waiting for DHCP or static configuration\n");
-  net_reset_color();
+  KLOG_INFO("NET", "Network layer initialized");
+  KLOG_INFO("NET", "Status: Waiting for DHCP or static configuration");
 }
 
 /**
