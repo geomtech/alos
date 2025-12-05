@@ -1,6 +1,7 @@
 /* src/gui/gui.c - Implémentation du point d'entrée GUI */
 
 #include "gui.h"
+#include "ssfn_render.h"
 #include "../kernel/mouse.h"
 #include "../mm/kheap.h"
 #include "../include/string.h"
@@ -47,6 +48,9 @@ int gui_init(struct limine_framebuffer* fb) {
     /* Initialise les polices */
     font_init();
     
+    /* Initialise SSFN avec Unifont (support UTF-8) */
+    ssfn_init();
+    
     /* Initialise le compositeur */
     if (compositor_init(g_framebuffer) != 0) {
         return -1;
@@ -81,6 +85,19 @@ int gui_init(struct limine_framebuffer* fb) {
     
     g_state = GUI_STATE_RUNNING;
     g_quit_requested = false;
+    
+    /* Test UTF-8 avec SSFN */
+    if (ssfn_is_initialized()) {
+        ssfn_set_fg(0xFFFFFFFF);  /* Blanc */
+        ssfn_print_at(20, 50, "ALOS - UTF-8 Test:");
+        ssfn_print_at(20, 70, "English: Hello World!");
+        ssfn_print_at(20, 90, "Français: Bonjour le monde! éàüö");
+        ssfn_print_at(20, 110, "日本語: こんにちは世界");
+        ssfn_print_at(20, 130, "中文: 你好世界");
+        ssfn_print_at(20, 150, "Русский: Привет мир");
+        ssfn_print_at(20, 170, "العربية: مرحبا بالعالم");
+        ssfn_print_at(20, 190, "Emoji: ★ ♠ ♣ ♥ ♦ ☺ ☻");
+    }
     
     return 0;
 }
@@ -233,23 +250,45 @@ static void demo_window_draw(window_t* win) {
     /* Fond de contenu */
     draw_rect(win->content_bounds, COLOR_WINDOW_BG);
     
-    /* Texte de démonstration */
-    const char* text = "Bienvenue dans ALOS GUI!";
-    text_bounds_t tb = measure_text(text, font_system);
-    int32_t tx = win->content_bounds.x + 
-                 ((int32_t)win->content_bounds.width - (int32_t)tb.width) / 2;
-    int32_t ty = win->content_bounds.y + 20;
+    int32_t x = win->content_bounds.x + 20;
+    int32_t y = win->content_bounds.y + 20;
     
-    draw_text(text, point_make(tx, ty), font_system, COLOR_TEXT_PRIMARY);
+    /* Utiliser SSFN pour le texte UTF-8 */
+    if (ssfn_is_initialized()) {
+        ssfn_set_fg(COLOR_TEXT_PRIMARY);
+        ssfn_print_at(x, y, "Bienvenue dans ALOS GUI!");
+        
+        y += 24;
+        ssfn_set_fg(0xFF666666);
+        ssfn_print_at(x, y, "Système d'exploitation éducatif");
+        
+        y += 24;
+        ssfn_print_at(x, y, "Fonctionnalités: réseau, système de fichiers, GUI");
+        
+        y += 32;
+        ssfn_set_fg(COLOR_TEXT_PRIMARY);
+        ssfn_print_at(x, y, "Support UTF-8 complet:");
+        
+        y += 20;
+        ssfn_set_fg(0xFF444444);
+        ssfn_print_at(x + 10, y, "• Français: àéèêëïôùûç");
+        y += 18;
+        ssfn_print_at(x + 10, y, "• Deutsch: äöüß");
+        y += 18;
+        ssfn_print_at(x + 10, y, "• 日本語: ひらがな");
+        y += 18;
+        ssfn_print_at(x + 10, y, "• Русский: Привет");
+    }
     
-    /* Quelques éléments de démo */
-    int32_t y = ty + 40;
+    y += 30;
     
     /* Bouton */
-    rect_t btn = {win->content_bounds.x + 20, y, 120, 32};
+    rect_t btn = {win->content_bounds.x + 20, y, 140, 32};
     draw_rounded_rect(btn, 6, COLOR_MACOS_BLUE);
-    draw_text_ex("Cliquez-moi", btn, font_system, rgba(255, 255, 255, 255), 
-                 text_options_centered());
+    if (ssfn_is_initialized()) {
+        ssfn_set_fg(0xFFFFFFFF);
+        ssfn_print_at(btn.x + 20, btn.y + 8, "Démarrer ▶");
+    }
     
     y += 50;
     
@@ -258,13 +297,6 @@ static void demo_window_draw(window_t* win) {
     draw_rounded_rect(progress_bg, 4, COLOR_GRAY_2);
     rect_t progress_fg = {win->content_bounds.x + 20, y, 140, 8};
     draw_rounded_rect(progress_fg, 4, COLOR_MACOS_BLUE);
-    
-    y += 30;
-    
-    /* Texte secondaire */
-    draw_text_alpha("Interface graphique style macOS", 
-                   point_make(win->content_bounds.x + 20, y),
-                   font_system, u32_to_rgba(COLOR_GRAY_5));
 }
 
 window_t* gui_create_demo_window(const char* title, int32_t x, int32_t y) {

@@ -90,8 +90,8 @@ CONFIG_SRC = src/config/config.c
 CONFIG_OBJ = src/config/config.o
 
 # GUI (Interface graphique style macOS)
-GUI_SRC = src/gui/render.c src/gui/font.c src/gui/fonts/roboto.c src/gui/compositor.c src/gui/wm.c src/gui/menubar.c src/gui/dock.c src/gui/events.c src/gui/gui.c
-GUI_OBJ = src/gui/render.o src/gui/font.o src/gui/fonts/roboto.o src/gui/compositor.o src/gui/wm.o src/gui/menubar.o src/gui/dock.o src/gui/events.o src/gui/gui.o
+GUI_SRC = src/gui/render.c src/gui/font.c src/gui/fonts/roboto.c src/gui/ssfn_render.c src/gui/fonts/unifont_sfn.c src/gui/compositor.c src/gui/wm.c src/gui/menubar.c src/gui/dock.c src/gui/events.c src/gui/gui.c
+GUI_OBJ = src/gui/render.o src/gui/font.o src/gui/fonts/roboto.o src/gui/ssfn_render.o src/gui/fonts/unifont_sfn.o src/gui/compositor.o src/gui/wm.o src/gui/menubar.o src/gui/dock.o src/gui/events.o src/gui/gui.o
 
 # Tous les objets
 OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ) $(GUI_OBJ)
