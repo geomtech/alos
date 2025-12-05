@@ -503,13 +503,39 @@ void condvar_wait(condvar_t *cv, mutex_t *mutex)
     /* Release the mutex - this allows other threads to signal us */
     mutex_unlock(mutex);
     
-    /* Block until signaled */
-    scheduler_schedule();
+    /* SOLUTION: Marquer qu'on doit céder le CPU, puis boucler.
+     * Le syscall dispatcher vérifiera ce flag et fera le yield proprement. */
+    current->needs_yield = true;
+    
+    /* Wait until signaled - keep checking in a loop.
+     * Each iteration checks if we were woken up. */
+    while (current->state == THREAD_STATE_BLOCKED) {
+        /* Si on est en kernel thread, yield directement */
+        if (current->owner == NULL) {
+            scheduler_schedule();
+        } else {
+            /* Thread user : juste une pause courte.
+             * Le syscall dispatcher fera le vrai yield. */
+            __asm__ volatile("pause");
+            
+            /* Si on a été réveillé (signaled), sortir */
+            if (current->state != THREAD_STATE_BLOCKED) {
+                break;
+            }
+            
+            /* Sinon, yield via syscall dispatcher.
+             * IMPORTANT: On ne peut PAS appeler scheduler_schedule ici
+             * car on est au milieu d'un syscall avec un frame incomplet !
+             * À la place, on retourne au syscall qui va vérifier needs_yield */
+            break;
+        }
+    }
     
     /* Re-acquire mutex before returning */
     mutex_lock(mutex);
     
     current->waiting_queue = NULL;
+    current->needs_yield = false;  /* Reset flag */
     
     cpu_restore_flags(flags);
 }

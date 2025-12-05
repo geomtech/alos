@@ -442,12 +442,6 @@ void shell_run(void)
     char line[SHELL_LINE_MAX];
     char* argv[SHELL_ARGS_MAX];
     
-    /* AUTO-START: Run server command for testing */
-    {
-        char* test_argv[] = { "server", NULL };
-        command_execute(1, test_argv);
-    }
-    
     while (1) {
         /* Afficher le prompt avec le cwd */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);

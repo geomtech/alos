@@ -225,6 +225,10 @@ struct thread {
     /* Reaper support */
     thread_t *zombie_next;          /* Prochain dans la zombie list du reaper */
     
+    /* Blocking syscall support */
+    bool needs_yield;               /* True if thread should yield after syscall */
+    struct syscall_context *syscall_ctx;  /* Context for blocking syscalls (NULL if not in syscall) */
+    
     /* Liste chaînée pour le scheduler */
     thread_t *sched_next;           /* Prochain dans la run queue */
     thread_t *sched_prev;           /* Précédent dans la run queue */

@@ -17,6 +17,7 @@
 #include "../net/core/netdev.h"
 #include "../net/l3/icmp.h"
 #include "../net/l4/http.h"
+#include "../net/l4/httpd.h"
 #include "shell.h"
 
 /* ========================================
@@ -55,6 +56,7 @@ static int cmd_synctest(int argc, char **argv);
 static int cmd_schedtest(int argc, char **argv);
 static int cmd_worktest(int argc, char **argv);
 static int cmd_wget(int argc, char **argv);
+static int cmd_httpd(int argc, char **argv);
 
 /* ========================================
  * Table des commandes
@@ -95,6 +97,7 @@ static shell_command_t commands[] = {
     {"rm", "Remove a file", cmd_rm},
     {"rmdir", "Remove an empty directory", cmd_rmdir},
     {"wget", "Download a file via HTTP", cmd_wget},
+    {"httpd", "Start/stop HTTP server (httpd start|stop|status)", cmd_httpd},
 
     /* Marqueur de fin */
     {NULL, NULL, NULL}};
@@ -2411,4 +2414,113 @@ static int cmd_wget(int argc, char **argv) {
   }
 
   return result;
+}
+
+/* ========================================
+ * cmd_httpd - HTTP Server Control
+ * ======================================== */
+
+static int cmd_httpd(int argc, char **argv) {
+  if (argc < 2) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("Usage: httpd <start|stop|status> [port]\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("\nCommands:\n");
+    console_puts("  httpd start [port]  - Start HTTP server (default port 80)\n");
+    console_puts("  httpd stop          - Stop HTTP server\n");
+    console_puts("  httpd status        - Show server status\n");
+    console_puts("\nNote: Files are served from /www directory.\n");
+    return -1;
+  }
+
+  const char *cmd = argv[1];
+
+  if (strcmp(cmd, "start") == 0) {
+    /* Start server */
+    uint16_t port = HTTPD_DEFAULT_PORT;
+    if (argc >= 3) {
+      port = (uint16_t)atoi(argv[2]);
+      if (port == 0) port = HTTPD_DEFAULT_PORT;
+    }
+
+    if (httpd_is_running()) {
+      console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+      console_puts("HTTP server is already running on port ");
+      console_put_dec(httpd_get_port());
+      console_puts("\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      return 0;
+    }
+
+    console_puts("Starting HTTP server on port ");
+    console_put_dec(port);
+    console_puts("...\n");
+
+    if (httpd_start(port) == 0) {
+      console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+      console_puts("HTTP server started successfully!\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      console_puts("Serving files from /www\n");
+      return 0;
+    } else {
+      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+      console_puts("Failed to start HTTP server\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      return -1;
+    }
+
+  } else if (strcmp(cmd, "stop") == 0) {
+    /* Stop server */
+    if (!httpd_is_running()) {
+      console_set_color(VGA_COLOR_YELLOW, VGA_COLOR_BLACK);
+      console_puts("HTTP server is not running\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      return 0;
+    }
+
+    console_puts("Stopping HTTP server...\n");
+    httpd_stop();
+    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+    console_puts("HTTP server stopped\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return 0;
+
+  } else if (strcmp(cmd, "status") == 0) {
+    /* Show status */
+    console_puts("\n");
+    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+    console_puts("=== HTTP Server Status ===\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("\n");
+
+    if (httpd_is_running()) {
+      console_puts("Status: ");
+      console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+      console_puts("RUNNING\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+      console_puts("Port:   ");
+      console_put_dec(httpd_get_port());
+      console_puts("\n");
+
+      console_puts("Root:   /www\n");
+    } else {
+      console_puts("Status: ");
+      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+      console_puts("STOPPED\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    }
+
+    console_puts("\n");
+    return 0;
+
+  } else {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("Unknown command: ");
+    console_puts(cmd);
+    console_puts("\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    console_puts("Use 'httpd' for usage information.\n");
+    return -1;
+  }
 }
