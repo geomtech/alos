@@ -45,8 +45,8 @@ ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupt
 ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c src/kernel/mouse.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o src/kernel/mouse.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
@@ -89,8 +89,12 @@ SHELL_OBJ = src/shell/shell.o src/shell/commands.o
 CONFIG_SRC = src/config/config.c
 CONFIG_OBJ = src/config/config.o
 
+# GUI (Interface graphique style macOS)
+GUI_SRC = src/gui/render.c src/gui/font.c src/gui/fonts/roboto.c src/gui/compositor.c src/gui/wm.c src/gui/menubar.c src/gui/dock.c src/gui/events.c src/gui/gui.c
+GUI_OBJ = src/gui/render.o src/gui/font.o src/gui/fonts/roboto.o src/gui/compositor.o src/gui/wm.o src/gui/menubar.o src/gui/dock.o src/gui/events.o src/gui/gui.o
+
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ) $(GUI_OBJ)
 
 # Cible finale - Kernel ELF 64-bit
 alos.elf: $(OBJ)
@@ -199,6 +203,14 @@ src/shell/%.o: src/shell/%.c
 src/config/%.o: src/config/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# GUI
+src/gui/%.o: src/gui/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+# GUI Fonts
+src/gui/fonts/%.o: src/gui/fonts/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # MMIO subsystem
 src/kernel/mmio/%.o: src/kernel/mmio/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
@@ -212,7 +224,7 @@ clean:
 	rm -f src/arch/x86_64/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
-	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o
+	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o src/gui/*.o src/gui/fonts/*.o
 	rm -f alos.elf alos.iso
 	rm -rf iso_root
 
@@ -222,7 +234,23 @@ distclean: clean
 
 # Test rapide avec QEMU x86-64 (avec carte réseau virtio connectée en mode user)
 # SLIRP network: 10.0.2.0/24, gateway 10.0.2.2, DHCP range 10.0.2.15-10.0.2.31
-run: iso
+run: run-vbox
+
+run-vbox: iso
+	@echo "=== Starting VirtualBox ==="
+	@if ! VBoxManage list vms | grep -q "\"ALOS\""; then \
+		echo "Creating VM 'ALOS'..."; \
+		VBoxManage createvm --name "ALOS" --ostype "Other_64" --register; \
+		VBoxManage modifyvm "ALOS" --memory 1024 --vram 16 --graphicscontroller vmsvga; \
+		VBoxManage storagectl "ALOS" --name "IDE Controller" --add ide; \
+		VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium alos.iso; \
+	else \
+		echo "Updating ISO for VM 'ALOS'..."; \
+		VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium alos.iso; \
+	fi
+	VBoxManage startvm "ALOS"
+
+run-qemu: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
 
 run-e1000: iso

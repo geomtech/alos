@@ -57,6 +57,10 @@ static int cmd_schedtest(int argc, char **argv);
 static int cmd_worktest(int argc, char **argv);
 static int cmd_wget(int argc, char **argv);
 static int cmd_httpd(int argc, char **argv);
+static int cmd_gui(int argc, char **argv);
+
+/* Déclaration externe de start_gui() depuis kernel.c */
+extern int start_gui(void);
 
 /* ========================================
  * Table des commandes
@@ -98,6 +102,7 @@ static shell_command_t commands[] = {
     {"rmdir", "Remove an empty directory", cmd_rmdir},
     {"wget", "Download a file via HTTP", cmd_wget},
     {"httpd", "Start/stop HTTP server (httpd start|stop|status)", cmd_httpd},
+    {"gui", "Start graphical user interface (macOS style)", cmd_gui},
 
     /* Marqueur de fin */
     {NULL, NULL, NULL}};
@@ -2523,4 +2528,28 @@ static int cmd_httpd(int argc, char **argv) {
     console_puts("Use 'httpd' for usage information.\n");
     return -1;
   }
+}
+
+/* ========================================
+ * Commande GUI
+ * ======================================== */
+
+static int cmd_gui(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+  
+  console_puts("\n");
+  console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+  console_puts("=== ALOS Graphical User Interface ===\n");
+  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  console_puts("\n");
+  
+  int result = start_gui();
+  
+  if (result == 0) {
+    console_puts("\nGUI is now active on the framebuffer.\n");
+    console_puts("The console output is still visible in serial/debug.\n");
+  }
+  
+  return result;
 }

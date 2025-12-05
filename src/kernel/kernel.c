@@ -25,7 +25,10 @@
 #include "../net/l4/dns.h"
 #include "../net/l4/tcp.h"
 #include "../shell/shell.h"
+#include "../gui/gui.h"
 #include "console.h"
+#include "fb_console.h"
+#include "mouse.h"
 #include "keymap.h"
 #include "klog.h"
 #include "process.h"
@@ -405,6 +408,15 @@ void kmain(void) {
       }
     }
 
+    /* ============================================ */
+    /* PS/2 Mouse Driver                            */
+    /* ============================================ */
+    if (mouse_init() == 0) {
+      KLOG_INFO("MOUSE", "PS/2 mouse driver initialized");
+    } else {
+      KLOG_ERROR("MOUSE", "Failed to initialize PS/2 mouse");
+    }
+
     /* Instructions */
     /* console_clear(VGA_COLOR_BLACK); disabled for debugging */
     console_puts("\n");
@@ -443,6 +455,70 @@ void kmain(void) {
 
   /* Ne devrait jamais arriver */
   hcf();
+}
+
+/* ============================================
+ * GUI Support
+ * ============================================ */
+
+/**
+ * Démarre l'interface graphique.
+ * Appelé par la commande shell 'gui' ou au démarrage si configuré.
+ * 
+ * @return 0 en cas de succès, -1 en cas d'erreur
+ */
+int start_gui(void) {
+    if (!g_framebuffer || g_framebuffer->framebuffer_count == 0) {
+        console_puts("Error: No framebuffer available\n");
+        return -1;
+    }
+    
+    struct limine_framebuffer* fb = g_framebuffer->framebuffers[0];
+    if (!fb) {
+        console_puts("Error: Framebuffer is NULL\n");
+        return -1;
+    }
+    
+    console_puts("Starting ALOS GUI...\n");
+    console_puts("  Resolution: ");
+    console_put_dec((uint32_t)fb->width);
+    console_puts("x");
+    console_put_dec((uint32_t)fb->height);
+    console_puts(", ");
+    console_put_dec((uint32_t)fb->bpp);
+    console_puts(" bpp\n");
+    
+    /* Désactive la console framebuffer AVANT d'initialiser le GUI */
+    fb_console_set_enabled(false);
+    
+    /* Initialise le GUI */
+    if (gui_init(fb) != 0) {
+        fb_console_set_enabled(true);  /* Réactive en cas d'erreur */
+        console_puts("Error: Failed to initialize GUI\n");
+        return -1;
+    }
+    
+    /* Configure les limites de la souris et l'initialise */
+    mouse_set_bounds((uint32_t)fb->width, (uint32_t)fb->height);
+    mouse_set_position((int32_t)fb->width / 2, (int32_t)fb->height / 2);
+    
+    /* Enregistre le callback pour les événements souris */
+    mouse_set_callback(gui_mouse_callback);
+    
+    /* Configure les menus et le dock de démonstration */
+    gui_setup_demo_menus();
+    gui_setup_demo_dock();
+    
+    /* Crée une fenêtre de démonstration */
+    gui_create_demo_window("Bienvenue", 150, 100);
+    
+    /* Effectue le rendu complet initial */
+    gui_render_full();
+    
+    /* Note: la console est maintenant désactivée, ces messages ne s'afficheront pas
+     * sur le framebuffer mais pourraient aller vers un port série si configuré */
+    
+    return 0;
 }
 
 /* ============================================

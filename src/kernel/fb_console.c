@@ -232,6 +232,7 @@ static int g_view_start = 0;
 static uint32_t g_fg_color = FB_COLOR_WHITE;
 static uint32_t g_bg_color = FB_COLOR_BLACK;
 static bool g_initialized = false;
+static bool g_enabled = true;  /* Console enabled (disabled when GUI is active) */
 
 /* Console buffer (character + colors) */
 typedef struct {
@@ -415,7 +416,7 @@ void fb_console_set_vga_color(uint8_t fg, uint8_t bg) {
 }
 
 void fb_console_putc(char c) {
-    if (!g_initialized) return;
+    if (!g_initialized || !g_enabled) return;
     
     int buffer_row = g_view_start + g_cursor_row;
     
@@ -504,7 +505,7 @@ void fb_console_put_dec(uint64_t value) {
 }
 
 void fb_console_refresh(void) {
-    if (!g_initialized) return;
+    if (!g_initialized || !g_enabled) return;
     
     for (int row = 0; row < FB_CONSOLE_ROWS; row++) {
         int buffer_row = g_view_start + row;
@@ -537,4 +538,12 @@ void fb_console_get_cursor(int *col, int *row) {
 void fb_console_set_cursor(int col, int row) {
     if (col >= 0 && col < FB_CONSOLE_COLS) g_cursor_col = col;
     if (row >= 0 && row < FB_CONSOLE_ROWS) g_cursor_row = row;
+}
+
+void fb_console_set_enabled(bool enabled) {
+    g_enabled = enabled;
+}
+
+bool fb_console_is_enabled(void) {
+    return g_enabled;
 }

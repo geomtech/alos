@@ -108,4 +108,16 @@ void fb_console_get_cursor(int *col, int *row);
  */
 void fb_console_set_cursor(int col, int row);
 
+/**
+ * Enable or disable the framebuffer console.
+ * When disabled, all output functions become no-ops.
+ * Used when switching to GUI mode.
+ */
+void fb_console_set_enabled(bool enabled);
+
+/**
+ * Check if the framebuffer console is enabled.
+ */
+bool fb_console_is_enabled(void);
+
 #endif /* FB_CONSOLE_H */

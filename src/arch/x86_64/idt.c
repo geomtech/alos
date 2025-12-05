@@ -333,6 +333,7 @@ void exception_handler(struct interrupt_frame *frame)
 /* External handlers */
 extern void timer_handler_c(void);
 extern void keyboard_handler_c(void);
+extern void mouse_irq_handler(void);
 extern void network_irq_handler(void);
 extern void ata_irq_handler(void);
 
@@ -349,6 +350,9 @@ void irq_handler(struct interrupt_frame *frame)
             break;
         case 11: /* Network */
             network_irq_handler();
+            break;
+        case 12: /* PS/2 Mouse */
+            mouse_irq_handler();
             break;
         case 14: /* Primary ATA */
             ata_irq_handler();
