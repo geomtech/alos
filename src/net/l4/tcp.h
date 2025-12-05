@@ -129,13 +129,10 @@ typedef struct tcp_socket {
     uint16_t    recv_tail;      /* Where to read next */
     uint16_t    recv_count;     /* Number of bytes in buffer */
     
-    /* Synchronization */
-    condvar_t   state_changed;  /* Signaled when state changes or data arrives */
-    wait_queue_t recv_waitqueue; /* IRQ-safe wait queue for recv */
-    
-    /* Accept queue synchronization (for LISTEN sockets only) */
-    condvar_t   accept_cv;      /* Signaled when a new client connection is ready */
-    mutex_t     accept_mutex;   /* Mutex for accept_cv */
+    /* Synchronization (all IRQ-safe wait queues) */
+    wait_queue_t state_waitqueue;  /* Signaled when state changes */
+    wait_queue_t recv_waitqueue;   /* IRQ-safe wait queue for recv */
+    wait_queue_t accept_waitqueue; /* IRQ-safe wait queue for accept (LISTEN sockets) */
 } tcp_socket_t;
 
 /* Internal socket flags */

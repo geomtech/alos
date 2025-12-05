@@ -156,9 +156,9 @@ static void tcp_init_socket(tcp_socket_t* sock)
     for (int j = 0; j < 4; j++) {
         sock->remote_ip[j] = 0;
     }
-    condvar_init(&sock->state_changed);
-    condvar_init(&sock->accept_cv);
-    mutex_init(&sock->accept_mutex, MUTEX_TYPE_NORMAL);
+    wait_queue_init(&sock->state_waitqueue);
+    wait_queue_init(&sock->recv_waitqueue);
+    wait_queue_init(&sock->accept_waitqueue);
 }
 
 /**
@@ -413,8 +413,8 @@ void tcp_close(tcp_socket_t* sock)
     sock->in_use = false;  /* Marquer comme libre */
     tcp_socket_count--;    /* Décrémenter le compteur */
     
-    /* Signal state change */
-    condvar_broadcast(&sock->state_changed);
+    /* Signal state change (IRQ-safe) */
+    wait_queue_wake_all(&sock->state_waitqueue);
 }
 
 /**
@@ -446,8 +446,8 @@ void tcp_close_and_relisten(tcp_socket_t* sock, uint16_t listen_port)
     }
     sock->local_port = listen_port;
     
-    /* Signal state change pour débloquer accept() */
-    condvar_broadcast(&sock->state_changed);
+    /* Signal state change pour débloquer accept() (IRQ-safe) */
+    wait_queue_wake_all(&sock->state_waitqueue);
 }
 
 /* ===========================================
@@ -681,7 +681,9 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 /* Passer en état SYN_RCVD */
                 client_sock->state = TCP_STATE_SYN_RCVD;
                 client_sock->window = TCP_WINDOW_SIZE;
-                condvar_init(&client_sock->state_changed);
+                wait_queue_init(&client_sock->state_waitqueue);
+                wait_queue_init(&client_sock->recv_waitqueue);
+                wait_queue_init(&client_sock->accept_waitqueue);
                 
                 /* Envoyer SYN-ACK depuis le socket client */
                 tcp_send_packet(client_sock, TCP_FLAG_SYN | TCP_FLAG_ACK, NULL, 0);
@@ -713,13 +715,13 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     
                     KLOG_INFO("TCP", "Connection ESTABLISHED");
                     
-                    /* Signal connection established on client socket */
-                    condvar_broadcast(&sock->state_changed);
+                    /* Signal connection established on client socket (IRQ-safe) */
+                    wait_queue_wake_all(&sock->state_waitqueue);
                     
-                    /* Signal the LISTEN socket that a new client is ready */
+                    /* Signal the LISTEN socket that a new client is ready (IRQ-safe) */
                     tcp_socket_t* listen_sock = tcp_find_listening_socket(sock->local_port);
                     if (listen_sock != NULL) {
-                        condvar_broadcast(&listen_sock->accept_cv);
+                        wait_queue_wake_all(&listen_sock->accept_waitqueue);
                     }
                     
                     /* Si le paquet ACK contient aussi des données (PSH+ACK), les traiter */
@@ -756,12 +758,12 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                         KLOG_WARN("TCP", "Accepting ACK anyway (close enough)");
                         
                         sock->state = TCP_STATE_ESTABLISHED;
-                        condvar_broadcast(&sock->state_changed);
+                        wait_queue_wake_all(&sock->state_waitqueue);
                         
-                        /* Signal the LISTEN socket that a new client is ready */
+                        /* Signal the LISTEN socket that a new client is ready (IRQ-safe) */
                         tcp_socket_t* listen_sock2 = tcp_find_listening_socket(sock->local_port);
                         if (listen_sock2 != NULL) {
-                            condvar_broadcast(&listen_sock2->accept_cv);
+                            wait_queue_wake_all(&listen_sock2->accept_waitqueue);
                         }
                     }
                 }
@@ -841,8 +843,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     sock->remote_ip[i] = 0;
                 }
                 
-                /* Signal reset */
-                condvar_broadcast(&sock->state_changed);
+                /* Signal reset (IRQ-safe) */
+                wait_queue_wake_all(&sock->state_waitqueue);
             }
             break;
         
@@ -860,13 +862,13 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                     /* Juste ACK - passer en FIN_WAIT_2 */
                     sock->state = TCP_STATE_FIN_WAIT_2;
                 }
-                condvar_broadcast(&sock->state_changed);
+                wait_queue_wake_all(&sock->state_waitqueue);
             } else if (flags & TCP_FLAG_FIN) {
                 /* FIN sans ACK - simultaneous close */
                 sock->ack = seq_num + 1;
                 tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
                 sock->state = TCP_STATE_CLOSING;
-                condvar_broadcast(&sock->state_changed);
+                wait_queue_wake_all(&sock->state_waitqueue);
             }
             break;
             
@@ -877,7 +879,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
                 sock->state = TCP_STATE_TIME_WAIT;
                 KLOG_INFO("TCP", "FIN received, connection closing gracefully");
-                condvar_broadcast(&sock->state_changed);
+                wait_queue_wake_all(&sock->state_waitqueue);
             }
             break;
             
@@ -885,7 +887,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             /* Simultaneous close - on attend l'ACK de notre FIN */
             if (flags & TCP_FLAG_ACK) {
                 sock->state = TCP_STATE_TIME_WAIT;
-                condvar_broadcast(&sock->state_changed);
+                wait_queue_wake_all(&sock->state_waitqueue);
             }
             break;
             
@@ -944,8 +946,9 @@ tcp_socket_t* tcp_socket_create(void)
     for (int i = 0; i < 4; i++) {
         sock->remote_ip[i] = 0;
     }
-    condvar_init(&sock->state_changed);
+    wait_queue_init(&sock->state_waitqueue);
     wait_queue_init(&sock->recv_waitqueue);
+    wait_queue_init(&sock->accept_waitqueue);
     
     return sock;
 }
@@ -1079,7 +1082,9 @@ tcp_socket_t* tcp_accept(tcp_socket_t* listen_sock)
         for (int i = 0; i < TCP_RECV_BUFFER_SIZE; i++) {
             client_sock->recv_buffer[i] = listen_sock->recv_buffer[i];
         }
-        condvar_init(&client_sock->state_changed);
+        wait_queue_init(&client_sock->state_waitqueue);
+        wait_queue_init(&client_sock->recv_waitqueue);
+        wait_queue_init(&client_sock->accept_waitqueue);
         
         /* Remettre le socket serveur en LISTEN pour accepter d'autres connexions */
         listen_sock->state = TCP_STATE_LISTEN;

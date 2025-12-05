@@ -698,6 +698,13 @@ static int sys_listen(int fd, int backlog)
  * @param len   Pointeur vers la taille (ignoré)
  * @return NOUVEAU FD pour le socket client, ou -1 si erreur/timeout/interruption
  */
+/* Prédicat pour wait_queue: vérifie si un client est prêt */
+static bool accept_client_ready(void *context)
+{
+    tcp_socket_t* listen_sock = (tcp_socket_t*)context;
+    return tcp_find_ready_client(listen_sock->local_port) != NULL;
+}
+
 static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
 {
     (void)len;
@@ -712,93 +719,59 @@ static int sys_accept(int fd, sockaddr_in_t* addr, int* len)
         return -1;
     }
     
-    uint16_t port = listen_sock->local_port;
-    
     /* Chercher un client prêt SANS bloquer */
-    tcp_socket_t* client_sock = tcp_find_ready_client(port);
+    tcp_socket_t* client_sock = tcp_find_ready_client(listen_sock->local_port);
     
-    if (client_sock != NULL) {
-        /* Connexion immédiatement disponible - path rapide */
-        goto accept_ready;
-    }
-    
-    /* Pas de connexion prête - polling avec timeout (busy-wait) */
-    KLOG_DEBUG("SYSCALL", "sys_accept: no client ready, polling...");
-    
-    uint64_t start_tick = timer_get_ticks();
-    uint64_t timeout_ticks = 10000;  /* 10 secondes (1 tick = 1ms) */
-    uint64_t check_interval = 100;   /* Vérifier toutes les 100ms */
-    uint64_t last_check = start_tick;
-    
-    while ((timer_get_ticks() - start_tick) < timeout_ticks) {
-        uint64_t now = timer_get_ticks();
+    if (client_sock == NULL) {
+        /* Pas de connexion prête - attendre avec wait_queue (IRQ-safe) */
+        KLOG_DEBUG("SYSCALL", "sys_accept: no client ready, waiting...");
         
-        /* Vérifier seulement toutes les 100ms pour ne pas surcharger */
-        if ((now - last_check) >= check_interval) {
-            last_check = now;
-            
-            client_sock = tcp_find_ready_client(port);
-            if (client_sock != NULL) {
-                goto accept_ready;
-            }
-            
-            /* Vérifier si CTRL+C ou autres interruptions */
-            int key = sys_kbhit();
-            if (key == 0x03 || key == 0x04) {  /* CTRL+C ou CTRL+D */
-                KLOG_DEBUG("SYSCALL", "sys_accept: interrupted by user");
-                return -1;
-            }
-        }
-        
-        /* Pause CPU pour économiser l'énergie (sans changer de thread) */
-        __asm__ volatile("pause");
-    }
-    
-    /* Timeout atteint */
-    KLOG_DEBUG("SYSCALL", "sys_accept: timeout waiting for connection");
-    return -1;
-    
-accept_ready:
-    {
-        /* client_sock est déjà défini et valide à ce point */
-        tcp_socket_t* listen_sock = fd_table[fd].socket;
-        tcp_socket_t* client_sock = tcp_find_ready_client(listen_sock->local_port);
-        if (!client_sock) {
-            /* Ne devrait pas arriver */
-            KLOG_ERROR("SYSCALL", "sys_accept: no client after ready check!");
+        /* Attendre avec timeout de 10 secondes */
+        bool got_client = wait_queue_wait_timeout(&listen_sock->accept_waitqueue,
+                                                   accept_client_ready, listen_sock,
+                                                   10000);
+        if (!got_client) {
+            KLOG_DEBUG("SYSCALL", "sys_accept: timeout waiting for connection");
             return -1;
         }
         
-        /* Allouer un nouveau FD pour le socket client */
-        int client_fd = fd_alloc();
-        if (client_fd < 0) {
-            KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
-            net_lock();
-            tcp_close(client_sock);
-            net_unlock();
+        /* Re-chercher le client après le réveil */
+        client_sock = tcp_find_ready_client(listen_sock->local_port);
+        if (client_sock == NULL) {
+            KLOG_DEBUG("SYSCALL", "sys_accept: spurious wakeup, no client");
             return -1;
         }
-        
-        /* Configurer le FD */
-        fd_table[client_fd].type = FILE_TYPE_SOCKET;
-        fd_table[client_fd].socket = client_sock;
-        fd_table[client_fd].flags = O_RDWR;
-        
-        /* Remplir l'adresse du client si demandé */
-        if (addr != NULL) {
-            addr->sin_family = AF_INET;
-            addr->sin_port = htons(client_sock->remote_port);
-            addr->sin_addr = ((uint32_t)client_sock->remote_ip[0]) |
-                             ((uint32_t)client_sock->remote_ip[1] << 8) |
-                             ((uint32_t)client_sock->remote_ip[2] << 16) |
-                             ((uint32_t)client_sock->remote_ip[3] << 24);
-        }
-        
-        KLOG_DEBUG_DEC("SYSCALL", "sys_accept: new client fd ", client_fd);
-        
-        /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
-        return client_fd;
     }
+    
+    /* Allouer un nouveau FD pour le socket client */
+    int client_fd = fd_alloc();
+    if (client_fd < 0) {
+        KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
+        net_lock();
+        tcp_close(client_sock);
+        net_unlock();
+        return -1;
+    }
+    
+    /* Configurer le FD */
+    fd_table[client_fd].type = FILE_TYPE_SOCKET;
+    fd_table[client_fd].socket = client_sock;
+    fd_table[client_fd].flags = O_RDWR;
+    
+    /* Remplir l'adresse du client si demandé */
+    if (addr != NULL) {
+        addr->sin_family = AF_INET;
+        addr->sin_port = htons(client_sock->remote_port);
+        addr->sin_addr = ((uint32_t)client_sock->remote_ip[0]) |
+                         ((uint32_t)client_sock->remote_ip[1] << 8) |
+                         ((uint32_t)client_sock->remote_ip[2] << 16) |
+                         ((uint32_t)client_sock->remote_ip[3] << 24);
+    }
+    
+    KLOG_DEBUG_DEC("SYSCALL", "sys_accept: new client fd ", client_fd);
+    
+    /* Retourner le NOUVEAU FD client (pas le FD serveur!) */
+    return client_fd;
 }
 
 /**
