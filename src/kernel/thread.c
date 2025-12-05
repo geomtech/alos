@@ -842,6 +842,7 @@ void thread_sleep_ticks(uint64_t ticks)
 {
     if (!g_current_thread || ticks == 0) return;
     
+    uint64_t flags = cpu_save_flags();
     cpu_cli();
     
     thread_t *thread = g_current_thread;
@@ -865,12 +866,12 @@ void thread_sleep_ticks(uint64_t ticks)
     
     spinlock_unlock(&g_sleep_lock);
     
+    /* scheduler_schedule() gère lui-même cli/sti et le context switch.
+     * Au retour, les interruptions seront dans l'état approprié. */
     scheduler_schedule();
     
-    /* IMPORTANT: Toujours réactiver les interruptions après un sleep.
-     * Le thread doit pouvoir recevoir les IRQ (timer, réseau, etc.)
-     * pour que le système fonctionne correctement. */
-    cpu_sti();
+    /* Restaurer l'état des interruptions d'avant l'appel */
+    cpu_restore_flags(flags);
 }
 
 void thread_sleep_ms(uint32_t ms)

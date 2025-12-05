@@ -1101,8 +1101,7 @@ process_t* process_create_kernel(const char* name, thread_entry_t entry, void* a
 
 void process_sleep_ms(uint32_t ms)
 {
-    thread_yield();
-    // thread_sleep_ms(ms); supprimé car ça faisait planter le système
+    thread_sleep_ms(ms);
 }
 
 void process_yield(void)
