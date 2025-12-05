@@ -742,8 +742,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                         /* Envoyer ACK */
                         tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
                         
-                        /* Signal data received */
-                        condvar_broadcast(&sock->state_changed);
+                        /* Signal data received (IRQ-safe) */
+                        wait_queue_wake_all(&sock->recv_waitqueue);
                     }
                 } else {
                     /* Debug plus détaillé pour comprendre le problème */
@@ -809,8 +809,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 /* Envoyer ACK */
                 tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
                 
-                /* Signal data received */
-                condvar_broadcast(&sock->state_changed);
+                /* Signal data received (IRQ-safe) */
+                wait_queue_wake_all(&sock->recv_waitqueue);
             }
             
             /* Si on reçoit un FIN */
@@ -945,6 +945,7 @@ tcp_socket_t* tcp_socket_create(void)
         sock->remote_ip[i] = 0;
     }
     condvar_init(&sock->state_changed);
+    wait_queue_init(&sock->recv_waitqueue);
     
     return sock;
 }

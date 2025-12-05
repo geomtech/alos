@@ -827,9 +827,8 @@ static int sys_recv(int fd, uint8_t* buf, int len, int flags)
         if (sock->state != TCP_STATE_ESTABLISHED) {
             return 0;
         }
-        /* Sleep 1ms pour permettre aux IRQ de traiter les paquets */
-        //thread_sleep_ms(1);
-        condvar_wait(&sock->state_changed, NULL);
+        /* Attendre les données (IRQ-safe wait queue) */
+        wait_queue_wait(&sock->recv_waitqueue, NULL, NULL);
     }
     
     /* Prendre le lock seulement pour la lecture des données */

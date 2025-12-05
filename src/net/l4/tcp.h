@@ -131,6 +131,7 @@ typedef struct tcp_socket {
     
     /* Synchronization */
     condvar_t   state_changed;  /* Signaled when state changes or data arrives */
+    wait_queue_t recv_waitqueue; /* IRQ-safe wait queue for recv */
     
     /* Accept queue synchronization (for LISTEN sockets only) */
     condvar_t   accept_cv;      /* Signaled when a new client connection is ready */
