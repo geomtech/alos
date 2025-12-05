@@ -278,10 +278,3 @@ run-uefi: iso
 debug: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"
-
-install-userland: src/userland/server.elf
-	@echo "Installing userland programs to disk.img..."
-	/sbin/debugfs -w -R "mkdir /bin" disk.img 2>/dev/null || true
-	/sbin/debugfs -w -R "rm /bin/server" disk.img 2>/dev/null || true
-	/sbin/debugfs -w -R "write src/userland/server.elf /bin/server" disk.img
-	@echo "Done."
