@@ -394,6 +394,9 @@ void kmain(void) {
             /* === Initialisation DNS === */
             if (netif->dns_server != 0) {
               dns_init(netif->dns_server);
+            } else {
+              KLOG_WARN("DNS", "No DNS server from DHCP, using default 1.1.1.1");
+              dns_init(0x01010101);  /* Cloudflare DNS as fallback */
             }
 
             /* === Initialisation TCP === */

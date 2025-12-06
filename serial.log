@@ -20,231 +20,803 @@
 [0.000] [INFO]  [KERNEL] HHDM offset: 0xFFFF8000
 [0.000] [INFO]  [KERNEL] HHDM offset (low): 0x00000000
 [0.000] [INFO]  [KERNEL] Memory map entries: 29
-[0.000] [INFO]  [KERNEL] Total usable RAM (MB): 8143
+[0.000] [INFO]  [KERNEL] Total usable RAM (MB): 8144
 [0.000] [INFO]  [KERNEL] Initializing timer...
 [0.000] [INFO]  [KERNEL] Timer initialized
-[0.000] [INFO]  [KERNEL] Interrupts enabled
+[0.001] [INFO]  [KERNEL] Interrupts enabled
 [0.002] [INFO]  [PMM] Total blocks: 1048576
-[0.002] [INFO]  [PMM] Used blocks: 143529
+[0.002] [INFO]  [PMM] Used blocks: 143514
 [0.002] [INFO]  [PMM] === Physical Memory Manager ===
-[0.003] [INFO]  [PMM] Free blocks: 905047
-[0.003] [INFO]  [PMM] Free memory (KiB): 3620188
-[0.004] [INFO]  [HEAP] === Kernel Heap (kmalloc) ===
-[0.004] [INFO]  [HEAP] Heap start: 0x00100000
-[0.004] [INFO]  [HEAP] Size (KiB): 1024
-[0.004] [INFO]  [HEAP] Header size (bytes): 24
-[0.004] [INFO]  [VMM] === Virtual Memory Manager (x86-64) ===
-[0.004] [INFO]  [VMM] HHDM offset (high): 0xFFFF8000
-[0.005] [INFO]  [VMM] HHDM offset (low): 0x00000000
-[0.006] [INFO]  [VMM] Kernel PML4 phys: 0xDF00A000
-[0.006] [INFO]  [VMM] VMM initialized (using Limine paging)
-[0.007] [INFO]  [MMIO] === MMIO Subsystem Initialization ===
-[0.008] [INFO]  [MMIO] MMIO virtual base (high): 0xFFFF9000
-[0.008] [INFO]  [MMIO] MMIO virtual end (high):  0xFFFFA000
-[0.009] [INFO]  [MMIO] MMIO subsystem initialized (dedicated zone)
-[0.010] [INFO]  [PCI] Starting PCI bus enumeration...
+[0.002] [INFO]  [PMM] Free blocks: 905062
+[0.002] [INFO]  [PMM] Free memory (KiB): 3620248
+[0.002] [INFO]  [HEAP] === Kernel Heap (kmalloc) ===
+[0.002] [INFO]  [HEAP] Heap start: 0x00100000
+[0.002] [INFO]  [HEAP] Size (KiB): 1024
+[0.002] [INFO]  [HEAP] Header size (bytes): 24
+[0.002] [INFO]  [VMM] === Virtual Memory Manager (x86-64) ===
+[0.002] [INFO]  [VMM] HHDM offset (high): 0xFFFF8000
+[0.002] [INFO]  [VMM] HHDM offset (low): 0x00000000
+[0.002] [INFO]  [VMM] Kernel PML4 phys: 0xDF00A000
+[0.002] [INFO]  [VMM] VMM initialized (using Limine paging)
+[0.003] [INFO]  [MMIO] === MMIO Subsystem Initialization ===
+[0.003] [INFO]  [MMIO] MMIO virtual base (high): 0xFFFF9000
+[0.004] [INFO]  [MMIO] MMIO virtual end (high):  0xFFFFA000
+[0.005] [INFO]  [MMIO] MMIO subsystem initialized (dedicated zone)
+[0.005] [INFO]  [PCI] Starting PCI bus enumeration...
+[0.006] [INFO]  [PCI] Found device 
+[0.006] [INFO]  [PCI] Intel
+[0.006] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.007] [INFO]  [PCI] Found device 
+[0.007] [INFO]  [PCI] Intel
+[0.007] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.008] [INFO]  [PCI] Found device 
+[0.008] [INFO]  [PCI] Intel
+[0.009] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.010] [INFO]  [PCI] Found device 
+[0.010] [INFO]  [PCI] VMware
+[0.010] [INFO]  [PCI]   Vendor:Device = 0x000015AD
 [0.011] [INFO]  [PCI] Found device 
-[0.011] [INFO]  [PCI] Intel
-[0.012] [INFO]  [PCI]   Vendor:Device = 0x00008086
-[0.012] [INFO]  [PCI] Found device 
-[0.012] [INFO]  [PCI] Intel
-[0.012] [INFO]  [PCI]   Vendor:Device = 0x00008086
-[0.012] [INFO]  [PCI] Found device 
-[0.012] [INFO]  [PCI] Intel
-[0.013] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.012] [INFO]  [PCI] Red Hat (VirtIO)
+[0.012] [INFO]  [PCI]   Vendor:Device = 0x00001AF4
 [0.013] [INFO]  [PCI] Found device 
-[0.014] [INFO]  [PCI] VMware
-[0.015] [INFO]  [PCI]   Vendor:Device = 0x000015AD
+[0.014] [INFO]  [PCI] VirtualBox
+[0.014] [INFO]  [PCI]   Vendor:Device = 0x000080EE
 [0.015] [INFO]  [PCI] Found device 
-[0.016] [INFO]  [PCI] Red Hat (VirtIO)
-[0.016] [INFO]  [PCI]   Vendor:Device = 0x00001AF4
-[0.017] [INFO]  [PCI] Found device 
-[0.017] [INFO]  [PCI] VirtualBox
-[0.018] [INFO]  [PCI]   Vendor:Device = 0x000080EE
-[0.018] [INFO]  [PCI] Found device 
-[0.019] [INFO]  [PCI] Intel
-[0.019] [INFO]  [PCI]   Vendor:Device = 0x00008086
-[0.019] [INFO]  [PCI] Found device 
-[0.020] [INFO]  [PCI] Intel
-[0.020] [INFO]  [PCI]   Vendor:Device = 0x00008086
-[0.034] [INFO]  [PCI] PCI scan complete, devices found: 8
-[0.038] [INFO]  [ATA] Initializing ATA/IDE driver...
-[0.044] [WARN]  [ATA] Device is not ATA (ATAPI or SATA?)
-[0.046] [ERROR] [ATA] IDENTIFY command failed
-[0.046] [INFO]  [NETDEV] Detecting network devices...
-[0.048] [INFO]  [NETDEV] Found PCnet PCI device, initializing...
-[0.050] [INFO]  [NETDEV] Looking for Intel e1000...
-[0.052] [INFO]  [NETDEV] Looking for VirtIO...
-[0.052] [INFO]  [NETDEV] Found VirtIO PCI device, initializing...
-[0.052] [INFO]  [VIRTIO-NET] === VirtIO Network Driver (MMIO) ===
-[0.053] [INFO]  [VIRTIO] Creating device from PCI
-[0.054] [INFO]  [VIRTIO]   I/O Base (PIO): 0x0000C160
-[0.055] [INFO]  [VIRTIO_MODERN] Found Common Config:
-[0.056] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
-[0.059] [INFO]  [VIRTIO_MODERN]   Offset: 0x00000000
-[0.060] [INFO]  [VIRTIO_MODERN]   Length: 0x00000038
-[0.061] [INFO]  [VIRTIO_MODERN] Found Notify Config:
-[0.062] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
-[0.063] [INFO]  [VIRTIO_MODERN]   Multiplier: 0x00000002
-[0.063] [INFO]  [VIRTIO_MODERN] Found ISR Config:
-[0.065] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
-[0.065] [INFO]  [VIRTIO_MODERN] Found Device Config:
-[0.065] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
-[0.065] [INFO]  [VIRTIO_MODERN] VirtIO Modern detected!
-[0.066] [INFO]  [VIRTIO_MODERN]   Capabilities found: 0x00000004
-[0.067] [INFO]  [VIRTIO]   VirtIO Modern detected, attempting MMIO setup...
-[0.068] [INFO]  [VIRTIO_MODERN] Mapping MMIO BARs...
-[0.071] [INFO]  [VIRTIO_MODERN]   Mapping BAR0x00000002
-[0.072] [INFO]  [VIRTIO_MODERN]     Phys: 0xE1604000
-[0.072] [INFO]  [VIRTIO_MODERN]     Size: 0x00002000
-[0.073] [INFO]  [MMIO] ioremap: mapping phys 0xE1604000
-[0.074] [INFO]  [MMIO]               to virt (high) 0xFFFF9000
-[0.075] [INFO]  [MMIO]               to virt (low)  0x00000000
-[0.076] [INFO]  [MMIO]               size 0x00002000
-[0.077] [INFO]  [VIRTIO_MODERN]     Virt: 0x00000000
-[0.077] [INFO]  [VIRTIO_MODERN]   Common cfg at: 0x00000000
-[0.077] [INFO]  [VIRTIO_MODERN]   Notify base at: 0x00000038
-[0.078] [INFO]  [VIRTIO_MODERN]   ISR BAR index: 0x00000002
-[0.079] [INFO]  [VIRTIO_MODERN]   ISR offset: 0x0000006C
-[0.079] [INFO]  [VIRTIO_MODERN]   ISR final addr: 0x0000006C
-[0.080] [INFO]  [VIRTIO_MODERN]   Device cfg at: 0x00000070
-[0.081] [INFO]  [VIRTIO_MODERN] MMIO mapping complete!
-[0.082] [INFO]  [VIRTIO]   *** Using PCI Modern MMIO transport ***
-[0.083] [INFO]  [VIRTIO]   IRQ: 0x0000000B
-[0.084] [INFO]  [VIRTIO-NET] Transport: PCI Legacy (PIO)
-[0.084] [INFO]  [VIRTIO-NET] I/O Base: 0x0000C160
-[0.084] [INFO]  [VIRTIO] Initializing device...
-[0.085] [INFO]  [VIRTIO]   Device features: 0x002FDDA3
-[0.086] [INFO]  [VIRTIO]   Accepted features: 0x00010020
-[0.087] [INFO]  [VIRTIO-NET] Setting up RX queue...
-[0.087] [INFO]  [VIRTIO_MODERN] Queue setup:0x00000000
-[0.087] [INFO]  [VIRTIO_MODERN]   Desc phys: 0x00203000
-[0.087] [INFO]  [VIRTIO_MODERN]   Avail phys: 0x00204000
-[0.087] [INFO]  [VIRTIO_MODERN]   Used phys: 0x00205000
-[0.088] [INFO]  [VIRTIO_MODERN]   Notify offset: 0x00000000
-[0.088] [INFO]  [VIRTIO_MODERN] Queue enabled!
-[0.089] [INFO]  [VIRTIO-NET] Setting up TX queue...
-[0.090] [INFO]  [VIRTIO_MODERN] Queue setup:0x00000001
-[0.090] [INFO]  [VIRTIO_MODERN]   Desc phys: 0x00206000
-[0.091] [INFO]  [VIRTIO_MODERN]   Avail phys: 0x00207000
-[0.091] [INFO]  [VIRTIO_MODERN]   Used phys: 0x00208000
-[0.092] [INFO]  [VIRTIO_MODERN]   Notify offset: 0x00000001
-[0.093] [INFO]  [VIRTIO_MODERN] Queue enabled!
-[0.094] [INFO]  [VIRTIO-NET] MAC Address read from device config
-[0.094] [INFO]  [VIRTIO-NET] IRQ: 11
-[0.095] [INFO]  [VIRTIO] Device initialization complete
-[0.096] [INFO]  [NETIF] Interface registered
-[0.096] [INFO]  [VIRTIO-NET] Driver initialized successfully!
-[0.097] [INFO]  [NETDEV] Found: Virtio Network Device
-[0.097] [INFO]  [NETDEV] Total devices: 1
-[0.098] [INFO]  [NET] Network layer initialized
-[0.098] [INFO]  [NET] Status: Waiting for DHCP or static configuration
-[0.099] [INFO]  [ROUTE] Initializing routing table...
-[0.100] [INFO]  [ROUTE] Routing table initialized (waiting for DHCP)
-[0.100] [INFO]  [NET] Network stack ready!
-[0.101] [INFO]  [DHCP] Starting DHCP configuration...
-[0.101] [INFO]  [DHCP] Client initialized
-[0.102] [INFO]  [DHCP] Discovering...
-[0.102] [INFO]  [DHCP] Waiting for DHCP response...
+[0.015] [INFO]  [PCI] Intel
+[0.015] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.016] [INFO]  [PCI] Found device 
+[0.016] [INFO]  [PCI] Intel
+[0.017] [INFO]  [PCI]   Vendor:Device = 0x00008086
+[0.031] [INFO]  [PCI] PCI scan complete, devices found: 8
+[0.032] [INFO]  [ATA] Initializing ATA/IDE driver...
+[0.033] [WARN]  [ATA] Device is not ATA (ATAPI or SATA?)
+[0.034] [ERROR] [ATA] IDENTIFY command failed
+[0.034] [INFO]  [NETDEV] Detecting network devices...
+[0.035] [INFO]  [NETDEV] Found PCnet PCI device, initializing...
+[0.036] [INFO]  [NETDEV] Looking for Intel e1000...
+[0.036] [INFO]  [NETDEV] Looking for VirtIO...
+[0.037] [INFO]  [NETDEV] Found VirtIO PCI device, initializing...
+[0.037] [INFO]  [VIRTIO-NET] === VirtIO Network Driver (MMIO) ===
+[0.038] [INFO]  [VIRTIO] Creating device from PCI
+[0.039] [INFO]  [VIRTIO]   I/O Base (PIO): 0x0000C160
+[0.039] [INFO]  [VIRTIO_MODERN] Found Common Config:
+[0.040] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
+[0.040] [INFO]  [VIRTIO_MODERN]   Offset: 0x00000000
+[0.041] [INFO]  [VIRTIO_MODERN]   Length: 0x00000038
+[0.041] [INFO]  [VIRTIO_MODERN] Found Notify Config:
+[0.042] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
+[0.043] [INFO]  [VIRTIO_MODERN]   Multiplier: 0x00000002
+[0.044] [INFO]  [VIRTIO_MODERN] Found ISR Config:
+[0.044] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
+[0.045] [INFO]  [VIRTIO_MODERN] Found Device Config:
+[0.045] [INFO]  [VIRTIO_MODERN]   BAR: 0x00000002
+[0.046] [INFO]  [VIRTIO_MODERN] VirtIO Modern detected!
+[0.046] [INFO]  [VIRTIO_MODERN]   Capabilities found: 0x00000004
+[0.047] [INFO]  [VIRTIO]   VirtIO Modern detected, attempting MMIO setup...
+[0.048] [INFO]  [VIRTIO_MODERN] Mapping MMIO BARs...
+[0.048] [INFO]  [VIRTIO_MODERN]   Mapping BAR0x00000002
+[0.049] [INFO]  [VIRTIO_MODERN]     Phys: 0xE1604000
+[0.049] [INFO]  [VIRTIO_MODERN]     Size: 0x00002000
+[0.050] [INFO]  [MMIO] ioremap: mapping phys 0xE1604000
+[0.050] [INFO]  [MMIO]               to virt (high) 0xFFFF9000
+[0.051] [INFO]  [MMIO]               to virt (low)  0x00000000
+[0.052] [INFO]  [MMIO]               size 0x00002000
+[0.053] [INFO]  [VIRTIO_MODERN]     Virt: 0x00000000
+[0.053] [INFO]  [VIRTIO_MODERN]   Common cfg at: 0x00000000
+[0.053] [INFO]  [VIRTIO_MODERN]   Notify base at: 0x00000038
+[0.054] [INFO]  [VIRTIO_MODERN]   ISR BAR index: 0x00000002
+[0.054] [INFO]  [VIRTIO_MODERN]   ISR offset: 0x0000006C
+[0.055] [INFO]  [VIRTIO_MODERN]   ISR final addr: 0x0000006C
+[0.056] [INFO]  [VIRTIO_MODERN]   Device cfg at: 0x00000070
+[0.056] [INFO]  [VIRTIO_MODERN] MMIO mapping complete!
+[0.057] [INFO]  [VIRTIO]   *** Using PCI Modern MMIO transport ***
+[0.058] [INFO]  [VIRTIO]   IRQ: 0x0000000B
+[0.058] [INFO]  [VIRTIO-NET] Transport: PCI Legacy (PIO)
+[0.059] [INFO]  [VIRTIO-NET] I/O Base: 0x0000C160
+[0.059] [INFO]  [VIRTIO] Initializing device...
+[0.060] [INFO]  [VIRTIO]   Device features: 0x002FDDA3
+[0.061] [INFO]  [VIRTIO]   Accepted features: 0x00010020
+[0.061] [INFO]  [VIRTIO-NET] Setting up RX queue...
+[0.062] [INFO]  [VIRTIO_MODERN] Queue setup:0x00000000
+[0.062] [INFO]  [VIRTIO_MODERN]   Desc phys: 0x00203000
+[0.063] [INFO]  [VIRTIO_MODERN]   Avail phys: 0x00204000
+[0.063] [INFO]  [VIRTIO_MODERN]   Used phys: 0x00205000
+[0.064] [INFO]  [VIRTIO_MODERN]   Notify offset: 0x00000000
+[0.065] [INFO]  [VIRTIO_MODERN] Queue enabled!
+[0.066] [INFO]  [VIRTIO-NET] Setting up TX queue...
+[0.066] [INFO]  [VIRTIO_MODERN] Queue setup:0x00000001
+[0.067] [INFO]  [VIRTIO_MODERN]   Desc phys: 0x00206000
+[0.067] [INFO]  [VIRTIO_MODERN]   Avail phys: 0x00207000
+[0.068] [INFO]  [VIRTIO_MODERN]   Used phys: 0x00208000
+[0.068] [INFO]  [VIRTIO_MODERN]   Notify offset: 0x00000001
+[0.068] [INFO]  [VIRTIO_MODERN] Queue enabled!
+[0.069] [INFO]  [VIRTIO-NET] MAC Address read from device config
+[0.070] [INFO]  [VIRTIO-NET] IRQ: 11
+[0.070] [INFO]  [VIRTIO] Device initialization complete
+[0.071] [INFO]  [NETIF] Interface registered
+[0.071] [INFO]  [VIRTIO-NET] Driver initialized successfully!
+[0.072] [INFO]  [NETDEV] Found: Virtio Network Device
+[0.072] [INFO]  [NETDEV] Total devices: 1
+[0.073] [INFO]  [NET] Network layer initialized
+[0.073] [INFO]  [NET] Status: Waiting for DHCP or static configuration
+[0.074] [INFO]  [ROUTE] Initializing routing table...
+[0.074] [INFO]  [ROUTE] Routing table initialized (waiting for DHCP)
+[0.075] [INFO]  [NET] Network stack ready!
+[0.076] [INFO]  [DHCP] Starting DHCP configuration...
+[0.076] [INFO]  [DHCP] Client initialized
+[0.077] [INFO]  [DHCP] Discovering...
+[0.077] [INFO]  [DHCP] Waiting for DHCP response...
 
-[0.302] [WARN]  [DHCP] DHCP configuration timed out
-[0.302] [INFO]  [TCP] Initializing TCP stack...
-[0.303] [INFO]  [TCP] Socket pool grown from 0
-[0.303] [INFO]  [TCP] Socket pool grown to 8
-[0.304] [INFO]  [TCP] Initial sockets allocated: 8
-[0.304] [INFO]  [MOUSE] Initializing PS/2 mouse driver...
-[0.315] [INFO]  [DHCP] *** BOUND ***
-[0.315] [INFO]  [DHCP] IP Address: 0xC0A8008B
-[0.315] [INFO]  [DHCP] Lease Time: 86400
-[0.315] [INFO]  [ROUTE] Updating routes from DHCP...
-[0.315] [INFO]  [ROUTE] Route added
-[0.315] [INFO]  [ROUTE] Route added
-[0.315] [INFO]  [ROUTE] Routes updated, count: 2
-[1.174] [INFO]  [MOUSE] Scroll wheel detected (ID=3)
-[1.576] [INFO]  [MOUSE] PS/2 mouse initialized successfully
-[1.577] [INFO]  [MOUSE] PS/2 mouse driver initialized
-[1.578] [INFO]  [CPU] SYSCALL/SYSRET initialized
-[1.582] [INFO]  [CPU] STAR: 0x00000000
-[1.583] [INFO]  [CPU] LSTAR: 0x800024A1
-[1.583] [INFO]  [USERMODE] User mode support initialized
-[1.584] [INFO]  [USERMODE] SYSCALL stack: 0x8022C0D0
-[1.585] [INFO]  [TASK] === Initializing Multitasking ===
-[1.586] [INFO]  [SCHED] === Initializing Scheduler ===
-[1.586] [INFO]  [SCHED] Main thread created (adopts current context)
-[1.587] [INFO]  [THREAD] Creating thread:
-[1.587] [INFO]  [THREAD] idle
-[1.587] [INFO]  [THREAD] Created thread TID: 2
-[1.587] [INFO]  [THREAD] Stack: 0x00111E28
-[1.588] [INFO]  [THREAD] ESP: 0x00115D78
-[1.589] [INFO]  [SCHED] Scheduler initialized
-[1.590] [INFO]  [SCHED] Starting scheduler
-[1.591] [INFO]  [REAPER] Initializing reaper thread
-[1.592] [INFO]  [THREAD] Creating thread:
-[1.593] [INFO]  [THREAD] reaper
-[1.593] [INFO]  [THREAD] Created thread TID: 3
-[1.594] [INFO]  [THREAD] Stack: 0x00116060
-[1.595] [INFO]  [THREAD] ESP: 0x00119FB0
-[1.597] [INFO]  [REAPER] Reaper thread initialized
-[1.598] [INFO]  [WORKQ] Initializing global kernel worker pool
-[1.599] [INFO]  [WORKQ] Creating worker pool with workers:
-[1.600] [INFO]  [WORKQ] Count: 4
-[1.601] [INFO]  [THREAD] Creating thread:
-[1.601] [INFO]  [THREAD] worker-0
-[1.602] [INFO]  [THREAD] Created thread TID: 4
-[1.602] [INFO]  [THREAD] Stack: 0x0011A278
-[1.604] [INFO]  [THREAD] ESP: 0x0011E1C8
-[1.605] [INFO]  [THREAD] Creating thread:
-[1.605] [INFO]  [THREAD] worker-1
-[1.606] [INFO]  [THREAD] Created thread TID: 5
-[1.606] [INFO]  [THREAD] Stack: 0x0011E3D8
-[1.608] [INFO]  [THREAD] ESP: 0x00122328
-[1.609] [INFO]  [THREAD] Creating thread:
-[1.609] [INFO]  [THREAD] worker-2
-[1.609] [INFO]  [THREAD] Created thread TID: 6
-[1.610] [INFO]  [THREAD] Stack: 0x00122538
-[1.610] [INFO]  [THREAD] ESP: 0x00126488
-[1.611] [INFO]  [THREAD] Creating thread:
-[1.612] [INFO]  [THREAD] worker-3
-[1.612] [INFO]  [THREAD] Created thread TID: 7
-[1.613] [INFO]  [THREAD] Stack: 0x00126698
-[1.613] [INFO]  [THREAD] ESP: 0x0012A5E8
-[1.613] [INFO]  [WORKQ] Worker pool created successfully
-[1.614] [INFO]  [WORKQ] Kernel worker pool initialized
-[1.614] [INFO]  [TASK] Multitasking initialized
-[1.615] [INFO]  [TASK] Idle process PID: 0
-[1.617] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[1.618] [INFO]  [KBD] Keyboard semaphore initialized
-[1.618] [INFO]  [WORKER] Worker thread started
-[1.619] [INFO]  [WORKER] Worker thread started
-[1.619] [INFO]  [WORKER] Worker thread started
-[1.620] [INFO]  [WORKER] Worker thread started
-[1.621] [INFO]  [REAPER] Reaper thread started
-[1.622] [INFO]  [IDLE] Idle thread started, enabling interrupts
-[7.460] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[7.619] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[8.114] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[8.273] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[11.195] [ERROR] [VFS] create: parent directory not found
-[11.196] [ERROR] [CONFIG] Failed to create history file
-[11.198] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[16.265] [ERROR] [VFS] create: parent directory not found
-[16.266] [ERROR] [CONFIG] Failed to create history file
-[16.269] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[18.038] [ERROR] [VFS] create: parent directory not found
-[18.039] [ERROR] [CONFIG] Failed to create history file
-[18.043] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[19.629] [ERROR] [VFS] create: parent directory not found
-[19.630] [ERROR] [CONFIG] Failed to create history file
-[19.640] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[25.065] [ERROR] [VFS] create: parent directory not found
-[25.066] [ERROR] [CONFIG] Failed to create history file
-[25.066] [INFO]  [PING] Resolving hostname...
-[25.066] [ERROR] [DNS] Resolver not initialized!
-[25.067] [ERROR] [PING] DNS resolution failed
-[25.070] [INFO]  [SHELL] Prompt displayed, waiting for input...
-[36.969] [ERROR] [VFS] create: parent directory not found
-[36.970] [ERROR] [CONFIG] Failed to create history file
-[36.970] [INFO]  [PING] Resolving hostname...
-[36.971] [ERROR] [DNS] Resolver not initialized!
-[36.971] [ERROR] [PING] DNS resolution failed
-[36.973] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[0.272] [INFO]  [DHCP] *** BOUND ***
+[0.272] [INFO]  [DHCP] IP Address: 0xC0A8008B
+[0.272] [INFO]  [DHCP] DNS Server: 0xC0A80001
+[0.272] [INFO]  [DHCP] Lease Time: 86400
+[0.272] [INFO]  [ROUTE] Updating routes from DHCP...
+[0.272] [INFO]  [ROUTE] Route added
+[0.272] [INFO]  [ROUTE] Route added
+[0.272] [INFO]  [ROUTE] Routes updated, count: 2
+[0.272] [INFO]  [DHCP] DHCP configuration complete!
+[0.273] [INFO]  [DNS] Cache flushed
+[0.274] [INFO]  [DNS] Resolver initialized
+[0.274] [INFO]  [TCP] Initializing TCP stack...
+[0.275] [INFO]  [TCP] Socket pool grown from 0
+[0.275] [INFO]  [TCP] Socket pool grown to 8
+[0.276] [INFO]  [TCP] Initial sockets allocated: 8
+[0.276] [INFO]  [MOUSE] Initializing PS/2 mouse driver...
+[1.093] [INFO]  [MOUSE] Scroll wheel detected (ID=3)
+[1.454] [INFO]  [MOUSE] PS/2 mouse initialized successfully
+[1.456] [INFO]  [MOUSE] PS/2 mouse driver initialized
+[1.458] [INFO]  [CPU] SYSCALL/SYSRET initialized
+[1.458] [INFO]  [CPU] STAR: 0x00000000
+[1.459] [INFO]  [CPU] LSTAR: 0x800024A1
+[1.459] [INFO]  [USERMODE] User mode support initialized
+[1.459] [INFO]  [USERMODE] SYSCALL stack: 0x8022C0D0
+[1.460] [INFO]  [TASK] === Initializing Multitasking ===
+[1.461] [INFO]  [SCHED] === Initializing Scheduler ===
+[1.461] [INFO]  [SCHED] Main thread created (adopts current context)
+[1.461] [INFO]  [THREAD] Creating thread:
+[1.461] [INFO]  [THREAD] idle
+[1.461] [INFO]  [THREAD] Created thread TID: 2
+[1.461] [INFO]  [THREAD] Stack: 0x00111E28
+[1.461] [INFO]  [THREAD] ESP: 0x00115D78
+[1.461] [INFO]  [SCHED] Scheduler initialized
+[1.461] [INFO]  [SCHED] Starting scheduler
+[1.462] [INFO]  [REAPER] Initializing reaper thread
+[1.463] [INFO]  [THREAD] Creating thread:
+[1.463] [INFO]  [THREAD] reaper
+[1.464] [INFO]  [THREAD] Created thread TID: 3
+[1.465] [INFO]  [THREAD] Stack: 0x00116060
+[1.465] [INFO]  [THREAD] ESP: 0x00119FB0
+[1.465] [INFO]  [REAPER] Reaper thread initialized
+[1.466] [INFO]  [WORKQ] Initializing global kernel worker pool
+[1.467] [INFO]  [WORKQ] Creating worker pool with workers:
+[1.467] [INFO]  [WORKQ] Count: 4
+[1.468] [INFO]  [THREAD] Creating thread:
+[1.468] [INFO]  [THREAD] worker-0
+[1.468] [INFO]  [THREAD] Created thread TID: 4
+[1.469] [INFO]  [THREAD] Stack: 0x0011A278
+[1.469] [INFO]  [THREAD] ESP: 0x0011E1C8
+[1.470] [INFO]  [THREAD] Creating thread:
+[1.470] [INFO]  [THREAD] worker-1
+[1.470] [INFO]  [THREAD] Created thread TID: 5
+[1.470] [INFO]  [THREAD] Stack: 0x0011E3D8
+[1.471] [INFO]  [THREAD] ESP: 0x00122328
+[1.471] [INFO]  [THREAD] Creating thread:
+[1.472] [INFO]  [THREAD] worker-2
+[1.472] [INFO]  [THREAD] Created thread TID: 6
+[1.473] [INFO]  [THREAD] Stack: 0x00122538
+[1.473] [INFO]  [THREAD] ESP: 0x00126488
+[1.474] [INFO]  [THREAD] Creating thread:
+[1.474] [INFO]  [THREAD] worker-3
+[1.475] [INFO]  [THREAD] Created thread TID: 7
+[1.475] [INFO]  [THREAD] Stack: 0x00126698
+[1.476] [INFO]  [THREAD] ESP: 0x0012A5E8
+[1.476] [INFO]  [WORKQ] Worker pool created successfully
+[1.477] [INFO]  [WORKQ] Kernel worker pool initialized
+[1.477] [INFO]  [TASK] Multitasking initialized
+[1.477] [INFO]  [TASK] Idle process PID: 0
+[1.477] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[1.477] [INFO]  [KBD] Keyboard semaphore initialized
+[1.478] [INFO]  [WORKER] Worker thread started
+[1.479] [INFO]  [WORKER] Worker thread started
+[1.480] [INFO]  [WORKER] Worker thread started
+[1.480] [INFO]  [WORKER] Worker thread started
+[1.481] [INFO]  [REAPER] Reaper thread started
+[1.482] [INFO]  [IDLE] Idle thread started, enabling interrupts
+[5.096] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[5.254] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[5.392] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[5.576] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[8.248] [ERROR] [VFS] create: parent directory not found
+[8.249] [ERROR] [CONFIG] Failed to create history file
+[8.253] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[11.931] [ERROR] [VFS] create: parent directory not found
+[11.932] [ERROR] [CONFIG] Failed to create history file
+[11.935] [INFO]  [PING] Sending, seq: 1
+[11.941] [INFO]  [PING] Sending, seq: 1
+[11.984] [INFO]  [PING] Sending, seq: 2
+[11.990] [INFO]  [PING] Sending, seq: 2
+[12.020] [INFO]  [ARP] Request for us, sending reply
+[12.020] [INFO]  [ARP] Reply sent
+[12.021] [INFO]  [PING] Reply received, seq: 1
+[12.021] [INFO]  [ARP] Request for us, sending reply
+[12.021] [INFO]  [ARP] Reply sent
+[12.035] [INFO]  [PING] Sending, seq: 3
+[12.038] [INFO]  [PING] Reply received, seq: 3
+[12.041] [INFO]  [PING] Sending, seq: 3
+[12.046] [INFO]  [PING] Reply received, seq: 3
+[12.061] [INFO]  [PING] Sending, seq: 4
+[12.066] [INFO]  [PING] Reply received, seq: 4
+[12.066] [INFO]  [PING] Sending, seq: 4
+[12.073] [INFO]  [PING] Reply received, seq: 4
+[12.087] [INFO]  [PING] Sending, seq: 5
+[12.090] [INFO]  [PING] Reply received, seq: 5
+[12.093] [INFO]  [PING] Sending, seq: 5
+[12.097] [INFO]  [PING] Reply received, seq: 5
+[12.112] [INFO]  [PING] Sending, seq: 6
+[12.117] [INFO]  [PING] Reply received, seq: 6
+[12.117] [INFO]  [PING] Sending, seq: 6
+[12.122] [INFO]  [PING] Reply received, seq: 6
+[12.138] [INFO]  [PING] Sending, seq: 7
+[12.142] [INFO]  [PING] Reply received, seq: 7
+[12.143] [INFO]  [PING] Sending, seq: 7
+[12.147] [INFO]  [PING] Reply received, seq: 7
+[12.161] [INFO]  [PING] Sending, seq: 8
+[12.165] [INFO]  [PING] Reply received, seq: 8
+[12.167] [INFO]  [PING] Sending, seq: 8
+[12.172] [INFO]  [PING] Reply received, seq: 8
+[12.188] [INFO]  [PING] Sending, seq: 9
+[12.192] [INFO]  [PING] Reply received, seq: 9
+[12.193] [INFO]  [PING] Sending, seq: 9
+[12.196] [INFO]  [PING] Reply received, seq: 9
+[12.211] [INFO]  [PING] Sending, seq: 10
+[12.214] [INFO]  [PING] Reply received, seq: 10
+[12.218] [INFO]  [PING] Sending, seq: 10
+[12.222] [INFO]  [PING] Reply received, seq: 10
+[12.238] [INFO]  [PING] Sending, seq: 11
+[12.242] [INFO]  [PING] Reply received, seq: 11
+[12.243] [INFO]  [PING] Sending, seq: 11
+[12.247] [INFO]  [PING] Reply received, seq: 11
+[12.263] [INFO]  [PING] Sending, seq: 12
+[12.268] [INFO]  [PING] Reply received, seq: 12
+[12.268] [INFO]  [PING] Sending, seq: 12
+[12.273] [INFO]  [PING] Reply received, seq: 12
+[12.288] [INFO]  [PING] Sending, seq: 13
+[12.292] [INFO]  [PING] Reply received, seq: 13
+[12.292] [INFO]  [PING] Sending, seq: 13
+[12.298] [INFO]  [PING] Reply received, seq: 13
+[12.315] [INFO]  [PING] Sending, seq: 14
+[12.319] [INFO]  [PING] Reply received, seq: 14
+[12.322] [INFO]  [PING] Sending, seq: 14
+[12.326] [INFO]  [PING] Reply received, seq: 14
+[12.340] [INFO]  [PING] Sending, seq: 15
+[12.343] [INFO]  [PING] Reply received, seq: 15
+[12.346] [INFO]  [PING] Sending, seq: 15
+[12.350] [INFO]  [PING] Reply received, seq: 15
+[12.365] [INFO]  [PING] Sending, seq: 16
+[12.370] [INFO]  [PING] Reply received, seq: 16
+[12.370] [INFO]  [PING] Sending, seq: 16
+[12.374] [INFO]  [PING] Reply received, seq: 16
+[12.390] [INFO]  [PING] Sending, seq: 17
+[12.394] [INFO]  [PING] Reply received, seq: 17
+[12.396] [INFO]  [PING] Sending, seq: 17
+[12.399] [INFO]  [PING] Reply received, seq: 17
+[12.414] [INFO]  [PING] Sending, seq: 18
+[1[12.419] [INFO]  [PING] Reply received, seq: 18
+2.419] [INFO]  [PING] Sending, seq: 18
+[12.426] [INFO]  [PING] Reply received, seq: 18
+[12.442] [INFO]  [PING] Sending, seq: 19
+[12.446] [INFO]  [PING] Reply received, seq: 19
+[12.447] [INFO]  [PING] Sending, seq: 19
+[12.451] [INFO]  [PING] Reply received, seq: 19
+[12.464] [INFO]  [PING] Sending, seq: 20
+[12.468] [INFO]  [PING] Sending, seq: 20
+[12.469] [INFO]  [PING] Reply received, seq: 20
+[12.485] [INFO]  [PING] Sending, seq: 21
+[12.489] [INFO]  [PING] Reply received, seq: 21
+[12.489] [INFO]  [PING] Sending, seq: 21
+[12.494] [INFO]  [PING] Reply received, seq: 21
+[12.510] [INFO]  [PING] Sending, seq: 22
+[12.514] [INFO]  [PING] Reply received, seq: 22
+[12.516] [INFO]  [PING] Sending, seq: 22
+[12.520] [INFO]  [PING] Reply received, seq: 22
+[12.534] [INFO]  [PING] Sending, seq: 23
+[12[12.539] [INFO]  [PING] Reply received, seq: 23
+.539] [INFO]  [PING] Sending, seq: 23
+[12.546] [INFO]  [PING] Reply received, seq: 23
+[12.563] [INFO]  [PING] Sending, seq: 24
+[12.568] [INFO]  [PING] Reply received, seq: 24
+[12.568] [INFO]  [PING] Sending, seq: 24
+[12.577] [INFO]  [PING] Reply received, seq: 24
+[12.591] [INFO]  [PING] Sending, seq: 25
+[12.596] [INFO]  [PING] Send[12.596] [INFO]  [PING] Reply received, seq: 25
+ing, seq: 25
+[12.603] [INFO]  [PING] Reply received, seq: 25
+[12.620] [INFO]  [PING] Sending, seq: 26
+[12.624] [INFO]  [PING] Reply received, seq: 26
+[12.624] [INFO]  [PING] Sending, seq: 26
+[12.628] [INFO]  [PING] Reply received, seq: 26
+[12.643] [INFO]  [PING] Sending, seq: 27
+[12.647] [INFO]  [PING] Reply received, seq: 27
+[12.649] [INFO]  [PING] Sending, seq: 27
+[12.653] [INFO]  [PING] Reply received, seq: 27
+[12.668] [INFO]  [PING] Sending, seq: 28
+[12.672] [INFO]  [PING] Reply received, seq: 28
+[12.673] [INFO]  [PING] Sending, seq: 28
+[12.678] [INFO]  [PING] Reply received, seq: 28
+[12.694] [INFO]  [PING] Sending, seq: 29
+[12.697] [INFO]  [PING] Reply received, seq: 29
+[12.700] [INFO]  [PING] Sending, seq: 29
+[12.704] [INFO]  [PING] Reply received, seq: 29
+[12.718] [INFO]  [PING] Sending, seq: 30
+[12.722] [INFO]  [PING] Reply received, seq: 30
+[12.722] [INFO]  [PING] Sending, seq: 30
+[12.727] [INFO]  [PING] Reply received, seq: 30
+[12.742] [INFO]  [PING] Sending, seq: 31
+[12.746] [INFO]  [PING] Reply received, seq: 31
+[12.748] [INFO]  [PING] Sending, seq: 31
+[12.752] [INFO]  [PING] Reply received, seq: 31
+[12.766] [INFO]  [PING] Sending, seq: 32
+[12.770] [INFO]  [PING] Reply received, seq: 32
+[12.772] [INFO]  [PING] Sending, seq: 32
+[12.777] [INFO]  [PING] Reply received, seq: 32
+[12.792] [INFO]  [PING] Sending, seq: 33
+[12.796] [INFO]  [PING] Reply received, seq: 33
+[12.798] [INFO]  [PING] Sending, seq: 33
+[12.802] [INFO]  [PING] Reply received, seq: 33
+[12.819] [INFO]  [PING] Sending, seq: 34
+[12.823] [INFO]  [PING] Reply received, seq: 34
+[12.823] [INFO]  [PING] Sending, seq: 34
+[12.828] [INFO]  [PING] Reply received, seq: 34
+[12.844] [INFO]  [PING] Sending, seq: 35
+[12.848] [INFO]  [PING] Reply received, seq: 35
+[12.850] [INFO]  [PING] Sending, seq: 35
+[12.854] [INFO]  [PING] Reply received, seq: 35
+[12.869] [INFO]  [PING] Sending, seq: 36
+[12.873] [INFO]  [PING] Reply received, seq: 36
+[12.875] [INFO]  [PING] Sending, seq: 36
+[12.880] [INFO]  [PING] Reply received, seq: 36
+[12.897] [INFO]  [PING] Sending, seq: 37
+[12.902] [INFO]  [PING] Reply received, seq: 37
+[12.902] [INFO]  [PING] Sending, seq: 37
+[12.910] [INFO]  [PING] Reply received, seq: 37
+[12.925] [INFO]  [PING] Sending, seq: 38
+[12.929] [INFO]  [PING] Reply received, seq: 38
+[12.930] [INFO]  [PING] Sending, seq: 38
+[12.936] [INFO]  [PING] Reply received, seq: 38
+[12.951] [INFO]  [PING] Sending, seq: 39
+[12.954] [INFO]  [PING] Reply received, seq: 39
+[12.956] [INFO]  [PING] Sending, seq: 39
+[12.960] [INFO]  [PING] Reply received, seq: 39
+[12.975] [INFO]  [PING] Sending, seq: 40
+[12.980] [INFO]  [PING] Reply received, seq: 40
+[12.980] [INFO]  [PING] Sending, seq: 40
+[12.986] [INFO]  [PING] Reply received, seq: 40
+[13.003] [INFO]  [PING] Sending, seq: 41
+[13.006] [INFO]  [PING] Reply received, seq: 41
+[13.008] [INFO]  [PING] Sending, seq: 41
+[13.012] [INFO]  [PING] Reply received, seq: 41
+[13.025] [INFO]  [PING] Sending, seq: 42
+[13.029] [INFO]  [PING] Reply received, seq: 42
+[13.029] [INFO]  [PING] Sending, seq: 42
+[13.034] [INFO]  [PING] Reply received, seq: 42
+[13.050] [INFO]  [PING] Sending, seq: 43
+[13.054] [INFO]  [PING] Reply received, seq: 43
+[13.056] [INFO]  [PING] Sending, seq: 43
+[13.060] [INFO]  [PING] Reply received, seq: 43
+[13.074] [INFO]  [PING] Sending, seq: 44
+[13.079] [INFO]  [PING] Reply received, seq: 44
+[13.080] [INFO]  [PING] Sending, seq: 44
+[13.084] [INFO]  [PING] Reply received, seq: 44
+[13.098] [INFO]  [PING] Sending, seq: 45
+[13.103] [INFO]  [PING] Reply received, seq: 45
+[13.104] [INFO]  [PING] Sending, seq: 45
+[13.110] [INFO]  [PING] Reply received, seq: 45
+[13.124] [INFO]  [PING] Sending, seq: 46
+[13.129] [INFO]  [PING] Reply received, seq: 46
+[13.130] [INFO]  [PING] Sending, seq: 46
+[13.134] [INFO]  [PING] Reply received, seq: 46
+[13.151] [INFO]  [PING] Sending, seq: 47
+[13.155] [INFO]  [PING] Reply received, seq: 47
+[13.155] [INFO]  [PING] Sending, seq: 47
+[13.159] [INFO]  [PING] Reply received, seq: 47
+[13.174] [INFO]  [PING] Sending, seq: 48
+[13.179] [INFO]  [PING] Reply received, seq: 48
+[13.180] [INFO]  [PING] Sending, seq: 48
+[13.184] [INFO]  [PING] Reply received, seq: 48
+[13.198] [INFO]  [PING] Sending, seq: 49
+[13.203] [INFO]  [PING] Reply received, seq: 49
+[13.204] [INFO]  [PING] Sending, seq: 49
+[13.208] [INFO]  [PING] Reply received, seq: 49
+[13.224] [INFO]  [PING] Sending, seq: 50
+[13.228] [INFO]  [PING] Reply received, seq: 50
+[13.231] [INFO]  [PING] Sending, seq: 50
+[13.235] [INFO]  [PING] Reply received, seq: 50
+[13.251] [INFO]  [PING] Sending, seq: 51
+[13.254] [INFO]  [PING] Reply received, seq: 51
+[13.256] [INFO]  [PING] Sending, seq: 51
+[13.259] [INFO]  [PING] Reply received, seq: 51
+[13.274] [INFO]  [PING] Sending, seq: 52
+[13.278] [INFO]  [PING] Reply received, seq: 52
+[13.280] [INFO]  [PING] Sending, seq: 52
+[13.283] [INFO]  [PING] Reply received, seq: 52
+[13.297] [INFO]  [PING] Sending, seq: 53
+[13.301] [INFO]  [PING] Reply received, seq: 53
+[13.303] [INFO]  [PING] Sending, seq: 53
+[13.307] [INFO]  [PING] Reply received, seq: 53
+[13.322] [INFO]  [PING] Sending, seq: 54
+[13.326] [INFO]  [PING] Reply received, seq: 54
+[13.328] [INFO]  [PING] Sending, seq: 54
+[13.332] [INFO]  [PING] Reply received, seq: 54
+[13.347] [INFO]  [PING] Sending, seq: 55
+[13.351] [INFO]  [PING] Reply received, seq: 55
+[13.352] [INFO]  [PING] Sending, seq: 55
+[13.356] [INFO]  [PING] Reply received, seq: 55
+[13.371] [INFO]  [PING] Sending, seq: 56
+[13.375] [INFO]  [PING] Reply received, seq: 56
+[13.377] [INFO]  [PING] Sending, seq: 56
+[13.382] [INFO]  [PING] Reply received, seq: 56
+[13.398] [INFO]  [PING] Sending, seq: 57
+[13.402] [INFO]  [PING] Reply received, seq: 57
+[13.403] [INFO]  [PING] Sending, seq: 57
+[13.407] [INFO]  [PING] Reply received, seq: 57
+[13.422] [INFO]  [PING] Sending, seq: 58
+[13.426] [INFO]  [PING] Reply received, seq: 58
+[13.428] [INFO]  [PING] Sending, seq: 58
+[13.433] [INFO]  [PING] Reply received, seq: 58
+[13.438] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[36.996] [ERROR] [VFS] create: parent directory not found
+[36.996] [ERROR] [CONFIG] Failed to create history file
+[36.996] [INFO]  [PING] Resolving hostname...
+[36.996] [INFO]  [DNS] Resolving hostname
+[37.003] [INFO]  [DNS] Resolving hostname
+[37.004] [WARN]  [DNS] Transaction ID mismatch
+[37.004] [WARN]  [DNS] Transaction ID mismatch
+[37.010] [INFO]  [DNS] Response answers: 1
+[37.010] [INFO]  [DNS] Hostname resolved
+[37.010] [INFO]  [DNS] Response answers: 1
+[37.010] [INFO]  [DNS] Hostname resolved
+[37.012] [INFO]  [PING] Sending, seq: 1
+[37.018] [INFO]  [PING] Reply received, seq: 1
+[37.019] [INFO]  [PING] Sending, seq: 1
+[37.022] [INFO]  [PING] Reply received, seq: 1
+[37.036] [INFO]  [PING] Sending, seq: 2
+[37.039] [INFO]  [PING] Reply received, seq: 2
+[37.042] [INFO]  [PING] Sending, seq: 2
+[37.046] [INFO]  [PING] Reply received, seq: 2
+[37.063] [INFO]  [PING] Sending, seq: 3
+[37.066] [INFO]  [PING] Reply received, seq: 3
+[37.068] [INFO]  [PING] Sending, seq: 3
+[37.071] [INFO]  [PING] Reply received, seq: 3
+[37.086] [INFO]  [PING] Sending, seq: 4
+[37.090] [INFO]  [PING] Reply received, seq: 4
+[37.092] [INFO]  [PING] Sending, seq: 4
+[37.094] [INFO]  [PING] Reply received, seq: 4
+[37.109] [INFO]  [PING] Sending, seq: 5
+[37.112] [INFO]  [PING] Reply received, seq: 5
+[37.115] [INFO]  [PING] Sending, seq: 5
+[37.118] [INFO]  [PING] Reply received, seq: 5
+[37.133] [INFO]  [PING] Sending, seq: 6
+[37.137] [INFO]  [PING] Reply received, seq: 6
+[37.139] [INFO]  [PING] Sending, seq: 6
+[37.143] [INFO]  [PING] Reply received, seq: 6
+[37.159] [INFO]  [PING] Sending, seq: 7
+[[37.165] [INFO]  [PING] Reply received, seq: 7
+37.165] [INFO]  [PING] Sending, seq: 7
+[37.169] [INFO]  [PING] Reply received, seq: 7
+[37.183] [INFO]  [PING] Sending, seq: 8
+[37.186] [INFO]  [PING] Reply received, seq: 8
+[37.188] [INFO]  [PING] Sending, seq: 8
+[37.191] [INFO]  [PING] Reply received, seq: 8
+[37.207] [INFO]  [PING] Sending, seq: 9
+[37.211] [INFO]  [PING] Reply received, seq: 9
+[37.211] [INFO]  [PING] Sending, seq: 9
+[37.215] [INFO]  [PING] Reply received, seq: 9
+[37.231] [INFO]  [PING] Sending, seq: 10
+[37.234] [INFO]  [PING] Reply received, seq: 10
+[37.238] [INFO]  [PING] Sending, seq: 10
+[37.241] [INFO]  [PING] Reply received, seq: 10
+[37.258] [INFO]  [PING] Sending, seq: 11
+[37.262] [INFO]  [PING] Reply received, seq: 11
+[37.264] [INFO]  [PING] Sending, seq: 11
+[37.266] [INFO]  [PING] Reply received, seq: 11
+[37.281] [INFO]  [PING] Sending, seq: 12
+[37.284] [INFO]  [PING] Reply received, seq: 12
+[37.287] [INFO]  [PING] Sending, seq: 12
+[37.290] [INFO]  [PING] Reply received, seq: 12
+[37.305] [INFO]  [PING] Sending, seq: 13
+[37.307] [INFO]  [PING] Reply received, seq: 13
+[37.311] [INFO]  [PING] Sending, seq: 13
+[37.314] [INFO]  [PING] Reply received, seq: 13
+[37.330] [INFO]  [PING] Sending, seq: 14
+[37.333] [INFO]  [PING] Reply received, seq: 14
+[37.336] [INFO]  [PING] Sending, seq: 14
+[37.339] [INFO]  [PING] Reply received, seq: 14
+[37.354] [INFO]  [PING] Sending, seq: 15
+[37.357] [INFO]  [PING] Reply received, seq: 15
+[37.360] [INFO]  [PING] Sending, seq: 15
+[37.361] [INFO]  [ARP] Request for us, sending reply
+[37.361] [INFO]  [ARP] Reply sent
+[37.364] [INFO]  [PING] Reply received, seq: 15
+[37.379] [INFO]  [PING] Sending, seq: 16
+[37.383] [INFO]  [PING] Reply received, seq: 16
+[37.385] [INFO]  [PING] Sending, seq: 16
+[37.388] [INFO]  [PING] Reply received, seq: 16
+[37.403] [INFO]  [PING] Sending, seq: 17
+[37.406] [INFO]  [PING] Reply received, seq: 17
+[37.408] [INFO]  [PING] Sending, seq: 17
+[37.411] [INFO]  [PING] Reply received, seq: 17
+[37.426] [INFO]  [PING] Sending, seq: 18
+[37.429] [INFO]  [PING] Reply received, seq: 18
+[37.431] [INFO]  [PING] Sending, seq: 18
+[37.434] [INFO]  [PING] Reply received, seq: 18
+[37.448] [INFO]  [PING] Sending, seq: 19
+[37.451] [INFO]  [PING] Reply received, seq: 19
+[37.454] [INFO]  [PING] Sending, seq: 19
+[37.457] [INFO]  [PING] Reply received, seq: 19
+[37.472] [INFO]  [PING] Sending, seq: 20
+[37.475] [INFO]  [PING] Reply received, seq: 20
+[37.477] [INFO]  [PING] Sending, seq: 20
+[37.480] [INFO]  [PING] Reply received, seq: 20
+[37.496] [INFO]  [PING] Sending, seq: 21
+[37.499] [INFO]  [PING] Reply received, seq: 21
+[37.500] [INFO]  [PING] Sending, seq: 21
+[37.503] [INFO]  [PING] Reply received, seq: 21
+[37.518] [INFO]  [PING] Sending, seq: 22
+[37.521] [INFO]  [PING] Reply received, seq: 22
+[37.524] [INFO]  [PING] Sending, seq: 22
+[37.524] [INFO]  [PING] Reply received, seq: 22
+[37.539] [INFO]  [PING] Sending, seq: 23
+[37.542] [INFO]  [PING] Reply received, seq: 23
+[37.545] [INFO]  [PING] Sending, seq: 23
+[37.549] [INFO]  [PING] Reply received, seq: 23
+[37.563] [INFO]  [PING] Sending, seq: 24
+[37.567] [INFO]  [PING] Reply received, seq: 24
+[37.570] [INFO]  [PING] Sending, seq: 24
+[37.573] [INFO]  [PING] Reply received, seq: 24
+[37.587] [INFO]  [PING] Sending, seq: 25
+[37.592] [INFO]  [PING] Reply received, seq: 25
+[37.594] [INFO]  [PING] Sending, seq: 25
+[37.597] [INFO]  [PING] Reply received, seq: 25
+[37.612] [INFO]  [PING] Sending, seq: 26
+[37.615] [INFO]  [PING] Reply received, seq: 26
+[37.617] [INFO]  [PING] Sending, seq: 26
+[37.621] [INFO]  [PING] Reply received, seq: 26
+[37.637] [INFO]  [PING] Sending, seq: 27
+[37.641] [INFO]  [PING] Reply received, seq: 27
+[37.641] [INFO]  [PING] Sending, seq: 27
+[37.644] [INFO]  [PING] Reply received, seq: 27
+[37.659] [INFO]  [PING] Sending, seq: 28
+[37.663] [INFO]  [PING] Reply received, seq: 28
+[37.663] [INFO]  [PING] Sending, seq: 28
+[37.668] [INFO]  [PING] Reply received, seq: 28
+[37.683] [INFO]  [PING] Sending, seq: 29
+[37.686] [INFO]  [PING] Reply received, seq: 29
+[37.688] [INFO]  [PING] Sending, seq: 29
+[37.691] [INFO]  [PING] Reply received, seq: 29
+[37.708] [INFO]  [PING] Sending, seq: 30
+[37.711] [INFO]  [PING] Reply received, seq: 30
+[37.714] [INFO]  [PING] Sending, seq: 30
+[37.717] [INFO]  [PING] Reply received, seq: 30
+[37.733] [INFO]  [PING] Sending, seq: 31
+[37.738] [INFO]  [PING] Reply received, seq: 31
+[37.740] [INFO]  [PING] Sending, seq: 31
+[37.743] [INFO]  [PING] Reply received, seq: 31
+[37.760] [INFO]  [PING] Sending, seq: 32
+[37.777] [INFO]  [PING] Reply received, seq: 32
+[37.778] [INFO]  [PING] Sending, seq: 32
+[37.781] [INFO]  [PING] Reply received, seq: 32
+[37.799] [INFO]  [PING] Sending, seq: 33
+[37.800] [INFO]  [PING] Reply received, seq: 33
+[37.806] [INFO]  [PING] Sending, seq: 33
+[37.810] [INFO]  [PING] Reply received, seq: 33
+[37.824] [INFO]  [PING] Sending, seq: 34
+[37.830] [INFO]  [PING] Reply received, seq: 34
+[37.831] [INFO]  [PING] Sending, seq: 34
+[37.835] [INFO]  [PING] Reply received, seq: 34
+[37.850] [INFO]  [PING] Sending, seq: 35
+[37.854] [INFO]  [PING] Reply received, seq: 35
+[37.857] [INFO]  [PING] Sending, seq: 35
+[37.862] [INFO]  [PING] Reply received, seq: 35
+[37.879] [INFO]  [PING] Sending, seq: 36
+[37.882] [INFO]  [PING] Reply received, seq: 36
+[37.885] [INFO]  [PING] Sending, seq: 36
+[37.888] [INFO]  [PING] Reply received, seq: 36
+[37.904] [INFO]  [PING] Sending, seq: 37
+[37.908] [INFO]  [PING] Reply received, seq: 37
+[37.910] [INFO]  [PING] Sending, seq: 37
+[37.913] [INFO]  [PING] Reply received, seq: 37
+[37.929] [INFO]  [PING] Sending, seq: 38
+[37.932] [INFO]  [PING] Reply received, seq: 38
+[37.936] [INFO]  [PING] Sending, seq: 38
+[37.939] [INFO]  [PING] Reply received, seq: 38
+[37.956] [INFO]  [PING] Sending, seq: 39
+[37.959] [INFO]  [PING] Reply received, seq: 39
+[37.961] [INFO]  [PING] Sending, seq: 39
+[37.965] [INFO]  [PING] Reply received, seq: 39
+[37.979] [INFO]  [PING] Sending, seq: 40
+[37.982] [INFO]  [PING] Reply received, seq: 40
+[37.985] [INFO]  [PING] Sending, seq: 40
+[37.988] [INFO]  [PING] Reply received, seq: 40
+[38.004] [INFO]  [PING] Sending, seq: 41
+[38.008] [INFO]  [PING] Reply received, seq: 41
+[38.013] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[65.721] [INFO]  [ARP] Request for us, sending reply
+[65.721] [INFO]  [ARP] Reply sent
+[87.096] [ERROR] [VFS] create: parent directory not found
+[87.096] [ERROR] [CONFIG] Failed to create history file
+[87.096] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[94.651] [INFO]  [ARP] Request for us, sending reply
+[94.651] [INFO]  [ARP] Reply sent
+[94.965] [ERROR] [VFS] create: parent directory not found
+[94.965] [ERROR] [CONFIG] Failed to create history file
+[94.965] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[99.314] [ERROR] [VFS] create: parent directory not found
+[99.314] [ERROR] [CONFIG] Failed to create history file
+[99.314] [INFO]  [THREAD] Creating thread:
+[99.314] [INFO]  [THREAD] httpd
+[99.314] [INFO]  [THREAD] Created thread TID: 8
+[99.314] [INFO]  [THREAD] Stack: 0x00131034
+[99.314] [INFO]  [THREAD] ESP: 0x00134F84
+[99.314] [INFO]  [HTTPD] HTTP server thread created
+[99.315] [INFO]  [HTTPD] HTTP server thread starting...
+[99.315] [INFO]  [HTTPD] Listening on port 80
+[99.315] [INFO]  [HTTPD] HTTP server started successfully
+[99.414] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[100.757] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[100.934] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[101.035] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[123.423] [INFO]  [ARP] Request for us, sending reply
+[123.423] [INFO]  [ARP] Reply sent
+[139.388] [ERROR] [VFS] create: parent directory not found
+[139.388] [ERROR] [CONFIG] Failed to create history file
+[139.388] [INFO]  [SHELL] Prompt displayed, waiting for input...
+[146.210] [INFO]  [TCP] Connection request received
+[146.210] [INFO]  [TCP] Connection ESTABLISHED
+[146.211] [INFO]  [HTTPD] New client connection found!
+[146.211] [INFO]  [HTTPD] Request received:
+[146.211] [INFO]  [HTTPD] GET
+[146.211] [INFO]  [HTTPD] /
+[146.211] [INFO]  [HTTPD] Client connection closed
+[146.270] [INFO]  [TCP] Connection request received
+[146.271] [INFO]  [TCP] Connection ESTABLISHED
+[146.272] [INFO]  [HTTPD] New client connection found!
+[146.272] [INFO]  [HTTPD] Request received:
+[146.272] [INFO]  [HTTPD] GET
+[146.272] [INFO]  [HTTPD] /favicon.ico
+[146.273] [INFO]  [HTTPD] Client connection closed
+[151.458] [INFO]  [ARP] Request for us, sending reply
+[151.458] [INFO]  [ARP] Reply sent
+[151.619] [INFO]  [ARP] Request for us, sending reply
+[151.619] [INFO]  [ARP] Reply sent
+[180.470] [INFO]  [ARP] Request for us, sending reply
+[180.470] [INFO]  [ARP] Reply sent
+[194.478] [INFO]  [TCP] Connection request received
+[194.478] [INFO]  [TCP] Connection ESTABLISHED
+[194.478] [INFO]  [HTTPD] New client connection found!
+[194.478] [INFO]  [HTTPD] Request received:
+[194.478] [INFO]  [HTTPD] GET
+[194.478] [INFO]  [HTTPD] /
+[194.479] [INFO]  [HTTPD] Client connection closed
+[194.924] [INFO]  [TCP] Connection request received
+[194.924] [INFO]  [TCP] Connection ESTABLISHED
+[194.925] [INFO]  [HTTPD] New client connection found!
+[194.925] [INFO]  [HTTPD] Request received:
+[194.925] [INFO]  [HTTPD] GET
+[194.925] [INFO]  [HTTPD] /
+[194.926] [INFO]  [HTTPD] Client connection closed
+[195.227] [INFO]  [TCP] Connection request received
+[195.228] [INFO]  [TCP] Connection ESTABLISHED
+[195.229] [INFO]  [HTTPD] New client connection found!
+[195.229] [INFO]  [HTTPD] Request received:
+[195.229] [INFO]  [HTTPD] GET
+[195.229] [INFO]  [HTTPD] /
+[195.230] [INFO]  [HTTPD] Client connection closed
+[195.343] [INFO]  [TCP] Connection request received
+[195.344] [INFO]  [TCP] Connection ESTABLISHED
+[195.344] [INFO]  [HTTPD] New client connection found!
+[195.344] [INFO]  [HTTPD] Request received:
+[195.344] [INFO]  [HTTPD] GET
+[195.344] [INFO]  [HTTPD] /
+[195.344] [INFO]  [TCP] Connection closing (FIN received)
+[195.344] [INFO]  [HTTPD] Client connection closed
+[195.489] [INFO]  [TCP] Connection request received
+[195.490] [INFO]  [TCP] Connection ESTABLISHED
+[195.491] [INFO]  [HTTPD] New client connection found!
+[195.491] [INFO]  [HTTPD] Request received:
+[195.491] [INFO]  [HTTPD] GET
+[195.491] [INFO]  [HTTPD] /
+[195.491] [INFO]  [HTTPD] Client connection closed
+[195.599] [INFO]  [TCP] Connection request received
+[195.600] [INFO]  [TCP] Connection ESTABLISHED
+[195.600] [INFO]  [HTTPD] New client connection found!
+[195.600] [INFO]  [HTTPD] Request received:
+[195.600] [INFO]  [HTTPD] GET
+[195.600] [INFO]  [HTTPD] /
+[195.601] [INFO]  [HTTPD] Client connection closed
+[195.735] [INFO]  [TCP] Connection request received
+[195.736] [INFO]  [TCP] Connection ESTABLISHED
+[195.736] [INFO]  [HTTPD] New client connection found!
+[195.736] [INFO]  [HTTPD] Request received:
+[195.736] [INFO]  [HTTPD] GET
+[195.736] [INFO]  [HTTPD] /
+[195.737] [INFO]  [HTTPD] Client connection closed
+[195.876] [INFO]  [TCP] Connection request received
+[195.877] [INFO]  [TCP] Connection ESTABLISHED
+[195.877] [INFO]  [HTTPD] New client connection found!
+[195.877] [INFO]  [HTTPD] Request received:
+[195.877] [INFO]  [HTTPD] GET
+[195.877] [INFO]  [HTTPD] /
+[195.878] [INFO]  [HTTPD] Client connection closed
+[196.016] [INFO]  [TCP] Connection request received
+[196.017] [INFO]  [TCP] Connection ESTABLISHED
+[196.018] [INFO]  [HTTPD] New client connection found!
+[196.018] [INFO]  [HTTPD] Request received:
+[196.018] [INFO]  [HTTPD] GET
+[196.018] [INFO]  [HTTPD] /
+[196.018] [INFO]  [HTTPD] Client connection closed
+[196.157] [INFO]  [TCP] Connection request received
+[196.158] [INFO]  [TCP] Connection ESTABLISHED
+[196.159] [INFO]  [HTTPD] New client connection found!
+[196.159] [INFO]  [HTTPD] Request received:
+[196.159] [INFO]  [HTTPD] GET
+[196.159] [INFO]  [HTTPD] /
+[196.159] [INFO]  [HTTPD] Client connection closed
+[196.357] [INFO]  [TCP] Connection request received
+[196.358] [INFO]  [TCP] Connection ESTABLISHED
+[196.358] [INFO]  [HTTPD] New client connection found!
+[196.358] [INFO]  [HTTPD] Request received:
+[196.358] [INFO]  [HTTPD] GET
+[196.358] [INFO]  [HTTPD] /
+[196.359] [INFO]  [HTTPD] Client connection closed
+[196.502] [INFO]  [TCP] Connection request received
+[196.502] [INFO]  [TCP] Connection ESTABLISHED
+[196.503] [INFO]  [HTTPD] New client connection found!
+[196.503] [INFO]  [HTTPD] Request received:
+[196.503] [INFO]  [HTTPD] GET
+[196.503] [INFO]  [HTTPD] /
+[196.503] [INFO]  [HTTPD] Client connection closed
+[196.662] [INFO]  [TCP] Connection request received
+[196.662] [INFO]  [TCP] Connection ESTABLISHED
+[196.662] [INFO]  [HTTPD] New client connection found!
+[196.662] [INFO]  [HTTPD] Request received:
+[196.662] [INFO]  [HTTPD] GET
+[196.662] [INFO]  [HTTPD] /
+[196.663] [INFO]  [HTTPD] Client connection closed
+[196.803] [INFO]  [TCP] Connection request received
+[196.804] [INFO]  [TCP] Connection ESTABLISHED
+[196.804] [INFO]  [HTTPD] New client connection found!
+[196.804] [INFO]  [HTTPD] Request received:
+[196.804] [INFO]  [HTTPD] GET
+[196.804] [INFO]  [HTTPD] /
+[196.804] [INFO]  [HTTPD] Client connection closed
+[196.950] [INFO]  [TCP] Connection request received
+[196.950] [INFO]  [TCP] Connection ESTABLISHED
+[196.950] [INFO]  [HTTPD] New client connection found!
+[196.950] [INFO]  [HTTPD] Request received:
+[196.950] [INFO]  [HTTPD] GET
+[196.950] [INFO]  [HTTPD] /
+[196.951] [INFO]  [HTTPD] Client connection closed
+[197.100] [INFO]  [TCP] Connection request received
+[197.101] [INFO]  [TCP] Connection ESTABLISHED
+[197.101] [INFO]  [HTTPD] New client connection found!
+[197.101] [INFO]  [HTTPD] Request received:
+[197.101] [INFO]  [HTTPD] GET
+[197.101] [INFO]  [HTTPD] /
+[197.102] [INFO]  [HTTPD] Client connection closed
+[197.241] [INFO]  [TCP] Connection request received
+[197.242] [INFO]  [TCP] Connection ESTABLISHED
+[197.242] [INFO]  [HTTPD] New client connection found!
+[197.242] [INFO]  [HTTPD] Request received:
+[197.242] [INFO]  [HTTPD] GET
+[197.242] [INFO]  [HTTPD] /
+[197.242] [INFO]  [HTTPD] Client connection closed
+[197.379] [INFO]  [TCP] Connection request received
+[197.379] [INFO]  [TCP] Connection ESTABLISHED
+[197.380] [INFO]  [HTTPD] New client connection found!
+[197.380] [INFO]  [HTTPD] Request received:
+[197.380] [INFO]  [HTTPD] GET
+[197.380] [INFO]  [HTTPD] /
+[197.380] [INFO]  [HTTPD] Client connection closed
+[208.241] [INFO]  [ARP] Request for us, sending reply
+[208.241] [INFO]  [ARP] Reply sent

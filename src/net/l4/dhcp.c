@@ -467,6 +467,7 @@ static void dhcp_handle_ack(NetInterface *netif, dhcp_header_t *dhcp,
 
   KLOG_INFO("DHCP", "*** BOUND ***");
   KLOG_INFO_HEX("DHCP", "IP Address: ", netif->ip_addr);
+  KLOG_INFO_HEX("DHCP", "DNS Server: ", netif->dns_server);
   KLOG_INFO_DEC("DHCP", "Lease Time: ", lease_time);
 
   /* Mettre à jour la table de routage avec la nouvelle configuration */
