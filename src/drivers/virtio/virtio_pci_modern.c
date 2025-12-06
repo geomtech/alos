@@ -138,9 +138,10 @@ bool virtio_pci_modern_detect(PCIDevice *pci_dev, virtio_pci_modern_t *modern) {
 
 /**
  * Obtient l'adresse et la taille d'un BAR PCI.
+ * Supporte les BARs 64-bit.
  */
 static bool get_bar_info(PCIDevice *pci_dev, uint8_t bar_idx, 
-                         uint32_t *addr, uint32_t *size) {
+                         uint64_t *addr, uint64_t *size) {
     if (bar_idx >= 6) {
         return false;
     }
@@ -156,7 +157,15 @@ static bool get_bar_info(PCIDevice *pci_dev, uint8_t bar_idx,
     }
     
     /* Obtenir l'adresse de base (bits 31:4) */
-    *addr = bar_value & 0xFFFFFFF0;
+    *addr = (uint64_t)(bar_value & 0xFFFFFFF0);
+    
+    /* Vérifier si c'est un BAR 64-bit (bits 2:1 = 10) */
+    bool is_64bit = ((bar_value >> 1) & 0x3) == 2;
+    if (is_64bit && bar_idx < 5) {
+        uint32_t bar_high = pci_config_read_dword(pci_dev->bus, pci_dev->slot,
+                                                   pci_dev->func, bar_offset + 4);
+        *addr |= ((uint64_t)bar_high << 32);
+    }
     
     /* Calculer la taille en écrivant 0xFFFFFFFF et relisant */
     pci_config_write_dword(pci_dev->bus, pci_dev->slot, pci_dev->func, 
@@ -168,8 +177,23 @@ static bool get_bar_info(PCIDevice *pci_dev, uint8_t bar_idx,
                            bar_offset, bar_value);
     
     /* Calculer la taille */
-    size_mask &= 0xFFFFFFF0;
-    *size = (~size_mask) + 1;
+    if (is_64bit) {
+        /* Pour un BAR 64-bit, il faudrait aussi lire le masque du BAR suivant.
+         * Pour l'instant, on suppose que la taille tient dans 32 bits. */
+        uint32_t mask32 = size_mask & 0xFFFFFFF0;
+        *size = (~mask32) + 1;
+    } else {
+        /* BAR 32-bit : calcul sur 32 bits */
+        uint32_t mask32 = size_mask & 0xFFFFFFF0;
+        *size = (~mask32) + 1;
+    }
+    
+    /* Sanity check : la taille ne devrait pas dépasser quelques MB pour VirtIO */
+    if (*size > 0x10000000) {  /* 256 MB max */
+        KLOG_ERROR("VIRTIO_MODERN", "BAR size too large, capping!");
+        KLOG_ERROR_HEX("VIRTIO_MODERN", "  Calculated: ", (uint32_t)(*size >> 32));
+        *size = 0x10000;  /* 64 KB par défaut */
+    }
     
     return true;
 }
@@ -186,15 +210,15 @@ int virtio_pci_modern_map(PCIDevice *pci_dev, virtio_pci_modern_t *modern) {
         uint8_t bar_idx = modern->common_bar;
         
         if (modern->bar_mapped[bar_idx] == NULL) {
-            uint32_t bar_addr, bar_size;
+            uint64_t bar_addr, bar_size;
             if (!get_bar_info(pci_dev, bar_idx, &bar_addr, &bar_size)) {
                 KLOG_ERROR("VIRTIO_MODERN", "Failed to get BAR info");
                 return -1;
             }
             
             KLOG_INFO_HEX("VIRTIO_MODERN", "  Mapping BAR", bar_idx);
-            KLOG_INFO_HEX("VIRTIO_MODERN", "    Phys: ", bar_addr);
-            KLOG_INFO_HEX("VIRTIO_MODERN", "    Size: ", bar_size);
+            KLOG_INFO_HEX("VIRTIO_MODERN", "    Phys: ", (uint32_t)bar_addr);
+            KLOG_INFO_HEX("VIRTIO_MODERN", "    Size: ", (uint32_t)bar_size);
             
             modern->bar_mapped[bar_idx] = ioremap(bar_addr, bar_size);
             modern->bar_size[bar_idx] = bar_size;
@@ -219,7 +243,7 @@ int virtio_pci_modern_map(PCIDevice *pci_dev, virtio_pci_modern_t *modern) {
         uint8_t bar_idx = modern->notify_bar;
         
         if (modern->bar_mapped[bar_idx] == NULL) {
-            uint32_t bar_addr, bar_size;
+            uint64_t bar_addr, bar_size;
             if (!get_bar_info(pci_dev, bar_idx, &bar_addr, &bar_size)) {
                 return -1;
             }
@@ -246,14 +270,14 @@ int virtio_pci_modern_map(PCIDevice *pci_dev, virtio_pci_modern_t *modern) {
         KLOG_INFO_HEX("VIRTIO_MODERN", "  ISR offset: ", modern->isr_offset);
         
         if (modern->bar_mapped[bar_idx] == NULL) {
-            uint32_t bar_addr, bar_size;
+            uint64_t bar_addr, bar_size;
             if (!get_bar_info(pci_dev, bar_idx, &bar_addr, &bar_size)) {
                 KLOG_ERROR("VIRTIO_MODERN", "  Failed to get ISR BAR info!");
                 return -1;
             }
             
-            KLOG_INFO_HEX("VIRTIO_MODERN", "  ISR BAR phys: ", bar_addr);
-            KLOG_INFO_HEX("VIRTIO_MODERN", "  ISR BAR size: ", bar_size);
+            KLOG_INFO_HEX("VIRTIO_MODERN", "  ISR BAR phys: ", (uint32_t)bar_addr);
+            KLOG_INFO_HEX("VIRTIO_MODERN", "  ISR BAR size: ", (uint32_t)bar_size);
             
             modern->bar_mapped[bar_idx] = ioremap(bar_addr, bar_size);
             modern->bar_size[bar_idx] = bar_size;
@@ -278,7 +302,7 @@ int virtio_pci_modern_map(PCIDevice *pci_dev, virtio_pci_modern_t *modern) {
         uint8_t bar_idx = modern->device_bar;
         
         if (modern->bar_mapped[bar_idx] == NULL) {
-            uint32_t bar_addr, bar_size;
+            uint64_t bar_addr, bar_size;
             if (!get_bar_info(pci_dev, bar_idx, &bar_addr, &bar_size)) {
                 return -1;
             }

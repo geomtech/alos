@@ -222,24 +222,6 @@ int vmm_copy_to_dir(page_directory_t* dir, uint64_t dst_virt, const void* src, u
 int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, uint64_t size);
 
 /* ========================================
- * MMIO Mapping
- * ======================================== */
-
-/**
- * Mappe une région MMIO physique dans l'espace virtuel.
- * 
- * @param phys_addr  Adresse physique de la région MMIO
- * @param size       Taille de la région en octets
- * @return Adresse virtuelle, ou NULL si échec
- */
-volatile void* vmm_map_mmio(uint64_t phys_addr, uint64_t size);
-
-/**
- * Libère le mapping d'une région MMIO.
- */
-void vmm_unmap_mmio(volatile void* virt_addr, uint64_t size);
-
-/* ========================================
  * Helpers HHDM
  * ======================================== */
 

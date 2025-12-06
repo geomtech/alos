@@ -9,6 +9,7 @@
 #include "../../mm/kheap.h"
 #include "../klog.h"
 #include "../console.h"
+#include "../../include/memlayout.h"
 
 /* ========================================
  * Variables globales
@@ -20,18 +21,16 @@ static mmio_region_t* mmio_regions = NULL;
 /* Compteur de régions pour statistiques */
 static int mmio_region_count = 0;
 
-/* Adresse de base pour les mappings MMIO dynamiques
- * On utilise une zone au-dessus de l'identity mapping (16 Mo)
- * mais en dessous de l'espace utilisateur.
+/* Zone MMIO dédiée dans l'espace kernel
+ * On utilise une zone séparée du HHDM car Limine ne mappe que la RAM,
+ * pas les régions MMIO des périphériques PCI.
  * 
- * Zone MMIO: 0x01000000 - 0x10000000 (16 Mo - 256 Mo)
- * Cela donne 240 Mo d'espace pour les mappings MMIO.
+ * Les constantes MMIO_VIRT_BASE et MMIO_VIRT_END sont définies dans
+ * memlayout.h pour éviter les conflits avec d'autres modules.
  */
-#define MMIO_VIRT_BASE  0x01000000  /* 16 Mo */
-#define MMIO_VIRT_END   0x10000000  /* 256 Mo */
 
 /* Prochain slot disponible pour mapping MMIO */
-static uint32_t mmio_next_virt = MMIO_VIRT_BASE;
+static uint64_t mmio_next_virt = MMIO_VIRT_BASE;
 
 /* Flag d'initialisation */
 static bool mmio_initialized = false;
@@ -43,27 +42,27 @@ static bool mmio_initialized = false;
 /**
  * Aligne une adresse vers le bas sur PAGE_SIZE.
  */
-static inline uint32_t mmio_align_down(uint32_t addr)
+static inline uint64_t mmio_align_down(uint64_t addr)
 {
-    return addr & ~(PAGE_SIZE - 1);
+    return addr & ~((uint64_t)PAGE_SIZE - 1);
 }
 
 /**
  * Aligne une adresse vers le haut sur PAGE_SIZE.
  */
-static inline uint32_t mmio_align_up(uint32_t addr)
+static inline uint64_t mmio_align_up(uint64_t addr)
 {
-    return (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    return (addr + PAGE_SIZE - 1) & ~((uint64_t)PAGE_SIZE - 1);
 }
 
 /**
  * Vérifie si deux régions se chevauchent.
  */
-static bool mmio_regions_overlap(uint32_t start1, uint32_t size1,
-                                  uint32_t start2, uint32_t size2)
+static bool mmio_regions_overlap(uint64_t start1, uint64_t size1,
+                                  uint64_t start2, uint64_t size2)
 {
-    uint32_t end1 = start1 + size1;
-    uint32_t end2 = start2 + size2;
+    uint64_t end1 = start1 + size1;
+    uint64_t end2 = start2 + size2;
     
     return (start1 < end2) && (start2 < end1);
 }
@@ -71,7 +70,7 @@ static bool mmio_regions_overlap(uint32_t start1, uint32_t size1,
 /**
  * Trouve une région MMIO par son adresse virtuelle.
  */
-static mmio_region_t* mmio_find_region_by_virt(uint32_t virt_addr)
+static mmio_region_t* mmio_find_region_by_virt(uint64_t virt_addr)
 {
     mmio_region_t* region = mmio_regions;
     
@@ -88,7 +87,7 @@ static mmio_region_t* mmio_find_region_by_virt(uint32_t virt_addr)
 /**
  * Vérifie si une région physique est déjà mappée.
  */
-static mmio_region_t* mmio_find_region_by_phys(uint32_t phys_addr, uint32_t size)
+static mmio_region_t* mmio_find_region_by_phys(uint64_t phys_addr, uint64_t size)
 {
     mmio_region_t* region = mmio_regions;
     
@@ -114,24 +113,24 @@ void mmio_init(void)
     }
     
     KLOG_INFO("MMIO", "=== MMIO Subsystem Initialization ===");
-    KLOG_INFO_HEX("MMIO", "Virtual address range: ", MMIO_VIRT_BASE);
-    KLOG_INFO_HEX("MMIO", "                   to: ", MMIO_VIRT_END);
+    KLOG_INFO_HEX("MMIO", "MMIO virtual base (high): ", (uint32_t)(MMIO_VIRT_BASE >> 32));
+    KLOG_INFO_HEX("MMIO", "MMIO virtual end (high):  ", (uint32_t)(MMIO_VIRT_END >> 32));
     
     mmio_regions = NULL;
     mmio_region_count = 0;
     mmio_next_virt = MMIO_VIRT_BASE;
     mmio_initialized = true;
     
-    KLOG_INFO("MMIO", "MMIO subsystem initialized");
+    KLOG_INFO("MMIO", "MMIO subsystem initialized (dedicated zone)");
 }
 
-mmio_addr_t ioremap(uint32_t phys_addr, uint32_t size)
+mmio_addr_t ioremap(uint64_t phys_addr, uint64_t size)
 {
     /* Flags par défaut: non-cachable, read/write */
     return ioremap_flags(phys_addr, size, PAGE_NOCACHE);
 }
 
-mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags)
+mmio_addr_t ioremap_flags(uint64_t phys_addr, uint64_t size, uint32_t flags)
 {
     if (!mmio_initialized) {
         KLOG_ERROR("MMIO", "ioremap called before mmio_init!");
@@ -144,13 +143,13 @@ mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags)
     }
     
     /* Calculer l'offset dans la page */
-    uint32_t offset = phys_addr & (PAGE_SIZE - 1);
+    uint64_t offset = phys_addr & (PAGE_SIZE - 1);
     
     /* Aligner l'adresse physique vers le bas */
-    uint32_t phys_aligned = mmio_align_down(phys_addr);
+    uint64_t phys_aligned = mmio_align_down(phys_addr);
     
     /* Calculer la taille alignée (incluant l'offset) */
-    uint32_t size_aligned = mmio_align_up(size + offset);
+    uint64_t size_aligned = mmio_align_up(size + offset);
     
     /* Vérifier qu'on a assez d'espace virtuel */
     if (mmio_next_virt + size_aligned > MMIO_VIRT_END) {
@@ -164,7 +163,7 @@ mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags)
         /* Région déjà mappée - retourner le mapping existant si compatible */
         if (existing->phys_addr == phys_aligned && 
             existing->size >= size_aligned) {
-            KLOG_INFO("MMIO", "ioremap: reusing existing mapping");
+            KLOG_DEBUG("MMIO", "ioremap: reusing existing mapping");
             return (mmio_addr_t)(existing->virt_addr + offset);
         }
         KLOG_ERROR("MMIO", "ioremap: conflicting region exists!");
@@ -172,36 +171,39 @@ mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags)
     }
     
     /* Allouer l'adresse virtuelle */
-    uint32_t virt_addr = mmio_next_virt;
+    uint64_t virt_addr = mmio_next_virt;
     mmio_next_virt += size_aligned;
     
-    /* Mapper chaque page avec les attributs MMIO */
-    uint32_t page_flags = PAGE_PRESENT | PAGE_RW | flags;
+    /* Mapper chaque page avec les attributs MMIO (PCD + PWT pour désactiver le cache) */
+    uint64_t page_flags = PAGE_PRESENT | PAGE_RW | PAGE_NOCACHE | PAGE_WRITETHROUGH | (flags & ~0xFFF);
     
-    for (uint32_t off = 0; off < size_aligned; off += PAGE_SIZE) {
+    KLOG_INFO_HEX("MMIO", "ioremap: mapping phys ", (uint32_t)phys_aligned);
+    KLOG_INFO_HEX("MMIO", "              to virt (high) ", (uint32_t)(virt_addr >> 32));
+    KLOG_INFO_HEX("MMIO", "              to virt (low)  ", (uint32_t)virt_addr);
+    KLOG_INFO_HEX("MMIO", "              size ", (uint32_t)size_aligned);
+    
+    for (uint64_t off = 0; off < size_aligned; off += PAGE_SIZE) {
         vmm_map_page(phys_aligned + off, virt_addr + off, page_flags);
     }
     
     /* Enregistrer la région */
     mmio_register_region(phys_aligned, virt_addr, size_aligned, "ioremap");
     
-    KLOG_INFO_HEX("MMIO", "ioremap: phys ", phys_addr);
-    KLOG_INFO_HEX("MMIO", "      -> virt ", virt_addr + offset);
-    KLOG_INFO_HEX("MMIO", "         size ", size);
-    
     /* Retourner l'adresse virtuelle avec l'offset original */
     return (mmio_addr_t)(virt_addr + offset);
 }
 
-void iounmap(mmio_addr_t virt_addr, uint32_t size)
+void iounmap(mmio_addr_t virt_addr, uint64_t size)
 {
+    (void)size;
+    
     if (virt_addr == NULL) {
         return;
     }
     
     /* Aligner l'adresse vers le bas */
-    uint32_t virt = (uint32_t)(uintptr_t)virt_addr;
-    uint32_t virt_aligned = mmio_align_down(virt);
+    uint64_t virt = (uint64_t)(uintptr_t)virt_addr;
+    uint64_t virt_aligned = mmio_align_down(virt);
     
     /* Trouver la région */
     mmio_region_t* region = mmio_find_region_by_virt(virt_aligned);
@@ -211,18 +213,18 @@ void iounmap(mmio_addr_t virt_addr, uint32_t size)
     }
     
     /* Unmapper chaque page */
-    for (uint32_t off = 0; off < region->size; off += PAGE_SIZE) {
+    for (uint64_t off = 0; off < region->size; off += PAGE_SIZE) {
         vmm_unmap_page(region->virt_addr + off);
     }
     
     /* Désenregistrer la région */
     mmio_unregister_region(region->virt_addr);
     
-    KLOG_INFO_HEX("MMIO", "iounmap: freed region at ", virt_aligned);
+    KLOG_DEBUG_HEX("MMIO", "iounmap: freed region at ", (uint32_t)virt_aligned);
 }
 
-int mmio_register_region(uint32_t phys_addr, uint32_t virt_addr,
-                         uint32_t size, const char* name)
+int mmio_register_region(uint64_t phys_addr, uint64_t virt_addr,
+                         uint64_t size, const char* name)
 {
     /* Vérifier les conflits */
     mmio_region_t* existing = mmio_find_region_by_phys(phys_addr, size);
@@ -262,7 +264,7 @@ int mmio_register_region(uint32_t phys_addr, uint32_t virt_addr,
     return 0;
 }
 
-void mmio_unregister_region(uint32_t virt_addr)
+void mmio_unregister_region(uint64_t virt_addr)
 {
     mmio_region_t* prev = NULL;
     mmio_region_t* current = mmio_regions;
@@ -288,7 +290,7 @@ void mmio_unregister_region(uint32_t virt_addr)
     }
 }
 
-bool mmio_is_mmio_address(uint32_t phys_addr)
+bool mmio_is_mmio_address(uint64_t phys_addr)
 {
     mmio_region_t* region = mmio_regions;
     

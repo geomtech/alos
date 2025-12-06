@@ -86,17 +86,18 @@ int gui_init(struct limine_framebuffer* fb) {
     g_state = GUI_STATE_RUNNING;
     g_quit_requested = false;
     
-    /* Test UTF-8 avec SSFN */
-    if (ssfn_is_initialized()) {
-        ssfn_set_fg(0xFFFFFFFF);  /* Blanc */
-        ssfn_print_at(20, 50, "ALOS - UTF-8 Test:");
-        ssfn_print_at(20, 70, "English: Hello World!");
-        ssfn_print_at(20, 90, "Français: Bonjour le monde! éàüö");
-        ssfn_print_at(20, 110, "日本語: こんにちは世界");
-        ssfn_print_at(20, 130, "中文: 你好世界");
-        ssfn_print_at(20, 150, "Русский: Привет мир");
-        ssfn_print_at(20, 170, "العربية: مرحبا بالعالم");
-        ssfn_print_at(20, 190, "Emoji: ★ ♠ ♣ ♥ ♦ ☺ ☻");
+    /* Test UTF-8 avec SSFN - utiliser le renderer scalable si disponible */
+    if (ssfn_scalable_available()) {
+        ssfn_render_text_size(20, 50, 12, 0xFFFFFFFF, "ALOS - UTF-8 Test (12px):");
+        ssfn_render_text_size(20, 66, 11, 0xFFCCCCCC, "English: Hello World!");
+        ssfn_render_text_size(20, 80, 11, 0xFFCCCCCC, "Français: Bonjour! éàüöç");
+        ssfn_render_text_size(20, 94, 11, 0xFFCCCCCC, "日本語: こんにちは");
+        ssfn_render_text_size(20, 108, 11, 0xFFCCCCCC, "中文: 你好世界");
+        ssfn_render_text_size(20, 122, 11, 0xFFCCCCCC, "Русский: Привет мир");
+    } else if (ssfn_is_initialized()) {
+        /* Fallback bitmap 16x16 */
+        ssfn_set_fg(0xFFFFFFFF);
+        ssfn_print_at(20, 50, "ALOS - UTF-8 (16px bitmap)");
     }
     
     return 0;
@@ -253,50 +254,53 @@ static void demo_window_draw(window_t* win) {
     int32_t x = win->content_bounds.x + 20;
     int32_t y = win->content_bounds.y + 20;
     
-    /* Utiliser SSFN pour le texte UTF-8 */
-    if (ssfn_is_initialized()) {
-        ssfn_set_fg(COLOR_TEXT_PRIMARY);
-        ssfn_print_at(x, y, "Bienvenue dans ALOS GUI!");
-        
-        y += 24;
-        ssfn_set_fg(0xFF666666);
-        ssfn_print_at(x, y, "Système d'exploitation éducatif");
-        
-        y += 24;
-        ssfn_print_at(x, y, "Fonctionnalités: réseau, système de fichiers, GUI");
-        
-        y += 32;
-        ssfn_set_fg(COLOR_TEXT_PRIMARY);
-        ssfn_print_at(x, y, "Support UTF-8 complet:");
+    /* Utiliser le renderer scalable si disponible (police plus fine) */
+    if (ssfn_scalable_available()) {
+        /* Titre en 14px */
+        ssfn_render_text_size(x, y, 14, COLOR_TEXT_PRIMARY, "Bienvenue dans ALOS GUI!");
         
         y += 20;
-        ssfn_set_fg(0xFF444444);
-        ssfn_print_at(x + 10, y, "• Français: àéèêëïôùûç");
+        ssfn_render_text_size(x, y, 12, 0xFF666666, "Système d'exploitation éducatif");
+        
         y += 18;
-        ssfn_print_at(x + 10, y, "• Deutsch: äöüß");
-        y += 18;
-        ssfn_print_at(x + 10, y, "• 日本語: ひらがな");
-        y += 18;
-        ssfn_print_at(x + 10, y, "• Русский: Привет");
+        ssfn_render_text_size(x, y, 11, 0xFF666666, "Fonctionnalités: réseau, fichiers, GUI");
+        
+        y += 24;
+        ssfn_render_text_size(x, y, 12, COLOR_TEXT_PRIMARY, "Support UTF-8 complet:");
+        
+        y += 16;
+        ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Français: àéèêëïôùûç");
+        y += 14;
+        ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Deutsch: äöüß");
+        y += 14;
+        ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• 日本語: ひらがな");
+        y += 14;
+        ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Русский: Привет");
+    } else if (ssfn_is_initialized()) {
+        /* Fallback sur le renderer bitmap 16x16 */
+        ssfn_set_fg(COLOR_TEXT_PRIMARY);
+        ssfn_print_at(x, y, "Bienvenue dans ALOS GUI!");
+        y += 20;
+        ssfn_set_fg(0xFF666666);
+        ssfn_print_at(x, y, "UTF-8: àéèêëïôùûç 日本語");
     }
     
-    y += 30;
+    y += 24;
     
     /* Bouton */
-    rect_t btn = {win->content_bounds.x + 20, y, 140, 32};
+    rect_t btn = {win->content_bounds.x + 20, y, 120, 28};
     draw_rounded_rect(btn, 6, COLOR_MACOS_BLUE);
-    if (ssfn_is_initialized()) {
-        ssfn_set_fg(0xFFFFFFFF);
-        ssfn_print_at(btn.x + 20, btn.y + 8, "Démarrer ▶");
+    if (ssfn_scalable_available()) {
+        ssfn_render_text_size(btn.x + 24, btn.y + 7, 12, 0xFFFFFFFF, "Démarrer ▶");
     }
     
-    y += 50;
+    y += 40;
     
     /* Barre de progression */
-    rect_t progress_bg = {win->content_bounds.x + 20, y, 200, 8};
-    draw_rounded_rect(progress_bg, 4, COLOR_GRAY_2);
-    rect_t progress_fg = {win->content_bounds.x + 20, y, 140, 8};
-    draw_rounded_rect(progress_fg, 4, COLOR_MACOS_BLUE);
+    rect_t progress_bg = {win->content_bounds.x + 20, y, 200, 6};
+    draw_rounded_rect(progress_bg, 3, COLOR_GRAY_2);
+    rect_t progress_fg = {win->content_bounds.x + 20, y, 140, 6};
+    draw_rounded_rect(progress_fg, 3, COLOR_MACOS_BLUE);
 }
 
 window_t* gui_create_demo_window(const char* title, int32_t x, int32_t y) {

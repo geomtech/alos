@@ -8,7 +8,7 @@
 #include "../../arch/x86_64/idt.h"
 #include "../../arch/x86_64/io.h"
 #include "../../mm/kheap.h"
-#include "../../mm/vmm.h"
+#include "../../kernel/mmio/mmio.h"
 #include "../../net/core/netdev.h"
 #include "../../net/l2/ethernet.h"
 #include "../../kernel/klog.h"
@@ -519,7 +519,7 @@ E1000Device *e1000e_init(PCIDevice *pci_dev) {
     KLOG_INFO_HEX("E1000E", "MMIO Physical: ", dev->mmio_phys);
     
     /* Map MMIO region */
-    dev->mmio_base = vmm_map_mmio(dev->mmio_phys, dev->mmio_size);
+    dev->mmio_base = ioremap(dev->mmio_phys, dev->mmio_size);
     if (dev->mmio_base == NULL) {
         KLOG_ERROR("E1000E", "Failed to map MMIO region");
         kfree(dev);

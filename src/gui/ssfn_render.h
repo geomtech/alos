@@ -33,4 +33,11 @@ int ssfn_font_height(void);
 int ssfn_font_width(void);
 int ssfn_text_width(const char *str);
 
+/* Renderer scalable (taille configurable) */
+int ssfn_set_size(int size);
+int ssfn_render_text(int x, int y, uint32_t color, const char *str);
+int ssfn_render_text_size(int x, int y, int size, uint32_t color, const char *str);
+int ssfn_scalable_available(void);
+void ssfn_cleanup(void);
+
 #endif /* SSFN_RENDER_H */

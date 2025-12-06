@@ -84,7 +84,13 @@ static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, ui
     /* Créer une nouvelle table */
     page_entry_t* new_table = alloc_table();
     if (new_table == NULL) {
-        KLOG_ERROR("VMM", "get_or_create_table: alloc_table failed!");
+        /* Limiter le spam de logs */
+        static int alloc_fail_count = 0;
+        if (alloc_fail_count < 3) {
+            KLOG_ERROR("VMM", "get_or_create_table: alloc_table failed!");
+            KLOG_ERROR_HEX("VMM", "  PMM free blocks: ", (uint32_t)pmm_get_free_blocks());
+            alloc_fail_count++;
+        }
         return NULL;
     }
     
@@ -173,12 +179,23 @@ void vmm_map_page(uint64_t phys, uint64_t virt, uint64_t flags)
     
     page_entry_t* pt = get_or_create_table(pd, pd_idx, flags);
     if (pt == NULL) {
-        KLOG_ERROR("VMM", "Failed to allocate PT");
+        /* Log une seule fois pour éviter le spam */
+        static int pt_fail_count = 0;
+        if (pt_fail_count < 5) {
+            KLOG_ERROR("VMM", "Failed to allocate PT");
+            KLOG_ERROR_HEX("VMM", "  virt (high): ", (uint32_t)(virt >> 32));
+            KLOG_ERROR_HEX("VMM", "  virt (low):  ", (uint32_t)virt);
+            KLOG_ERROR_HEX("VMM", "  phys (high): ", (uint32_t)(phys >> 32));
+            KLOG_ERROR_HEX("VMM", "  phys (low):  ", (uint32_t)phys);
+            pt_fail_count++;
+        }
         return;
     }
     
-    /* Mapper la page */
-    pt[pt_idx] = phys | (flags & 0xFFF) | PAGE_PRESENT;
+    /* Mapper la page
+     * Note: On garde les flags complets (incluant NX bit 63) pour permettre
+     * la protection d'exécution sur les régions MMIO et données. */
+    pt[pt_idx] = phys | (flags & (0xFFF | PAGE_NX)) | PAGE_PRESENT;
     
     /* Invalider le TLB */
     invlpg(virt);
@@ -576,56 +593,6 @@ int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, u
     }
     
     return 0;
-}
-
-/* ========================================
- * MMIO Mapping
- * ======================================== */
-
-/* Adresse de base pour les mappings MMIO dynamiques */
-#define MMIO_VIRT_BASE  0xFFFFFFFF00000000ULL
-#define MMIO_VIRT_END   0xFFFFFFFF80000000ULL
-
-static uint64_t mmio_next_virt = MMIO_VIRT_BASE;
-
-volatile void* vmm_map_mmio(uint64_t phys_addr, uint64_t size)
-{
-    uint64_t phys_aligned = PAGE_ALIGN_DOWN(phys_addr);
-    uint64_t offset = phys_addr - phys_aligned;
-    
-    uint64_t total_size = offset + size;
-    uint64_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    
-    if (mmio_next_virt + (num_pages * PAGE_SIZE) > MMIO_VIRT_END) {
-        KLOG_ERROR("VMM", "MMIO space exhausted!");
-        return NULL;
-    }
-    
-    uint64_t virt_base = mmio_next_virt;
-    
-    for (uint64_t i = 0; i < num_pages; i++) {
-        uint64_t phys = phys_aligned + (i * PAGE_SIZE);
-        uint64_t virt = virt_base + (i * PAGE_SIZE);
-        
-        vmm_map_page(phys, virt, PAGE_PRESENT | PAGE_RW | PAGE_NOCACHE);
-    }
-    
-    mmio_next_virt += num_pages * PAGE_SIZE;
-    
-    return (volatile void*)(virt_base + offset);
-}
-
-void vmm_unmap_mmio(volatile void* virt_addr, uint64_t size)
-{
-    uint64_t virt = (uint64_t)virt_addr;
-    uint64_t virt_aligned = PAGE_ALIGN_DOWN(virt);
-    uint64_t offset = virt - virt_aligned;
-    uint64_t total_size = offset + size;
-    uint64_t num_pages = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    
-    for (uint64_t i = 0; i < num_pages; i++) {
-        vmm_unmap_page(virt_aligned + (i * PAGE_SIZE));
-    }
 }
 
 /* ========================================

@@ -212,6 +212,64 @@ void kfree(void* ptr)
     spinlock_unlock(&heap_lock);
 }
 
+void* krealloc(void* ptr, size_t new_size)
+{
+    /* Si ptr est NULL, équivalent à kmalloc */
+    if (ptr == NULL) {
+        return kmalloc(new_size);
+    }
+    
+    /* Si new_size est 0, équivalent à kfree */
+    if (new_size == 0) {
+        kfree(ptr);
+        return NULL;
+    }
+    
+    /* Retrouver le header du bloc actuel */
+    KHeapBlock* block = KHEAP_DATA_BLOCK(ptr);
+    
+    /* Vérification : le bloc doit être dans le heap */
+    uint8_t* heap_end = (uint8_t*)heap_start + heap_total_size;
+    if ((uint8_t*)block < (uint8_t*)heap_start || (uint8_t*)block >= heap_end) {
+        /* Pointeur hors du heap - ne peut pas être réalloué */
+        /* Allouer un nouveau bloc sans copier (on ne connaît pas la taille) */
+        return kmalloc(new_size);
+    }
+    
+    /* Vérifier que le bloc n'est pas corrompu */
+    if (block->is_free) {
+        /* Le bloc est marqué libre - corruption ou double free */
+        return kmalloc(new_size);
+    }
+    
+    size_t old_size = block->size;
+    
+    /* Si la nouvelle taille est plus petite ou égale, on peut garder le même bloc */
+    new_size = (new_size + 3) & ~3;  /* Aligner sur 4 octets */
+    if (new_size <= old_size) {
+        return ptr;
+    }
+    
+    /* Allouer un nouveau bloc */
+    void* new_ptr = kmalloc(new_size);
+    if (new_ptr == NULL) {
+        return NULL; /* Échec d'allocation, l'ancien bloc reste valide */
+    }
+    
+    /* Copier les données */
+    uint8_t* src = (uint8_t*)ptr;
+    uint8_t* dst = (uint8_t*)new_ptr;
+    size_t copy_size = (old_size < new_size) ? old_size : new_size;
+    for (size_t i = 0; i < copy_size; i++) {
+        dst[i] = src[i];
+    }
+    
+    /* Libérer l'ancien bloc */
+    kfree(ptr);
+    
+    return new_ptr;
+}
+
 size_t kheap_get_total_size(void)
 {
     return heap_total_size;

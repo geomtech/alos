@@ -164,7 +164,7 @@ typedef struct {
     
     /* BARs mappés (pour éviter de mapper plusieurs fois le même BAR) */
     volatile void *bar_mapped[6];
-    uint32_t bar_size[6];
+    uint64_t bar_size[6];
 } virtio_pci_modern_t;
 
 /* ============================================ */

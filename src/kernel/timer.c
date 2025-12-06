@@ -80,32 +80,46 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
 
 /* Déclaration externe du scheduler */
 extern void scheduler_tick(void);
-extern uint32_t scheduler_preempt(void *frame);
-
-/**
- * Ancien handler - gardé pour compatibilité
- */
-void timer_tick(void)
-{
-    g_timer_ticks++;
-    /* DISABLED FOR DEBUGGING: scheduler_tick(); */
-}
+extern uint64_t scheduler_preempt(void *frame);
 
 /**
  * Nouveau handler avec support préemption.
  * Appelé directement depuis l'IRQ0 ASM.
  * @param frame Pointeur vers les registres sauvegardés (interrupt_frame_t)
- * @return Nouvel ESP si préemption, 0 sinon
+ * @return Nouveau RSP si préemption, 0 sinon
  */
-uint32_t timer_handler_preempt(void *frame)
+/* Flag pour activer les callbacks scheduler depuis le timer */
+static bool g_timer_scheduling_enabled = false;
+
+void timer_enable_scheduling(void)
+{
+    g_timer_scheduling_enabled = true;
+}
+
+uint64_t timer_handler_preempt(void *frame)
 {
     g_timer_ticks++;
     
     /* Envoyer EOI au PIC (Important: avant le scheduler!) */
     outb(0x20, 0x20);
     
-    /* Appeler le scheduler avec le frame d'interruption */
-    return scheduler_preempt(frame);
+    /* Ne pas appeler le scheduler tant que le multitasking n'est pas prêt */
+    if (!g_timer_scheduling_enabled) {
+        return 0;
+    }
+    
+    /* Appeler scheduler_tick pour le time accounting et wake sleeping threads.
+     * 
+     * NOTE: La vraie préemption (changement de RSP via scheduler_preempt) est
+     * désactivée car le format de contexte sauvegardé par switch_context
+     * (callee-saved) est incompatible avec le format IRQ (interrupt_frame).
+     * 
+     * IMPORTANT: Ne PAS appeler scheduler_preempt() car il modifie current->rsp
+     * même quand on ignore son retour, ce qui corrompt le contexte du thread.
+     */
+    (void)frame;
+    scheduler_tick();
+    return 0;  /* Pas de changement de contexte via IRQ */
 }
 
 /* ===========================================

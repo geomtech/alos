@@ -146,4 +146,10 @@ void datetime_format(const datetime_t* dt, char* buffer, int format);
  */
 void timestamp_print_now(void);
 
+/**
+ * Active les callbacks du scheduler depuis le timer.
+ * Doit être appelé après init_multitasking().
+ */
+void timer_enable_scheduling(void);
+
 #endif /* TIMER_H */

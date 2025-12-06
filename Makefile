@@ -238,17 +238,25 @@ run: run-vbox
 
 run-vbox: iso
 	@echo "=== Starting VirtualBox ==="
+	@# Arrêter la VM si elle tourne pour pouvoir modifier les paramètres
+	@VBoxManage controlvm "ALOS" poweroff 2>/dev/null || true
+	@sleep 1
 	@if ! VBoxManage list vms | grep -q "\"ALOS\""; then \
 		echo "Creating VM 'ALOS'..."; \
 		VBoxManage createvm --name "ALOS" --ostype "Other_64" --register; \
 		VBoxManage modifyvm "ALOS" --memory 1024 --vram 16 --graphicscontroller vmsvga; \
 		VBoxManage storagectl "ALOS" --name "IDE Controller" --add ide; \
-		VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium alos.iso; \
-	else \
-		echo "Updating ISO for VM 'ALOS'..."; \
-		VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium alos.iso; \
 	fi
+	@echo "Configuring serial port..."
+	@VBoxManage modifyvm "ALOS" --uart1 0x3F8 4 --uartmode1 file $(CURDIR)/serial.log
+	@VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium $(CURDIR)/alos.iso --forceunmount 2>/dev/null || \
+		VBoxManage storageattach "ALOS" --storagectl "IDE Controller" --port 0 --device 0 --type dvddrive --medium $(CURDIR)/alos.iso
+	@rm -f serial.log
+	@touch serial.log
 	VBoxManage startvm "ALOS"
+	@echo ""
+	@echo "=== Serial logs: tail -f serial.log ==="
+	@sleep 2 && tail -f serial.log
 
 run-qemu: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio

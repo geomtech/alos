@@ -65,8 +65,8 @@ typedef enum {
  */
 typedef struct {
     pci_bar_type_t type;    /* Type de région (MMIO ou PIO) */
-    uint32_t base_addr;     /* Adresse de base physique */
-    uint32_t size;          /* Taille de la région */
+    uint64_t base_addr;     /* Adresse de base physique (64-bit pour BAR 64-bit) */
+    uint64_t size;          /* Taille de la région */
     bool is_64bit;          /* true si BAR 64-bit (occupe 2 slots) */
     bool prefetchable;      /* true si prefetchable (MMIO seulement) */
     uint8_t bar_index;      /* Index du BAR (0-5) */
@@ -105,7 +105,7 @@ int pci_parse_bars(PCIDevice* pci_dev, pci_device_bars_t* bars);
  * @param bar_index Index du BAR (0-5)
  * @return Taille de la région en octets
  */
-uint32_t pci_get_bar_size(PCIDevice* pci_dev, int bar_index);
+uint64_t pci_get_bar_size(PCIDevice* pci_dev, int bar_index);
 
 /**
  * Vérifie si un BAR est de type MMIO.
@@ -135,9 +135,9 @@ static inline bool pci_bar_is_pio(uint32_t bar_value)
  * @param bar_value Valeur brute du BAR
  * @return Adresse physique de base
  */
-static inline uint32_t pci_bar_mmio_addr(uint32_t bar_value)
+static inline uint64_t pci_bar_mmio_addr(uint32_t bar_value)
 {
-    return bar_value & PCI_BAR_MMIO_ADDR_MASK;
+    return (uint64_t)(bar_value & PCI_BAR_MMIO_ADDR_MASK);
 }
 
 /**
@@ -148,7 +148,7 @@ static inline uint32_t pci_bar_mmio_addr(uint32_t bar_value)
  */
 static inline uint32_t pci_bar_pio_addr(uint32_t bar_value)
 {
-    return bar_value & PCI_BAR_PIO_ADDR_MASK;
+    return bar_value & PCI_BAR_PIO_ADDR_MASK;  /* PIO reste 16-bit sur x86 */
 }
 
 /**

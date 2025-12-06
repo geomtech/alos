@@ -127,14 +127,6 @@ static uint32_t schedule_counter = 0;
 /* Déclaration externe pour réveiller les threads en sleep */
 extern void scheduler_wake_sleeping(void);
 
-void timer_handler_c(void) {
-  /* Incrémenter le compteur de ticks */
-  timer_tick();
-
-  /* NOTE: EOI est envoyé par irq_handler() après le retour de cette fonction.
-   * Ne pas envoyer de double EOI ici ! */
-}
-
 /**
  * Halt and catch fire - called on unrecoverable errors.
  */
@@ -232,6 +224,9 @@ void kmain(void) {
     KLOG_INFO("KERNEL", "Initializing timer...");
     timer_init(TIMER_FREQUENCY); /* 1000 Hz = 1ms par tick */
     KLOG_INFO("KERNEL", "Timer initialized");
+
+    __asm__ volatile("sti");
+    KLOG_INFO("KERNEL", "Interrupts enabled");
 
     /* Afficher la date/heure de boot */
     console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
@@ -431,8 +426,6 @@ void kmain(void) {
 
     console_refresh();
 
-    __asm__ volatile("sti");
-
   /* ============================================ */
   /* Initialiser le User Mode Support (TSS)       */
   /* ============================================ */
@@ -442,6 +435,9 @@ void kmain(void) {
   /* Initialiser le Multitasking                  */
   /* ============================================ */
   init_multitasking();
+
+  /* Activer la préemption timer maintenant que le scheduler est prêt */
+  timer_enable_scheduling();
 
   /* Lancer le shell interactif */
   shell_init();

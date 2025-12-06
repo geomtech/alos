@@ -36,7 +36,7 @@ static void pci_write_bar(PCIDevice* dev, int bar_index, uint32_t value)
  * Fonctions publiques
  * ======================================== */
 
-uint32_t pci_get_bar_size(PCIDevice* pci_dev, int bar_index)
+uint64_t pci_get_bar_size(PCIDevice* pci_dev, int bar_index)
 {
     if (bar_index < 0 || bar_index >= PCI_MAX_BARS) {
         return 0;
@@ -60,17 +60,21 @@ uint32_t pci_get_bar_size(PCIDevice* pci_dev, int bar_index)
     }
     
     /* Calculer la taille selon le type de BAR */
+    uint64_t mask64;
     if (pci_bar_is_mmio(original)) {
         /* BAR MMIO: masquer les bits de type (bits 0-3) */
-        size_mask &= PCI_BAR_MMIO_ADDR_MASK;
+        mask64 = (uint64_t)(size_mask & PCI_BAR_MMIO_ADDR_MASK);
+        /* Pour BAR 64-bit, étendre le masque */
+        if (pci_bar_is_64bit(original)) {
+            mask64 |= 0xFFFFFFFF00000000ULL;
+        }
     } else {
         /* BAR PIO: masquer les bits de type (bits 0-1) */
-        size_mask &= PCI_BAR_PIO_ADDR_MASK;
+        mask64 = (uint64_t)(size_mask & PCI_BAR_PIO_ADDR_MASK);
     }
     
     /* La taille est le complément à 2 du masque + 1 */
-    /* size = ~size_mask + 1 = -size_mask (en non signé) */
-    return (~size_mask) + 1;
+    return (~mask64) + 1;
 }
 
 int pci_parse_bars(PCIDevice* pci_dev, pci_device_bars_t* bars)
@@ -117,8 +121,8 @@ int pci_parse_bars(PCIDevice* pci_dev, pci_device_bars_t* bars)
             
             /* Si BAR 64-bit, le BAR suivant contient les bits hauts */
             if (bar->is_64bit && i < PCI_MAX_BARS - 1) {
-                /* Pour l'instant on ignore les bits hauts (x86-32) */
-                /* Le BAR suivant est marqué comme partie du 64-bit */
+                uint32_t bar_high = pci_read_bar(pci_dev, i + 1);
+                bar->base_addr |= ((uint64_t)bar_high << 32);
                 i++; /* Sauter le BAR suivant */
             }
         } else {

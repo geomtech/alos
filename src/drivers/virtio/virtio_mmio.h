@@ -113,8 +113,8 @@
  */
 typedef struct {
     volatile void *base;        /* Adresse de base MMIO mappée */
-    uint32_t phys_addr;         /* Adresse physique */
-    uint32_t size;              /* Taille de la région MMIO */
+    uint64_t phys_addr;         /* Adresse physique */
+    uint64_t size;              /* Taille de la région MMIO */
     uint32_t irq;               /* Numéro d'IRQ */
     
     uint32_t device_id;         /* Type de device (net, block, etc.) */
@@ -207,7 +207,7 @@ static inline uint32_t virtio_mmio_read_config32(VirtioMmioDevice *dev, uint32_t
  * @param irq        Numéro d'IRQ
  * @return Device initialisé ou NULL si échec
  */
-VirtioMmioDevice *virtio_mmio_probe(uint32_t phys_addr, uint32_t size, uint32_t irq);
+VirtioMmioDevice *virtio_mmio_probe(uint64_t phys_addr, uint64_t size, uint32_t irq);
 
 /**
  * Initialise un device VirtIO MMIO.

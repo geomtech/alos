@@ -85,7 +85,7 @@ static void virtio_mmio_add_status(VirtioMmioDevice *dev, uint32_t status_bit)
 /*           API publique                       */
 /* ============================================ */
 
-VirtioMmioDevice *virtio_mmio_probe(uint32_t phys_addr, uint32_t size, uint32_t irq)
+VirtioMmioDevice *virtio_mmio_probe(uint64_t phys_addr, uint64_t size, uint32_t irq)
 {
     KLOG_INFO("VIRTIO_MMIO", "Probing device at phys addr:");
     KLOG_INFO_HEX("VIRTIO_MMIO", "  Address: ", phys_addr);

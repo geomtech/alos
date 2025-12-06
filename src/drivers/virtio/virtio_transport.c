@@ -820,7 +820,7 @@ VirtioDevice *virtio_create_from_pci(PCIDevice *pci_dev) {
     return dev;
 }
 
-VirtioDevice *virtio_create_from_mmio(uint32_t phys_addr, uint32_t size, uint8_t irq) {
+VirtioDevice *virtio_create_from_mmio(uint64_t phys_addr, uint64_t size, uint8_t irq) {
     KLOG_INFO("VIRTIO", "Creating device from MMIO");
     KLOG_INFO_HEX("VIRTIO", "  Phys addr: ", phys_addr);
     

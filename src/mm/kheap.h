@@ -51,6 +51,18 @@ void* kmalloc(size_t size);
 void kfree(void* ptr);
 
 /**
+ * Réalloue un bloc de mémoire avec une nouvelle taille.
+ * - Si ptr est NULL, équivalent à kmalloc(new_size)
+ * - Si new_size est 0, équivalent à kfree(ptr) et retourne NULL
+ * - Sinon, alloue un nouveau bloc, copie les données, libère l'ancien
+ * 
+ * @param ptr Pointeur vers la zone à réallouer (ou NULL)
+ * @param new_size Nouvelle taille en octets
+ * @return Pointeur vers la nouvelle zone, ou NULL si échec
+ */
+void* krealloc(void* ptr, size_t new_size);
+
+/**
  * Retourne la taille totale du heap en octets.
  */
 size_t kheap_get_total_size(void);

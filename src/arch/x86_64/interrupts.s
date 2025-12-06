@@ -16,6 +16,7 @@ section .text
 extern exception_handler
 extern irq_handler
 extern syscall_dispatcher
+extern timer_handler_preempt
 
 ; ============================================
 ; GDT/IDT/TSS Flush Routines
@@ -204,7 +205,8 @@ ISR_NOERRCODE 31    ; Reserved
 ; IRQ Handlers (IRQ 0-15 -> INT 32-47)
 ; ============================================
 
-IRQ 0, 32           ; Timer
+; IRQ 0 (Timer) has a special handler for preemption support
+; IRQ 0, 32           ; Timer - DISABLED, using irq0_preempt instead
 IRQ 1, 33           ; Keyboard
 IRQ 2, 34           ; Cascade
 IRQ 3, 35           ; COM2
@@ -220,6 +222,57 @@ IRQ 12, 44          ; PS/2 Mouse
 IRQ 13, 45          ; FPU
 IRQ 14, 46          ; Primary ATA
 IRQ 15, 47          ; Secondary ATA
+
+; ============================================
+; IRQ 0 Handler with Preemption Support
+; ============================================
+; This is a special handler for the timer IRQ that supports
+; preemptive context switching. If timer_handler_preempt returns
+; a non-zero value, it's the new RSP to switch to.
+;
+; Stack layout after PUSH_ALL (interrupt_frame):
+;   [RSP+0]   R15
+;   [RSP+8]   R14
+;   ...       (other registers)
+;   [RSP+120] RAX
+;   [RSP+128] int_no
+;   [RSP+136] error_code
+;   [RSP+144] RIP      <- CPU pushed
+;   [RSP+152] CS
+;   [RSP+160] RFLAGS
+;   [RSP+168] RSP      <- User RSP (if from Ring 3)
+;   [RSP+176] SS       <- User SS (if from Ring 3)
+;
+global irq0
+irq0:
+    push qword 0            ; Dummy error code
+    push qword 32           ; Interrupt number (IRQ0 = INT 32)
+    
+    PUSH_ALL
+    
+    ; Load kernel data segments
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    
+    ; Call timer_handler_preempt(frame)
+    ; Returns: 0 = no preemption, non-zero = new RSP
+    mov rdi, rsp
+    call timer_handler_preempt
+    
+    ; Check if preemption requested
+    test rax, rax
+    jz .no_preempt
+    
+    ; Preemption: switch to new stack
+    ; RAX contains the new RSP (pointing to a saved context)
+    ; The new stack has the same layout as our current stack
+    mov rsp, rax
+    
+.no_preempt:
+    POP_ALL
+    add rsp, 16             ; Remove error_code and int_no
+    iretq
 
 ; ============================================
 ; Syscall Handler (INT 0x80)

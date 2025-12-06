@@ -212,7 +212,7 @@ VirtioDevice *virtio_create_from_pci(PCIDevice *pci_dev);
  * Crée un device VirtIO depuis une adresse MMIO.
  * Pour les systèmes sans PCI (embedded).
  */
-VirtioDevice *virtio_create_from_mmio(uint32_t phys_addr, uint32_t size, uint8_t irq);
+VirtioDevice *virtio_create_from_mmio(uint64_t phys_addr, uint64_t size, uint8_t irq);
 
 /**
  * Initialise un device VirtIO (négociation de features, etc.).

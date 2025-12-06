@@ -331,7 +331,7 @@ void exception_handler(struct interrupt_frame *frame)
  * ======================================== */
 
 /* External handlers */
-extern void timer_handler_c(void);
+extern uint64_t timer_handler_preempt(void *frame);
 extern void keyboard_handler_c(void);
 extern void mouse_irq_handler(void);
 extern void network_irq_handler(void);
@@ -343,8 +343,9 @@ void irq_handler(struct interrupt_frame *frame)
     
     switch (irq) {
         case 0:  /* Timer */
-            timer_handler_c();
-            break;
+            /* IRQ0 est maintenant géré directement en ASM (irq0 dans interrupts.s)
+             * avec support de préemption. Ce case ne devrait jamais être atteint. */
+            return;
         case 1:  /* Keyboard */
             keyboard_handler_c();
             break;

@@ -241,7 +241,7 @@ static inline void mmiowb(void)
  * Note: La région est automatiquement alignée sur PAGE_SIZE (4 KiB).
  * L'appelant doit utiliser iounmap() pour libérer le mapping.
  */
-mmio_addr_t ioremap(uint32_t phys_addr, uint32_t size);
+mmio_addr_t ioremap(uint64_t phys_addr, uint64_t size);
 
 /**
  * Libère un mapping MMIO créé par ioremap().
@@ -249,7 +249,7 @@ mmio_addr_t ioremap(uint32_t phys_addr, uint32_t size);
  * @param virt_addr  Adresse virtuelle retournée par ioremap()
  * @param size       Taille de la région (doit correspondre à l'appel ioremap)
  */
-void iounmap(mmio_addr_t virt_addr, uint32_t size);
+void iounmap(mmio_addr_t virt_addr, uint64_t size);
 
 /**
  * Mappe une région MMIO avec des flags spécifiques.
@@ -260,7 +260,7 @@ void iounmap(mmio_addr_t virt_addr, uint32_t size);
  * @param flags      Flags de page additionnels (ex: PAGE_WRITETHROUGH)
  * @return Adresse virtuelle, ou NULL si échec
  */
-mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags);
+mmio_addr_t ioremap_flags(uint64_t phys_addr, uint64_t size, uint32_t flags);
 
 /* ========================================
  * Gestion des régions MMIO
@@ -271,9 +271,9 @@ mmio_addr_t ioremap_flags(uint32_t phys_addr, uint32_t size, uint32_t flags);
  * Utilisée pour le tracking et éviter les conflits.
  */
 typedef struct mmio_region {
-    uint32_t phys_addr;      /* Adresse physique de base */
-    uint32_t virt_addr;      /* Adresse virtuelle mappée */
-    uint32_t size;           /* Taille de la région */
+    uint64_t phys_addr;      /* Adresse physique de base */
+    uint64_t virt_addr;      /* Adresse virtuelle mappée */
+    uint64_t size;           /* Taille de la région */
     uint32_t flags;          /* Flags de mapping */
     const char* name;        /* Nom descriptif (pour debug) */
     struct mmio_region* next; /* Liste chaînée */
@@ -295,15 +295,15 @@ void mmio_init(void);
  * @param name       Nom descriptif
  * @return 0 si succès, -1 si conflit détecté
  */
-int mmio_register_region(uint32_t phys_addr, uint32_t virt_addr, 
-                         uint32_t size, const char* name);
+int mmio_register_region(uint64_t phys_addr, uint64_t virt_addr, 
+                         uint64_t size, const char* name);
 
 /**
  * Désenregistre une région MMIO.
  *
  * @param virt_addr  Adresse virtuelle de la région
  */
-void mmio_unregister_region(uint32_t virt_addr);
+void mmio_unregister_region(uint64_t virt_addr);
 
 /**
  * Vérifie si une adresse physique est dans une région MMIO enregistrée.
@@ -311,7 +311,7 @@ void mmio_unregister_region(uint32_t virt_addr);
  * @param phys_addr  Adresse physique à vérifier
  * @return true si l'adresse est dans une région MMIO
  */
-bool mmio_is_mmio_address(uint32_t phys_addr);
+bool mmio_is_mmio_address(uint64_t phys_addr);
 
 /**
  * Affiche les régions MMIO enregistrées (debug).
