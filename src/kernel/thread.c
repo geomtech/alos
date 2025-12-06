@@ -388,42 +388,60 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->preempt_count = 0;
     thread->preempt_pending = false;
     
-    /* Préparer la stack initiale pour switch_context (x86-64).
+    /* Préparer la stack initiale au FORMAT IRQ UNIFIÉ (x86-64).
      * 
-     * switch_context fait dans cet ordre:
-     *   pop r15, r14, r13, r12, rbx, rbp
-     *   popfq
-     *   ret
+     * Ce format est compatible avec la préemption par IRQ timer.
+     * Le stub IRQ fait: POP_ALL, add rsp 16, iretq
      * 
+     * Layout de la stack (du bas vers le haut, RSP pointe vers R15):
+     *   === IRETQ Frame (5 éléments, poussés par le CPU normalement) ===
+     *   SS          <- Kernel Data (0x10)
+     *   RSP         <- Stack pointer (ignoré pour Ring0->Ring0)
+     *   RFLAGS      <- 0x202 (IF=1)
+     *   CS          <- Kernel Code (0x08)
+     *   RIP         <- task_entry_point
+     *   === Error code / Int number (2 éléments) ===
+     *   error_code  <- 0 (dummy)
+     *   int_no      <- 32 (timer IRQ)
+     *   === PUSH_ALL (15 registres) ===
+     *   RAX, RCX, RDX, RBX, RBP, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15
+     *   
      * task_entry_point attend:
      *   R12 = entry function pointer
      *   R13 = argument (void*)
-     * 
-     * Layout de la stack (RSP pointe vers R15):
-     *   [task_entry_point]  <- adresse de retour pour 'ret'
-     *   [RFLAGS = 0x202]    <- popfq (IF=1, bit 1 reserved = 1)
-     *   [RBP = 0]           <- pop rbp
-     *   [RBX = 0]           <- pop rbx
-     *   [R12 = entry]       <- pop r12 (entry function)
-     *   [R13 = arg]         <- pop r13 (argument)
-     *   [R14 = 0]           <- pop r14
-     *   [R15 = 0]           <- pop r15 <- RSP pointe ici
      */
     uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
     
-    /* Adresse de retour (après popfq + ret) */
-    *(--stack_top) = (uint64_t)task_entry_point;
+    /* === IRETQ Frame (5 éléments) === */
+    *(--stack_top) = 0x10;                       /* SS: Kernel Data */
+    *(--stack_top) = (uint64_t)stack + stack_size; /* RSP (ignoré Ring0->Ring0) */
+    *(--stack_top) = 0x202;                      /* RFLAGS: IF=1 */
+    *(--stack_top) = 0x08;                       /* CS: Kernel Code */
+    *(--stack_top) = (uint64_t)task_entry_point; /* RIP */
     
-    /* RFLAGS: IF=1 (bit 9), reserved bit 1 = 1 → 0x202 */
-    *(--stack_top) = 0x202;
+    /* === Error code / Int number (2 éléments) === */
+    *(--stack_top) = 0;                          /* error_code (dummy) */
+    *(--stack_top) = 32;                         /* int_no (timer IRQ) */
     
-    /* Registres callee-saved (ordre inverse des pop) */
-    *(--stack_top) = 0;                      /* RBP */
-    *(--stack_top) = 0;                      /* RBX */
-    *(--stack_top) = (uint64_t)entry;        /* R12 = entry function */
-    *(--stack_top) = (uint64_t)arg;          /* R13 = argument */
-    *(--stack_top) = 0;                      /* R14 */
-    *(--stack_top) = 0;                      /* R15 */
+    /* === PUSH_ALL (15 registres, ordre: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8-r15) ===
+     * On push dans l'ordre inverse de POP_ALL pour que RSP pointe vers R15.
+     * POP_ALL fait: pop r15, r14, r13, r12, r11, r10, r9, r8, rdi, rsi, rbp, rbx, rdx, rcx, rax
+     */
+    *(--stack_top) = 0;                          /* RAX */
+    *(--stack_top) = 0;                          /* RCX */
+    *(--stack_top) = 0;                          /* RDX */
+    *(--stack_top) = 0;                          /* RBX */
+    *(--stack_top) = 0;                          /* RBP */
+    *(--stack_top) = 0;                          /* RSI */
+    *(--stack_top) = 0;                          /* RDI */
+    *(--stack_top) = 0;                          /* R8 */
+    *(--stack_top) = 0;                          /* R9 */
+    *(--stack_top) = 0;                          /* R10 */
+    *(--stack_top) = 0;                          /* R11 */
+    *(--stack_top) = (uint64_t)entry;            /* R12 = entry function */
+    *(--stack_top) = (uint64_t)arg;              /* R13 = argument */
+    *(--stack_top) = 0;                          /* R14 */
+    *(--stack_top) = 0;                          /* R15 */
     
     thread->rsp = (uint64_t)stack_top;
     
@@ -557,15 +575,24 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     thread->preempt_pending = false;
     
     /* ========================================
-     * Préparer la stack pour IRETQ vers User Mode (Ring 3) - x86-64
+     * Préparer la stack au FORMAT IRQ UNIFIÉ vers User Mode (Ring 3) - x86-64
      * ========================================
      * 
-     * En x86-64, IRETQ attend sur la stack (du haut vers le bas):
-     *   [SS]      <- segment stack user (0x1B = index 3 | RPL 3)
-     *   [RSP]     <- stack pointer user
-     *   [RFLAGS]  <- flags (avec IF=1)
-     *   [CS]      <- segment code user (0x23 = index 4 | RPL 3)
-     *   [RIP]     <- point d'entrée user
+     * Ce format est compatible avec la préemption par IRQ timer.
+     * Le stub IRQ fait: POP_ALL, add rsp 16, iretq
+     * 
+     * Layout de la stack (du bas vers le haut, RSP pointe vers R15):
+     *   === IRETQ Frame (5 éléments) ===
+     *   SS          <- User Data (0x1B)
+     *   RSP         <- User stack pointer
+     *   RFLAGS      <- 0x202 (IF=1)
+     *   CS          <- User Code (0x23)
+     *   RIP         <- User entry point
+     *   === Error code / Int number (2 éléments) ===
+     *   error_code  <- 0 (dummy)
+     *   int_no      <- 0x80 (syscall, pour cohérence)
+     *   === PUSH_ALL (15 registres) ===
+     *   RAX, RCX, RDX, RBX, RBP, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15
      * 
      * GDT layout:
      *   Index 3: User Data Segment -> selector = 3*8 | 3 = 0x1B
@@ -573,29 +600,36 @@ thread_t *thread_create_user(process_t *proc, const char *name,
      */
     uint64_t *kstack_top = (uint64_t *)((uint64_t)kernel_stack + kernel_stack_size);
     
-    /* Frame pour IRETQ vers User Mode (Ring 3) */
+    /* === IRETQ Frame (5 éléments) === */
     *(--kstack_top) = 0x1B;           /* SS: User Data Segment (index 3, RPL=3) */
     *(--kstack_top) = user_rsp;       /* RSP: User stack pointer */
     *(--kstack_top) = 0x202;          /* RFLAGS: IF=1 (interrupts enabled) */
     *(--kstack_top) = 0x23;           /* CS: User Code Segment (index 4, RPL=3) */
     *(--kstack_top) = entry_point;    /* RIP: User entry point */
     
-    /* Registres généraux (pour POP_ALL dans le scheduler) */
-    *(--kstack_top) = 0;              /* R15 */
-    *(--kstack_top) = 0;              /* R14 */
-    *(--kstack_top) = 0;              /* R13 */
-    *(--kstack_top) = 0;              /* R12 */
-    *(--kstack_top) = 0;              /* R11 */
-    *(--kstack_top) = 0;              /* R10 */
-    *(--kstack_top) = 0;              /* R9 */
-    *(--kstack_top) = 0;              /* R8 */
-    *(--kstack_top) = 0;              /* RDI */
-    *(--kstack_top) = 0;              /* RSI */
-    *(--kstack_top) = 0;              /* RBP */
-    *(--kstack_top) = 0;              /* RBX */
-    *(--kstack_top) = 0;              /* RDX */
-    *(--kstack_top) = 0;              /* RCX */
+    /* === Error code / Int number (2 éléments) === */
+    *(--kstack_top) = 0;              /* error_code (dummy) */
+    *(--kstack_top) = 0x80;           /* int_no (syscall) */
+    
+    /* === PUSH_ALL (15 registres, ordre: rax, rcx, rdx, rbx, rbp, rsi, rdi, r8-r15) ===
+     * On push dans l'ordre inverse de POP_ALL pour que RSP pointe vers R15.
+     * POP_ALL fait: pop r15, r14, r13, r12, r11, r10, r9, r8, rdi, rsi, rbp, rbx, rdx, rcx, rax
+     */
     *(--kstack_top) = 0;              /* RAX */
+    *(--kstack_top) = 0;              /* RCX */
+    *(--kstack_top) = 0;              /* RDX */
+    *(--kstack_top) = 0;              /* RBX */
+    *(--kstack_top) = 0;              /* RBP */
+    *(--kstack_top) = 0;              /* RSI */
+    *(--kstack_top) = 0;              /* RDI */
+    *(--kstack_top) = 0;              /* R8 */
+    *(--kstack_top) = 0;              /* R9 */
+    *(--kstack_top) = 0;              /* R10 */
+    *(--kstack_top) = 0;              /* R11 */
+    *(--kstack_top) = 0;              /* R12 */
+    *(--kstack_top) = 0;              /* R13 */
+    *(--kstack_top) = 0;              /* R14 */
+    *(--kstack_top) = 0;              /* R15 */
     
     thread->rsp = (uint64_t)kstack_top;
     
@@ -1537,89 +1571,33 @@ void scheduler_schedule(void)
         for (;;) asm volatile("hlt");
     }
     
-    /* Premier switch vers un thread utilisateur : utiliser jump_to_user */
-    if (next->owner && next->owner->cr3 && next->first_switch) {
-        KLOG_INFO("SCHED", "First switch to user thread: ");
-        KLOG_INFO("SCHED", next->name);
-        KLOG_INFO_DEC("SCHED", " TID=", next->tid);
-        
+    /* Marquer first_switch comme false pour les threads user */
+    if (next->first_switch) {
         next->first_switch = false;
-        g_current_thread = next;
-        
-        /* CRITICAL: Set TSS.RSP0 for syscalls from user mode */
-        if (next->rsp0 != 0) {
-            KLOG_INFO_HEX("SCHED", "Setting TSS.RSP0 (high): ", (uint32_t)(next->rsp0 >> 32));
-            KLOG_INFO_HEX("SCHED", "Setting TSS.RSP0 (low): ", (uint32_t)next->rsp0);
-            tss_set_rsp0(next->rsp0);
-        }
-        
-        /*
-         * Layout de la pile préparée par thread_create_user:
-         *
-         * kstack[0]  = RAX
-         * kstack[1]  = RCX
-         * ...
-         * kstack[14] = R15
-         * kstack[15] = RIP (entry_point)
-         * kstack[16] = CS (0x23)
-         * kstack[17] = RFLAGS (0x202)
-         * kstack[18] = RSP (user_rsp)
-         * kstack[19] = SS (0x1B)
-         *
-         * Note: Il n'y a PAS de int_no/error_code dans ce frame initial.
-         * Ces champs sont ajoutés par isr128 lors d'un vrai syscall.
-         */
-        uint64_t *kstack = (uint64_t *)next->rsp;
-
-        uint64_t user_rip = kstack[15];  /* RIP après les 15 registres */
-        uint64_t user_rsp = kstack[18];  /* RSP (après RIP, CS, RFLAGS) */
-        
-        KLOG_INFO_HEX("SCHED", "jump_to_user: RIP=", (uint32_t)user_rip);
-        KLOG_INFO_HEX("SCHED", "jump_to_user: RSP=", (uint32_t)user_rsp);
-        KLOG_INFO_HEX("SCHED", "jump_to_user: CR3=", (uint32_t)new_cr3);
-        
-        /* Sauvegarder le contexte actuel si nécessaire */
-        if (current) {
-            uint64_t dummy_rsp;
-            __asm__ volatile("mov %%rsp, %0" : "=r"(dummy_rsp));
-            current->rsp = dummy_rsp;
-        }
-        
-        extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
-        jump_to_user(user_rsp, user_rip, new_cr3);
-        
-        __builtin_unreachable();
     }
     
-    /* Mettre à jour g_current_thread AVANT le switch pour les threads kernel */
-    g_current_thread = next;
-    
-    if (next->owner) {
-        KLOG_INFO("SCHED", "switch_task to user thread:");
-        KLOG_INFO("SCHED", next->name);
-        KLOG_INFO_HEX("SCHED", "  next->rsp: ", (uint32_t)next->rsp);
-        KLOG_INFO_HEX("SCHED", "  next->rsp (high): ", (uint32_t)(next->rsp >> 32));
-        KLOG_INFO_HEX("SCHED", "  first_switch: ", next->first_switch);
-    }
-    
+    /* Context switch avec FORMAT IRQ UNIFIÉ.
+     * 
+     * switch_task sauvegarde maintenant au format IRQ complet:
+     * [SS, RSP, RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
+     * 
+     * Cela permet la préemption transparente : un thread peut être
+     * interrompu par une IRQ timer et reprendre plus tard via switch_task,
+     * ou vice versa.
+     */
     if (current) {
         switch_task(&current->rsp, next->rsp, new_cr3);
     } else {
-        /* Premier switch - utiliser un ESP dummy */
+        /* Premier switch - utiliser un RSP dummy */
         switch_task(&g_dummy_rsp, next->rsp, new_cr3);
     }
     
     /* On revient ici quand ce thread est reschedulé.
      * 
-     * Ne PAS faire cpu_sti() si on revient dans un thread user
-     * au milieu d'un syscall - laisser iretq restaurer les interruptions.
+     * Note: Avec le format IRQ unifié, le retour se fait via IRETQ
+     * qui restaure automatiquement RFLAGS (incluant IF).
+     * Donc pas besoin de cpu_sti() ici.
      */
-    if (next->owner != NULL && !next->first_switch) {
-        /* Thread user au milieu d'un syscall - ne pas réactiver les interruptions.
-         * Le iretq va restaurer RFLAGS avec IF. */
-    } else {
-        cpu_sti();
-    }
 }
 
 /* ========================================

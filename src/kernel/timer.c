@@ -1,5 +1,6 @@
 /* src/kernel/timer.c - PIT Timer & RTC Driver Implementation */
 #include "timer.h"
+#include "thread.h"
 #include "../arch/x86_64/io.h"
 #include "console.h"
 
@@ -78,9 +79,7 @@ static uint8_t days_in_month(uint8_t month, uint16_t year)
  * Handler d'interruption Timer (IRQ 0)
  * =========================================== */
 
-/* Déclaration externe du scheduler */
-extern void scheduler_tick(void);
-extern uint64_t scheduler_preempt(void *frame);
+/* Les fonctions scheduler sont déclarées dans thread.h */
 
 /**
  * Nouveau handler avec support préemption.
@@ -108,18 +107,16 @@ uint64_t timer_handler_preempt(void *frame)
         return 0;
     }
     
-    /* Appeler scheduler_tick pour le time accounting et wake sleeping threads.
-     * 
-     * NOTE: La vraie préemption (changement de RSP via scheduler_preempt) est
-     * désactivée car le format de contexte sauvegardé par switch_context
-     * (callee-saved) est incompatible avec le format IRQ (interrupt_frame).
-     * 
-     * IMPORTANT: Ne PAS appeler scheduler_preempt() car il modifie current->rsp
-     * même quand on ignore son retour, ce qui corrompt le contexte du thread.
-     */
-    (void)frame;
+    /* Gestion du temps et réveil des threads endormis */
     scheduler_tick();
-    return 0;  /* Pas de changement de contexte via IRQ */
+    
+    /* APPEL CRITIQUE : On demande au scheduler de préempter si besoin.
+     * Il retourne 0 si pas de changement, ou le nouveau RSP si changement.
+     * 
+     * Le format de contexte est maintenant unifié : tous les threads utilisent
+     * le format IRQ (15 registres + int_no/error_code + iret frame).
+     */
+    return scheduler_preempt((interrupt_frame_t *)frame);
 }
 
 /* ===========================================
