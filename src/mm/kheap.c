@@ -12,12 +12,12 @@ static size_t heap_total_size = 0;
 static spinlock_t heap_lock;
 
 /**
- * Aligne une taille sur 4 octets (alignement naturel pour 32-bit).
+ * Aligne une taille sur 8 octets (alignement naturel pour 64-bit).
  * Cela améliore les performances et évite des problèmes d'alignement.
  */
-static inline size_t align4(size_t size)
+static inline size_t align8(size_t size)
 {
-    return (size + 3) & ~3;
+    return (size + 7) & ~((size_t)7);
 }
 
 /**
@@ -73,9 +73,9 @@ static void coalesce_block(KHeapBlock* block)
         (uint8_t*)block->next >= heap_end) {
         /* Corruption détectée ! */
         extern void console_puts(const char*);
-        extern void console_put_hex(uint32_t);
+        extern void console_put_hex64(uint64_t);
         console_puts("\n[KHEAP] CORRUPTION: block->next = 0x");
-        console_put_hex((uint32_t)block->next);
+        console_put_hex64((uint64_t)block->next);
         console_puts(" is outside heap!\n");
         block->next = NULL;  /* Couper la chaîne pour éviter le crash */
         return;
@@ -125,8 +125,8 @@ void* kmalloc(size_t size)
         return NULL;
     }
     
-    /* Aligner la taille demandée sur 4 octets */
-    size = align4(size);
+    /* Aligner la taille demandée sur 8 octets */
+    size = align8(size);
     
     /* Garantir une taille minimale */
     if (size < KHEAP_MIN_BLOCK_SIZE) {
@@ -245,7 +245,7 @@ void* krealloc(void* ptr, size_t new_size)
     size_t old_size = block->size;
     
     /* Si la nouvelle taille est plus petite ou égale, on peut garder le même bloc */
-    new_size = (new_size + 3) & ~3;  /* Aligner sur 4 octets */
+    new_size = (new_size + 7) & ~((size_t)7);  /* Aligner sur 8 octets */
     if (new_size <= old_size) {
         return ptr;
     }

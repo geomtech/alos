@@ -156,13 +156,10 @@ static void virtio_net_irq_handler_internal(void) {
     }
 }
 
-/* Handler d'IRQ exporté */
+/* Handler d'IRQ exporté - appelé depuis le handler ASM qui gère l'EOI */
 void virtio_net_irq_handler(void) {
     virtio_net_irq_handler_internal();
-    
-    /* EOI */
-    outb(0x20, 0x20);
-    outb(0xA0, 0x20);
+    /* Note: EOI est géré par le handler ASM irq11_handler */
 }
 
 /**

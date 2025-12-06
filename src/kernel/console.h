@@ -58,9 +58,14 @@ void console_putc(char c);
 void console_puts(const char* str);
 
 /**
- * Affiche un nombre en hexadécimal.
+ * Affiche un nombre 32 bits en hexadécimal.
  */
 void console_put_hex(uint32_t value);
+
+/**
+ * Affiche un nombre 64 bits en hexadécimal.
+ */
+void console_put_hex64(uint64_t value);
 
 /**
  * Affiche un octet en hexadécimal (2 caractères).

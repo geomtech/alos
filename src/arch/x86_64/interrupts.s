@@ -437,9 +437,11 @@ syscall_handler_asm:
 
 ; ============================================
 ; IRQ 11 handler (for network cards)
+; Also used for IRQ 9 by VirtIO
 ; ============================================
 global irq11_handler
 extern pcnet_irq_handler
+extern virtio_net_irq_handler
 
 irq11_handler:
     push rax
@@ -454,8 +456,9 @@ irq11_handler:
     push r10
     push r11
     
-    ; Call C handler
+    ; Call all network handlers - they check internally if active
     call pcnet_irq_handler
+    call virtio_net_irq_handler
     
     ; Send EOI to PIC
     mov al, 0x20
