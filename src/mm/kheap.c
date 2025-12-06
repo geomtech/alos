@@ -312,17 +312,39 @@ size_t kheap_get_block_count(void)
 size_t kheap_get_free_block_count(void)
 {
     spinlock_lock(&heap_lock);
-    
+
     size_t count = 0;
     KHeapBlock* current = heap_start;
-    
+
     while (current != NULL) {
         if (current->is_free) {
             count++;
         }
         current = current->next;
     }
-    
+
     spinlock_unlock(&heap_lock);
     return count;
+}
+
+/* ============================================ */
+/*            Fonctions Standard C               */
+/* ============================================ */
+
+/**
+ * Wrapper standard malloc qui utilise le heap kernel.
+ * Identique à kmalloc mais avec le nom standard.
+ */
+void* malloc(size_t size)
+{
+    return kmalloc(size);
+}
+
+/**
+ * Wrapper standard free qui utilise le heap kernel.
+ * Identique à kfree mais avec le nom standard.
+ */
+void free(void* ptr)
+{
+    kfree(ptr);
 }

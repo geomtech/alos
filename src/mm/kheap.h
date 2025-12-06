@@ -82,4 +82,16 @@ size_t kheap_get_block_count(void);
  */
 size_t kheap_get_free_block_count(void);
 
+/**
+ * Wrapper standard malloc qui utilise le heap kernel.
+ * Identique à kmalloc mais avec le nom standard.
+ */
+void* malloc(size_t size);
+
+/**
+ * Wrapper standard free qui utilise le heap kernel.
+ * Identique à kfree mais avec le nom standard.
+ */
+void free(void* ptr);
+
 #endif /* KHEAP_H */
