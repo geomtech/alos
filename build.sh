@@ -1,1 +1,0 @@
-docker run --rm -v "$(pwd)":/root/env osdev make CC=i686-elf-gcc clean && docker run --rm -v "$(pwd)":/root/env osdev make CC=i686-elf-gcc 2>&1
