@@ -36,7 +36,7 @@ int http_download_file(const char* url, const char* dest_path);
  * @param buf_size  Size of the buffer
  * @return Number of bytes received, or -1 on error
  */
-int http_get(const char* host, const char* path, uint16_t port, 
-             uint8_t* buffer, uint32_t buf_size);
+int http_get(const char* host, const char* path, uint16_t port,
+             uint8_t* buffer, uint32_t buf_size, bool use_https);
 
 #endif /* NET_HTTP_H */

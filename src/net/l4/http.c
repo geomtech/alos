@@ -47,13 +47,22 @@ static int str_append(char* dest, int dest_size, int pos, const char* src) {
 
 /* Helper: Parse URL into host, port, path */
 static int parse_url(const char* url, char* host, uint16_t* port, char* path) {
-    /* Simple URL parser: http://host:port/path */
+    /* Simple URL parser: http://host:port/path or https://host:port/path */
     const char* ptr = url;
-    
-    /* Skip "http://" if present */
-    if (strncmp(ptr, "http://", 7) == 0) {
+
+    /* Check for https:// */
+    bool is_https = false;
+    if (strncmp(ptr, "https://", 8) == 0) {
+        ptr += 8;
+        is_https = true;
+    }
+    /* Check for http:// */
+    else if (strncmp(ptr, "http://", 7) == 0) {
         ptr += 7;
     }
+
+    /* Set default port based on protocol */
+    *port = is_https ? 443 : HTTP_PORT;
     
     /* Extract host */
     int i = 0;
@@ -131,8 +140,8 @@ static tcp_socket_t* tcp_connect_timeout(const uint8_t* ip, uint16_t port, int t
     return sock;
 }
 
-int http_get(const char* host, const char* path, uint16_t port, 
-             uint8_t* buffer, uint32_t buf_size) {
+int http_get(const char* host, const char* path, uint16_t port,
+            uint8_t* buffer, uint32_t buf_size, bool use_https) {
     /* Resolve hostname */
     uint8_t server_ip[4];
     
@@ -251,7 +260,8 @@ int http_download_file(const char* url, const char* dest_path) {
     }
     
     /* Download file */
-    int received = http_get(host, path, port, buffer, 65536);
+    bool use_https = (port == 443);
+    int received = http_get(host, path, port, buffer, 65536, use_https);
     if (received <= 0) {
         KLOG_ERROR("HTTP", "Download failed");
         kfree(buffer);

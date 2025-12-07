@@ -100,7 +100,7 @@ static shell_command_t commands[] = {
     {"meminfo", "Display memory information", cmd_meminfo},
     {"rm", "Remove a file", cmd_rm},
     {"rmdir", "Remove an empty directory", cmd_rmdir},
-    {"wget", "Download a file via HTTP", cmd_wget},
+    {"wget", "Download a file via HTTP/HTTPS", cmd_wget},
     {"httpd", "Start/stop HTTP server (httpd start|stop|status)", cmd_httpd},
     {"gui", "Start graphical user interface (macOS style)", cmd_gui},
 
@@ -2350,9 +2350,11 @@ static int cmd_wget(int argc, char **argv) {
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     console_puts("\nExamples:\n");
     console_puts("  wget http://example.com/file.txt\n");
+    console_puts("  wget https://example.com/file.txt\n");
     console_puts("  wget http://example.com/file.txt /tmp/myfile.txt\n");
+    console_puts("  wget https://example.com/file.txt /tmp/myfile.txt\n");
     console_puts("  wget http://10.0.2.2:8000/binary /bin/app\n");
-    console_puts("\nNote: Only HTTP (not HTTPS) is supported.\n");
+    console_puts("\nNote: HTTPS is supported but certificate verification is disabled.\n");
     return -1;
   }
 
