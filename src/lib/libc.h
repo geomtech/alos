@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include "umalloc.h" /* Pour les fonctions d'allocation mémoire userland */
 
 /* ========================================
  * Type Definitions
@@ -1190,13 +1191,23 @@ static inline char* strstr(const char* haystack, const char* needle)
 }
 
 /**
- * Duplicate a string (requires heap allocation - stub)
- * Note: Returns NULL since we don't have malloc yet
+ * Duplicate a string (requires heap allocation)
+ * Now uses the userland malloc implementation
  */
 static inline char* strdup(const char* s)
 {
-    (void)s;
-    return NULL; /* TODO: Implement when malloc is available */
+    // Use the userland malloc implementation
+    size_t len = 0;
+    while (s[len]) len++;
+    len++; // +1 for null terminator
+
+    char* new_str = (char*)umalloc(len);
+    if (new_str) {
+        for (size_t i = 0; i < len; i++) {
+            new_str[i] = s[i];
+        }
+    }
+    return new_str;
 }
 
 /* ========================================

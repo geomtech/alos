@@ -900,6 +900,13 @@ static int sys_close(int fd)
 }
 
 /* ========================================
+ * Forward declarations for new syscalls
+ * ======================================== */
+static int sys_fork(void);
+static int sys_execve(const char* filename, char** argv, char** envp);
+static int sys_waitpid(int pid, int* status, int options);
+
+/* ========================================
  * Dispatcher principal
  * ======================================== */
 
@@ -1017,6 +1024,19 @@ void syscall_dispatcher(syscall_regs_t* regs)
             result = sys_meminfo((meminfo_t*)regs->rdi);
             break;
             
+        /* Process syscalls - forward declarations */
+        case SYS_FORK:
+            result = sys_fork();
+            break;
+
+        case SYS_EXECVE:
+            result = sys_execve((const char*)regs->rdi, (char**)regs->rsi, (char**)regs->rdx);
+            break;
+
+        case SYS_WAITPID:
+            result = sys_waitpid((int)regs->rdi, (int*)regs->rsi, (int)regs->rdx);
+            break;
+
         default:
             KLOG_ERROR("SYSCALL", "Unknown syscall number!");
             result = -1;
@@ -1063,30 +1083,171 @@ void syscall_dispatcher(syscall_regs_t* regs)
 void syscall_init(void)
 {
     KLOG_INFO("SYSCALL", "=== Initializing Syscall Interface ===");
-    
-    /* 
+
+    /*
      * Enregistrer l'interruption 0x80 avec DPL=3.
      * CRITIQUE: Le DPL doit être 3 pour que Ring 3 puisse déclencher l'interruption !
-     * 
+     *
      * Flags = 0xEE:
      *   - Bit 7 (0x80): Present = 1
      *   - Bits 5-6 (0x60): DPL = 3 (Ring 3 autorisé)
      *   - Bit 4 (0x00): Storage Segment = 0 (pour une gate)
      *   - Bits 0-3 (0x0E): Type = 0xE (32-bit Interrupt Gate)
-     *   
+     *
      *   0x80 | 0x60 | 0x0E = 0xEE
      */
     /* 0x08 = Kernel Code Segment, 0x8E = Present | DPL=0 | Interrupt Gate
      * Pour permettre l'appel depuis Ring 3, on utilise 0xEE (DPL=3)
      * IST=0 pour utiliser la stack normale */
     idt_set_gate(0x80, (uint64_t)syscall_handler_asm, 0x08, 0xEE, 0);
-    
+
     KLOG_INFO("SYSCALL", "INT 0x80 registered (DPL=3)");
-    
+
     /* Initialiser la couche de compatibilité Linux */
     linux_compat_init();
-    
+
     KLOG_INFO("SYSCALL", "Syscall interface ready!");
+}
+
+/* ========================================
+ * Implémentation des nouveaux syscalls
+ * ======================================== */
+
+/**
+ * SYS_FORK (57) - Créer un nouveau processus
+ *
+ * @return PID du processus fils, ou -1 si erreur
+ */
+static int sys_fork(void)
+{
+    KLOG_INFO("SYSCALL", "sys_fork called");
+
+    /* Obtenir le processus courant */
+    process_t* parent = current_process;
+    if (parent == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_fork: no current process");
+        return -1;
+    }
+
+    /* Créer un nouveau processus en copiant le processus courant */
+    process_t* child = process_create_kernel(parent->name, NULL, NULL, 0);
+    if (child == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_fork: failed to create child process");
+        return -1;
+    }
+
+    /* Configurer la relation parent-enfant */
+    child->parent = parent;
+    child->sibling_next = parent->first_child;
+    if (parent->first_child) {
+        parent->first_child->sibling_prev = child;
+    }
+    parent->first_child = child;
+
+    /* Copier les informations de base */
+    child->state = PROCESS_STATE_READY;
+    child->should_terminate = 0;
+    child->exit_status = 0;
+
+    /* Retourner le PID du processus fils */
+    KLOG_INFO_DEC("SYSCALL", "sys_fork: created child PID ", child->pid);
+    return child->pid;
+}
+
+/**
+ * SYS_EXECVE (59) - Exécuter un programme
+ *
+ * @param filename  Chemin du fichier à exécuter
+ * @param argv      Tableau d'arguments
+ * @param envp      Tableau d'environnement
+ * @return 0 si succès, -1 si erreur
+ */
+static int sys_execve(const char* filename, char** argv, char** envp)
+{
+    (void)argv; /* Unused parameter */
+    (void)envp; /* Unused parameter */
+
+    KLOG_INFO("SYSCALL", "sys_execve called");
+    KLOG_INFO("SYSCALL", filename);
+
+    /* Pour l'instant, utiliser process_execute qui est déjà implémenté */
+    int result = process_execute(filename);
+    if (result < 0) {
+        KLOG_ERROR("SYSCALL", "sys_execve: failed to execute program");
+        return -1;
+    }
+
+    /* Note: process_execute retourne le PID, mais execve devrait retourner 0 en cas de succès */
+    return 0;
+}
+
+/**
+ * SYS_WAITPID (61) - Attendre la fin d'un processus fils
+ *
+ * @param pid       PID du processus à attendre (-1 pour n'importe quel fils)
+ * @param status    Pointeur pour stocker le code de sortie
+ * @param options   Options (0 pour l'instant)
+ * @return PID du processus terminé, ou -1 si erreur
+ */
+static int sys_waitpid(int pid, int* status, int options)
+{
+    (void)options; /* Unused parameter */
+
+    KLOG_INFO("SYSCALL", "sys_waitpid called");
+    KLOG_INFO_DEC("SYSCALL", "  pid: ", pid);
+
+    /* Obtenir le processus courant */
+    process_t* parent = current_process;
+    if (parent == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_waitpid: no current process");
+        return -1;
+    }
+
+    /* Si pid = -1, attendre n'importe quel processus fils */
+    if (pid == -1) {
+        /* Trouver un processus fils terminé */
+        process_t* child = parent->first_child;
+        while (child) {
+            if (child->state == PROCESS_STATE_TERMINATED || child->state == PROCESS_STATE_ZOMBIE) {
+                /* Retourner le PID et le code de sortie */
+                if (status) {
+                    *status = child->exit_status;
+                }
+                KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
+                return child->pid;
+            }
+            child = child->sibling_next;
+        }
+
+        /* Aucun processus fils terminé trouvé */
+        KLOG_INFO("SYSCALL", "sys_waitpid: no terminated child found");
+        return -1;
+    }
+
+    /* Attendre un processus fils spécifique */
+    process_t* child = parent->first_child;
+    while (child) {
+        if (child->pid == (uint32_t)pid) {
+            /* Attendre que le processus se termine */
+            if (child->state != PROCESS_STATE_TERMINATED && child->state != PROCESS_STATE_ZOMBIE) {
+                /* Pour l'instant, retourner -1 si le processus n'est pas encore terminé */
+                KLOG_INFO("SYSCALL", "sys_waitpid: child not yet terminated");
+                return -1;
+            }
+
+            /* Retourner le PID et le code de sortie */
+            if (status) {
+                *status = child->exit_status;
+            }
+            KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
+            return child->pid;
+        }
+        child = child->sibling_next;
+    }
+
+    /* Processus fils non trouvé */
+    KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
+    return -1;
 }
 
 /* ========================================
@@ -1127,4 +1288,17 @@ int syscall_do_chdir(const char* path) {
 
 int syscall_do_mkdir(const char* path) {
     return sys_mkdir(path);
+}
+
+/* Implémentations des fonctions exportées pour les nouveaux syscalls */
+int syscall_do_fork(void) {
+    return sys_fork();
+}
+
+int syscall_do_execve(const char* filename, char** argv, char** envp) {
+    return sys_execve(filename, argv, envp);
+}
+
+int syscall_do_waitpid(int pid, int* status, int options) {
+    return sys_waitpid(pid, status, options);
 }

@@ -13,6 +13,9 @@
 #define SYS_WRITE       4       /* Écrire vers un fichier/stdout */
 #define SYS_OPEN        5       /* Ouvrir un fichier */
 #define SYS_GETPID      20      /* Obtenir le PID du processus courant */
+#define SYS_FORK        57      /* Créer un nouveau processus */
+#define SYS_EXECVE      59      /* Exécuter un programme */
+#define SYS_WAITPID     61      /* Attendre la fin d'un processus fils */
 
 /* Filesystem syscalls */
 #define SYS_CLOSE       6       /* Fermer un file descriptor */
@@ -154,5 +157,10 @@ int syscall_do_getpid(void);
 int syscall_do_getcwd(char* buf, uint64_t size);
 int syscall_do_chdir(const char* path);
 int syscall_do_mkdir(const char* path);
+
+/* Fonctions syscall exportées pour les nouveaux syscalls */
+int syscall_do_fork(void);
+int syscall_do_execve(const char* filename, char** argv, char** envp);
+int syscall_do_waitpid(int pid, int* status, int options);
 
 #endif /* SYSCALL_H */

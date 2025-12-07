@@ -78,8 +78,8 @@ FS_SRC = src/fs/vfs.c src/fs/ext2.c
 FS_OBJ = src/fs/vfs.o src/fs/ext2.o
 
 # Library (common utilities)
-LIB_SRC = src/lib/string.c
-LIB_OBJ = src/lib/string.o
+LIB_SRC = src/lib/string.c src/lib/umalloc.c
+LIB_OBJ = src/lib/string.o src/lib/umalloc.o
 
 # Shell
 SHELL_SRC = src/shell/shell.c src/shell/commands.c
@@ -125,7 +125,7 @@ limine-update:
 	$(MAKE) $(LIMINE_DIR)/limine
 
 # Créer une image ISO bootable avec Limine
-iso: alos.elf $(LIMINE_DIR)/limine
+iso: alos.elf $(LIMINE_DIR)/limine disk.img
 	@echo "=== Creating bootable ISO ==="
 	@mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
 	cp -v alos.elf iso_root/boot/
@@ -261,13 +261,6 @@ run-vbox: iso
 run-qemu: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
 
-run-e1000: iso
-	qemu-system-x86_64 -cdrom alos.iso -m 256M \
-		-netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:8080 \
-		-device e1000,netdev=net0 \
-		-drive file=disk.img,format=raw,index=0,media=disk \
-		-serial stdio
-
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M \
@@ -309,6 +302,16 @@ run-uefi: iso
 		-device virtio-net-pci,netdev=net0 \
 		-drive file=disk.img,format=raw,index=0,media=disk \
 		-serial stdio
+
+# Créer une image de disque à partir de la structure disk_structure
+disk.img: disk_structure
+	@echo "=== Creating disk image from disk_structure ==="
+	@rm -f disk.img
+	@dd if=/dev/zero of=disk.img bs=1M count=64
+	@mformat -i disk.img -f 1440 ::
+	@mcopy -i disk.img disk_structure/* ::
+	@chmod 644 disk.img
+	@echo "=== Disk image created: disk.img ==="
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: iso
