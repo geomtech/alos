@@ -33,7 +33,7 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 - [x] Context Switching (kernel threads)
 - [x] User Space (Ring 3) with TSS
 - [x] System Calls (POSIX/BSD-like interface)
-- [ ] Priority-based scheduler
+- [x] Priority-based scheduler
 - [ ] Process groups and sessions
 - [ ] Fork/exec implementation
 - [ ] Signals (POSIX-like)
@@ -87,7 +87,7 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 - [ ] USB HID (keyboard/mouse)
 - [ ] USB Mass Storage
 - [ ] Audio driver (AC97/Intel HDA)
-- [ ] Ethernet driver Intel I219-V
+- [x] Ethernet driver Intel I219-V
 - [ ] WiFi support (with WPA2/WPA3)
 - [ ] Graphics card drivers (Intel/AMD/NVIDIA)
 - [ ] Serial port (COM1-4) advanced support
@@ -96,22 +96,22 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 ### User Interface
 - [x] Interactive Shell with history
 - [x] Persistent history (`/config/history`)
-- [ ] GUI + Mouse
+- [x] GUI + Mouse
 - [ ] Window manager/compositor
 - [ ] OpenGL support
-- [ ] Framebuffer console (VESA/GOP)
+- [x] Framebuffer console (VESA/GOP)
 - [ ] UTF-8 string and console
-- [ ] Font rendering (TrueType/FreeType)
+- [x] Font rendering (TrueType/FreeType)
 - [ ] Desktop environment
 - [ ] Widget toolkit
 - [ ] Multi-monitor support
 
 ### User Space & Applications
 - [x] ELF Loader (32-bit executables)
-- [x] **Linux Binary Compatibility** (run statically-linked Linux i386 binaries)
-- [ ] ELF 64-bit support
+- [x] Linux Binary Compatibility (run statically-linked Linux i386 binaries)
+- [x] ELF 64-bit support
 - [ ] Dynamic linking (shared libraries .so)
-- [ ] Standard C library (libc)
+- [x] Standard C library (libc)
 - [ ] POSIX thread library (pthread)
 - [ ] Math library (libm)
 - [ ] Compression libraries (zlib, gzip)
