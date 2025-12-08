@@ -1,31 +1,44 @@
-/* src/gui/ssfn_render.c - Wrapper SSFN pour ALOS
+/* src/gui/ssfn_render.c - Wrapper SSFN Bitmap pour ALOS
  * 
- * Intègre le rendu de polices scalables SSFN dans le système GUI.
+ * Intègre le rendu de polices SSFN en mode bitmap simple dans le système GUI.
  * Support UTF-8 complet via Unifont.
  * 
- * Utilise SSFN_MAXLINES pour éviter les allocations dynamiques
- * dans le renderer scalable (mode kernel-safe).
+ * NOTE: Ce wrapper utilise UNIQUEMENT le renderer bitmap SSFN pour la stabilité.
+ * Le renderer scalable a été désactivé pour éviter les conflits avec le nouveau
+ * système de heap kernel (spinlocks, etc.).
+ * 
+ * Avantages du mode bitmap:
+ * - Pas d'allocations dynamiques (stabilité)
+ * - Support UTF-8 complet via Unifont
+ * - API simple et fiable
+ * - Taille fixe des polices (consistance)
  */
 
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
 
-#include "../mm/kheap.h"
-#include "../include/string.h"
-
-/* Configuration SSFN pour mode kernel sans allocations dynamiques */
-#define SSFN_MAXLINES 1024  /* Buffer statique pour les lignes de rendu (réduit) */
-#define SSFN_DATA_MAX 16384 /* Réduire le buffer de glyphe de 64KB à 16KB */
+/* Configuration SSFN - Mode Bitmap Uniquement
+ * 
+ * Ce fichier utilise uniquement le renderer bitmap SSFN pour la stabilité.
+ * Le renderer scalable a été désactivé pour éviter les conflits avec le
+ * nouveau système de heap kernel (utilisation de spinlocks).
+ * 
+ * Avantages:
+ * - Aucune allocation dynamique (allocation-free)
+ * - Support UTF-8 complet via Unifont
+ * - API stable et prévisible
+ * - Compatible avec tous les contextes kernel (interruptions, etc.)
+ */
 #define SSFN_memcmp memcmp
 #define SSFN_memset memset
 
-/* Activer le renderer complet (scalable) SANS allocations dynamiques */
-#define SSFN_IMPLEMENTATION
-
-/* Renderer bitmap simple pour fallback */
+/* Renderer bitmap simple uniquement */
 #define SSFN_CONSOLEBITMAP_TRUECOLOR
 #define SSFN_CONSOLEBITMAP_CONTROL
+
+#include "../mm/kheap.h"
+#include "../include/string.h"
 #include "ssfn.h"
 #include "ssfn_render.h"
 #include "render.h"
@@ -38,12 +51,6 @@ extern ssfn_font_t *font_unifont_ssfn;
 /* Police SSFN courante (renderer bitmap simple) */
 static ssfn_font_t *current_ssfn_font = NULL;
 static int ssfn_initialized = 0;
-
-/* Contexte pour le renderer scalable - en BSS (même espace d'adressage que la police) */
-static ssfn_t ssfn_ctx_static;
-static ssfn_t *ssfn_ctx = &ssfn_ctx_static;
-static ssfn_buf_t ssfn_buf;
-static int ssfn_scalable_ready = 0;
 
 /* Initialise le rendu SSFN avec le framebuffer et Unifont */
 int ssfn_init(void) {
@@ -64,39 +71,7 @@ int ssfn_init(void) {
     if (font_unifont_ssfn) {
         ssfn_src = font_unifont_ssfn;
         current_ssfn_font = font_unifont_ssfn;
-    }
-    
-    /* Initialiser le contexte scalable (statique dans BSS) */
-    klog_dec(LOG_INFO, "SSFN", "ssfn_t context size", sizeof(ssfn_t));
-    memset(ssfn_ctx, 0, sizeof(ssfn_t));
-    memset(&ssfn_buf, 0, sizeof(ssfn_buf_t));
-    
-    /* Configurer le buffer pour le renderer scalable */
-    ssfn_buf.ptr = (uint8_t*)fb->pixels;
-    ssfn_buf.w = (int)fb->width;
-    ssfn_buf.h = (int)fb->height;
-    ssfn_buf.p = fb->pitch;
-    ssfn_buf.fg = 0xFFFFFFFF;
-    ssfn_buf.x = 0;
-    ssfn_buf.y = 0;
-    
-    /* Charger Unifont dans le contexte scalable (mode MAXLINES = pas d'alloc dynamique) */
-    klog(LOG_INFO, "SSFN", "Loading Unifont...");
-    if (font_unifont_ssfn) {
-        klog_hex(LOG_INFO, "SSFN", "font_unifont_ssfn", (uint32_t)(uintptr_t)font_unifont_ssfn);
-        int load_ret = ssfn_load(ssfn_ctx, font_unifont_ssfn);
-        klog_dec(LOG_INFO, "SSFN", "ssfn_load returned", load_ret);
-        if (load_ret == SSFN_OK) {
-            /* Sélectionner la police: 12px par défaut */
-            klog(LOG_INFO, "SSFN", "Selecting 12px...");
-            int sel_ret = ssfn_select(ssfn_ctx, SSFN_FAMILY_ANY, NULL, 
-                                       SSFN_STYLE_REGULAR, 12);
-            klog_dec(LOG_INFO, "SSFN", "ssfn_select returned", sel_ret);
-            if (sel_ret == SSFN_OK) {
-                ssfn_scalable_ready = 1;
-                klog(LOG_INFO, "SSFN", "Scalable renderer ready!");
-            }
-        }
+        klog(LOG_INFO, "SSFN", "Unifont loaded for bitmap renderer");
     } else {
         klog(LOG_WARN, "SSFN", "font_unifont_ssfn is NULL!");
     }
@@ -231,57 +206,40 @@ int ssfn_text_width(const char *str) {
 
 /* Sélectionne la taille de la police pour le renderer scalable */
 int ssfn_set_size(int size) {
-    if (!ssfn_scalable_ready || size < 8 || size > 192) return -1;
-    return ssfn_select(ssfn_ctx, SSFN_FAMILY_ANY, NULL, SSFN_STYLE_REGULAR, size);
+    /* Le renderer bitmap simple a une taille fixe, on ignore la demande */
+    klog(LOG_WARN, "SSFN", "Bitmap renderer doesn't support scalable sizes");
+    return -1;
 }
 
 /* Affiche une chaîne avec le renderer scalable */
 int ssfn_render_text(int x, int y, uint32_t color, const char *str) {
-    if (!ssfn_scalable_ready || !str) return -1;
+    if (!str) return -1;
     
     klog(LOG_INFO, "SSFN", "render_text called");
-    klog_hex(LOG_INFO, "SSFN", "  ssfn_ctx", (uint32_t)(uintptr_t)ssfn_ctx);
-    klog_hex(LOG_INFO, "SSFN", "  ssfn_buf.ptr", (uint32_t)(uintptr_t)ssfn_buf.ptr);
     
-    ssfn_buf.x = x;
-    ssfn_buf.y = y;
-    ssfn_buf.fg = color;
-    
-    const char *s = str;
-    int ret;
-    int char_count = 0;
-    while (*s) {
-        klog_dec(LOG_INFO, "SSFN", "  Rendering char", char_count);
-        ret = ssfn_render(ssfn_ctx, &ssfn_buf, s);
-        klog_dec(LOG_INFO, "SSFN", "  ssfn_render returned", ret);
-        if (ret < 0) break;
-        if (ret == 0) { s++; continue; }
-        s += ret;
-        char_count++;
-    }
-    
-    return 0;
+    /* Utiliser le renderer bitmap simple avec les paramètres corrects */
+    klog(LOG_INFO, "SSFN", "Using bitmap renderer fallback");
+    ssfn_dst.x = x;
+    ssfn_dst.y = y;
+    ssfn_dst.fg = color;
+    return ssfn_print(str);
 }
 
 /* Affiche une chaîne avec taille spécifique */
 int ssfn_render_text_size(int x, int y, int size, uint32_t color, const char *str) {
-    if (ssfn_set_size(size) != SSFN_OK) {
-        /* Fallback sur le renderer bitmap */
-        ssfn_set_fg(color);
-        return ssfn_print_at(x, y, str);
-    }
+    /* Le renderer bitmap simple ignore la taille demandée */
+    klog(LOG_INFO, "SSFN", "Ignoring size request for bitmap renderer");
     return ssfn_render_text(x, y, color, str);
 }
 
 /* Vérifie si le renderer scalable est disponible */
 int ssfn_scalable_available(void) {
-    return ssfn_scalable_ready;
+    /* Le renderer scalable est désactivé, on utilise uniquement le bitmap */
+    return 0;
 }
 
 /* Libère les ressources du renderer scalable */
 void ssfn_cleanup(void) {
-    if (ssfn_scalable_ready) {
-        ssfn_free(ssfn_ctx);
-        ssfn_scalable_ready = 0;
-    }
+    /* Rien à nettoyer pour le renderer bitmap simple */
+    klog(LOG_INFO, "SSFN", "Cleanup complete");
 }
