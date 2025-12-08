@@ -161,11 +161,11 @@ void kmain(void) {
 
   /* Initialize framebuffer console (preferred) or VGA text mode */
   if (g_framebuffer != NULL && g_framebuffer->framebuffer_count > 0) {
-    struct limine_framebuffer *fb = g_framebuffer->framebuffers[0];
-    console_init_fb(fb);
+      struct limine_framebuffer *fb = g_framebuffer->framebuffers[0];
+      console_init_fb(fb);
   } else {
-    /* Fallback to VGA text mode */
-    console_set_hhdm_offset(g_hhdm_offset);
+      /* Fallback to VGA text mode */
+      console_set_hhdm_offset(g_hhdm_offset);
   }
 
   /* Initialize GDT (64-bit) */
@@ -227,13 +227,7 @@ void kmain(void) {
 
     __asm__ volatile("sti");
     KLOG_INFO("KERNEL", "Interrupts enabled");
-
-    /* Afficher la date/heure de boot */
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("Boot time: ");
-    timestamp_print_now();
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    /* KLOG_INFO_DEC("KERNEL", "Boot timestamp: ", timestamp_t()); */
 
     /* ============================================ */
     /* Initialisation du PMM                       */

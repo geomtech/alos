@@ -296,6 +296,31 @@ static void fb_scroll_buffer(void) {
 }
 
 /* ============================================ */
+/* Cursor functions                             */
+/* ============================================ */
+
+static void fb_draw_cursor(void) {
+    if (!g_initialized || !g_enabled) return;
+
+    uint32_t x_start = g_cursor_col * FONT_WIDTH;
+    uint32_t y_start = g_cursor_row * FONT_HEIGHT;
+
+    /* Draw cursor as white block on black background */
+    for (int y = 0; y < FONT_HEIGHT; y++) {
+        for (int x = 0; x < FONT_WIDTH; x++) {
+            uint32_t current_x = x_start + x;
+            uint32_t current_y = y_start + y;
+            if (current_x < g_fb_width && current_y < g_fb_height) {
+                /* White cursor on black background */
+                fb_put_pixel(current_x, current_y, FB_COLOR_WHITE);
+            }
+        }
+    }
+}
+
+
+
+/* ============================================ */
 /* Public functions                             */
 /* ============================================ */
 
@@ -363,7 +388,7 @@ int fb_console_init(struct limine_framebuffer *fb) {
     g_initialized = true;
     
     /* Clear screen with dark blue background */
-    fb_console_clear(FB_COLOR_BLUE);
+    fb_console_clear(FB_COLOR_BLACK);
     
     /* Draw a test pattern to verify framebuffer works */
     /* White border at top */
@@ -403,6 +428,9 @@ void fb_console_clear(uint32_t bg_color) {
     g_cursor_row = 0;
     g_view_start = 0;
     g_bg_color = bg_color;
+
+    /* Draw cursor at new position */
+    fb_draw_cursor();
 }
 
 void fb_console_set_color(uint32_t fg, uint32_t bg) {
@@ -461,6 +489,9 @@ void fb_console_putc(char c) {
         
         fb_console_refresh();
     }
+
+    /* Update cursor display */
+    fb_draw_cursor();
 }
 
 void fb_console_puts(const char *str) {
@@ -514,6 +545,9 @@ void fb_console_refresh(void) {
             fb_draw_char(col, row, ch->c, ch->fg, ch->bg);
         }
     }
+
+    /* Redraw cursor after refresh */
+    fb_draw_cursor();
 }
 
 void fb_console_scroll_up(void) {

@@ -3,6 +3,8 @@
 #include "thread.h"
 #include "../arch/x86_64/io.h"
 #include "console.h"
+#include "fb_console.h"
+#include "klog.h"
 
 /* ===========================================
  * Variables globales
@@ -98,21 +100,21 @@ void timer_enable_scheduling(void)
 uint64_t timer_handler_preempt(void *frame)
 {
     g_timer_ticks++;
-    
+
     /* Envoyer EOI au PIC (Important: avant le scheduler!) */
     outb(0x20, 0x20);
-    
+
     /* Ne pas appeler le scheduler tant que le multitasking n'est pas prêt */
     if (!g_timer_scheduling_enabled) {
         return 0;
     }
-    
+
     /* Gestion du temps et réveil des threads endormis */
     scheduler_tick();
-    
+
     /* APPEL CRITIQUE : On demande au scheduler de préempter si besoin.
      * Il retourne 0 si pas de changement, ou le nouveau RSP si changement.
-     * 
+     *
      * Le format de contexte est maintenant unifié : tous les threads utilisent
      * le format IRQ (15 registres + int_no/error_code + iret frame).
      */
@@ -159,12 +161,7 @@ void timer_init(uint32_t frequency)
     datetime_t boot_time;
     rtc_read_datetime(&boot_time);
     g_boot_timestamp = datetime_to_unix(&boot_time);
-    
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("[TIMER] PIT initialized at ");
-    console_put_dec(frequency);
-    console_puts(" Hz\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    KLOG_INFO_DEC("TIMER", "PIT Frequency: ", frequency);
 }
 
 uint64_t timer_get_ticks(void)

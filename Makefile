@@ -259,7 +259,7 @@ run-vbox: iso
 	@sleep 2 && tail -f serial.log
 
 run-qemu: iso
-	qemu-system-x86_64 -cdrom alos.iso -m 1024M -vga std -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
+	qemu-system-x86_64 -cdrom alos.iso -m 1024M -boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 -device virtio-net-pci,netdev=net0 -drive file=disk.img,format=raw,index=0,media=disk -serial stdio
 
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: iso
