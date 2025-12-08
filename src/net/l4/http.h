@@ -3,6 +3,7 @@
 #define NET_HTTP_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /* HTTP default port */
 #define HTTP_PORT 80
