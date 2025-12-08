@@ -45,8 +45,8 @@ ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupt
 ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c src/kernel/mouse.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o src/kernel/mouse.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
@@ -86,12 +86,12 @@ SHELL_OBJ = src/shell/shell.o src/shell/commands.o
 CONFIG_SRC = src/config/config.c
 CONFIG_OBJ = src/config/config.o
 
-# GUI (Interface graphique style macOS)
-GUI_SRC = src/gui/render.c src/gui/font.c src/gui/fonts/roboto.c src/gui/ssfn_render.c src/gui/fonts/unifont_sfn.c src/gui/compositor.c src/gui/wm.c src/gui/menubar.c src/gui/dock.c src/gui/events.c src/gui/gui.c
-GUI_OBJ = src/gui/render.o src/gui/font.o src/gui/fonts/roboto.o src/gui/ssfn_render.o src/gui/fonts/unifont_sfn.o src/gui/compositor.o src/gui/wm.o src/gui/menubar.o src/gui/dock.o src/gui/events.o src/gui/gui.o
+# Configuration
+CONFIG_SRC = src/config/config.c
+CONFIG_OBJ = src/config/config.o
 
 # Tous les objets
-OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ) $(GUI_OBJ)
+OBJ = $(ARCH_OBJ) $(KERNEL_OBJ) $(MMIO_OBJ) $(MM_OBJ) $(DRIVERS_OBJ) $(FS_OBJ) $(NET_L2_OBJ) $(NET_L3_OBJ) $(NET_L4_OBJ) $(NET_CORE_OBJ) $(LIB_OBJ) $(SHELL_OBJ) $(CONFIG_OBJ)
 
 # Cible finale - Kernel ELF 64-bit
 alos.elf: $(OBJ)
@@ -194,14 +194,6 @@ src/shell/%.o: src/shell/%.c
 
 # Configuration
 src/config/%.o: src/config/%.c
-	$(CC) -c $< -o $@ $(CFLAGS)
-
-# GUI
-src/gui/%.o: src/gui/%.c
-	$(CC) -c $< -o $@ $(CFLAGS)
-
-# GUI Fonts
-src/gui/fonts/%.o: src/gui/fonts/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 # MMIO subsystem
@@ -308,6 +300,7 @@ fs_root: disk_structure userland
 	@cp -r disk_structure/* fs_root/
 	@mkdir -p fs_root/bin
 	@cp -v src/userland/threads-test fs_root/bin/
+	@cp -v src/userland/gui_app fs_root/bin/gui
 
 # Créer une image de disque à partir de fs_root
 disk.img: fs_root
