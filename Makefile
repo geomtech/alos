@@ -77,9 +77,6 @@ NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 FS_SRC = src/fs/vfs.c src/fs/ext2.c
 FS_OBJ = src/fs/vfs.o src/fs/ext2.o
 
-# Library (common utilities)
-LIB_SRC = src/lib/string.c src/lib/umalloc.c
-LIB_OBJ = src/lib/string.o src/lib/umalloc.o
 
 # Shell
 SHELL_SRC = src/shell/shell.c src/shell/commands.c
@@ -191,10 +188,6 @@ src/net/core/%.o: src/net/core/%.c
 src/fs/%.o: src/fs/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
-# Library
-src/lib/%.o: src/lib/%.c
-	$(CC) -c $< -o $@ $(CFLAGS)
-
 # Shell
 src/shell/%.o: src/shell/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
@@ -224,7 +217,7 @@ clean:
 	rm -f src/arch/x86_64/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
-	rm -f src/fs/*.o src/lib/*.o src/shell/*.o src/config/*.o src/gui/*.o src/gui/fonts/*.o
+	rm -f src/fs/*.o src/shell/*.o src/config/*.o src/gui/*.o src/gui/fonts/*.o
 	rm -f alos.elf alos.iso
 	rm -rf iso_root
 
@@ -303,15 +296,31 @@ run-uefi: iso
 		-drive file=disk.img,format=raw,index=0,media=disk \
 		-serial stdio
 
-# Créer une image de disque à partir de la structure disk_structure
-disk.img: disk_structure
-	@echo "=== Creating disk image from disk_structure ==="
+# Userland build
+userland:
+	$(MAKE) -C src/userland
+
+# Staging directory for disk image (fs_root)
+fs_root: disk_structure userland
+	@echo "=== Preparing filesystem root ==="
+	@rm -rf fs_root
+	@mkdir -p fs_root
+	@cp -r disk_structure/* fs_root/
+	@mkdir -p fs_root/bin
+	@cp -v src/userland/threads-test fs_root/bin/
+
+# Créer une image de disque à partir de fs_root
+disk.img: fs_root
+	@echo "=== Creating disk image from fs_root ==="
 	@rm -f disk.img
-	@dd if=/dev/zero of=disk.img bs=1M count=64
-	@mformat -i disk.img -f 1440 ::
-	@mcopy -i disk.img disk_structure/* ::
+	@# Créer un fichier vide de 64MB
+	@dd if=/dev/zero of=disk.img bs=1M count=64 status=none
+	@# Formater en ext2 et copier le contenu de fs_root
+	@# -F forces to run on a file
+	@# -d copies content from directory
+	@mkfs.ext2 -F -d fs_root disk.img
 	@chmod 644 disk.img
-	@echo "=== Disk image created: disk.img ==="
+	@echo "=== Disk image created: disk.img (EXT2) ==="
 
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: iso

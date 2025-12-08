@@ -187,7 +187,6 @@ src/
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
 │   ├── l3/            # Layer 3 (IPv4, ICMP, Routing)
 │   └── l4/            # Layer 4 (UDP, TCP, DHCP, DNS)
-├── lib/               # Common utilities (string, libc for userland)
 ├── shell/             # Command interpreter
 │   ├── shell.c/h      # Shell core (readline, history, parsing)
 │   └── commands.c/h   # Built-in commands (help, ping, exec, etc.)
