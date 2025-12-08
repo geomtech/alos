@@ -16,6 +16,12 @@
 #define SYS_FORK        57      /* Créer un nouveau processus */
 #define SYS_EXECVE      59      /* Exécuter un programme */
 #define SYS_WAITPID     61      /* Attendre la fin d'un processus fils */
+#define SYS_THREAD_CREATE 60    /* Créer un nouveau thread dans le processus courant */
+
+/* Thread syscalls */
+#define SYS_CLONE       56      /* Créer un thread/processus */
+#define SYS_GETTID      186     /* Obtenir le Thread ID */
+#define SYS_TKILL       200     /* Terminer un thread spécifique */
 
 /* Filesystem syscalls */
 #define SYS_CLOSE       6       /* Fermer un file descriptor */

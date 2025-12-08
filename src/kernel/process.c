@@ -667,6 +667,7 @@ int process_execute(const char* filename)
         proc->name,
         elf_result.entry_point,
         user_rsp,  /* ESP utilisateur avec argc/argv */
+        NULL,      /* arg - pas d'argument pour le thread principal */
         kernel_stack,
         KERNEL_STACK_SIZE
     );
@@ -970,6 +971,7 @@ int process_exec_and_wait(const char* filename, int argc, char** argv)
         proc->name,
         elf_result.entry_point,
         user_rsp,  /* ESP utilisateur avec argc/argv */
+        NULL,      /* arg - pas d'argument pour le thread principal */
         kernel_stack,
         KERNEL_STACK_SIZE
     );

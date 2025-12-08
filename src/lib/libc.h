@@ -107,6 +107,12 @@ static int errno = 0;
 #define SYS_NANOSLEEP   162
 #define SYS_GETCWD      183
 
+/* Thread syscalls */
+#define SYS_CLONE       56      /* Créer un thread (Linux-style) */
+#define SYS_THREAD_CREATE 60    /* Créer un thread dans le processus courant */
+#define SYS_GETTID      186     /* Obtenir le Thread ID */
+#define SYS_TKILL       200     /* Terminer un thread */
+
 /* ========================================
  * Socket Definitions (BSD-like)
  * ======================================== */
@@ -1058,6 +1064,41 @@ typedef struct {
 static inline int meminfo(meminfo_t* info)
 {
     return syscall3(SYS_MEMINFO, (long)info, 0, 0);
+}
+
+/* ========================================
+ * Thread Functions
+ * ======================================== */
+
+/**
+ * Thread entry point type
+ */
+typedef void (*thread_func_t)(void* arg);
+
+/**
+ * Create a new thread in the current process
+ * 
+ * The new thread shares the same address space as the calling thread.
+ * 
+ * @param entry  Thread entry point function
+ * @param stack  Stack pointer for the new thread (top of allocated stack)
+ * @param arg    Argument to pass to the thread (not used yet)
+ * @return Thread ID (TID) on success, -1 on error
+ * 
+ * Example:
+ *   // Allocate a stack for the new thread
+ *   void* stack = umalloc(4096);
+ *   void* stack_top = (char*)stack + 4096;
+ *   
+ *   // Create the thread
+ *   int tid = thread_create(my_thread_func, stack_top, NULL);
+ *   if (tid < 0) {
+ *       print("Failed to create thread\n");
+ *   }
+ */
+static inline int thread_create(thread_func_t entry, void* stack, void* arg)
+{
+    return syscall3(SYS_THREAD_CREATE, (long)entry, (long)stack, (long)arg);
 }
 
 /* ========================================

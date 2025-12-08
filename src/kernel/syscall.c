@@ -905,6 +905,7 @@ static int sys_close(int fd)
 static int sys_fork(void);
 static int sys_execve(const char* filename, char** argv, char** envp);
 static int sys_waitpid(int pid, int* status, int options);
+static int sys_create_thread(void* entry, void* stack, void* arg);
 
 /* ========================================
  * Dispatcher principal
@@ -1035,6 +1036,10 @@ void syscall_dispatcher(syscall_regs_t* regs)
 
         case SYS_WAITPID:
             result = sys_waitpid((int)regs->rdi, (int*)regs->rsi, (int)regs->rdx);
+            break;
+
+        case SYS_THREAD_CREATE:
+            result = sys_create_thread((void*)regs->rdi, (void*)regs->rsi, (void*)regs->rdx);
             break;
 
         default:
@@ -1248,6 +1253,67 @@ static int sys_waitpid(int pid, int* status, int options)
     /* Processus fils non trouvé */
     KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
     return -1;
+}
+
+/**
+ * SYS_THREAD_CREATE (60) - Créer un nouveau thread dans le processus courant
+ *
+ * Ce syscall permet aux programmes utilisateurs (Ring 3) de créer des threads
+ * partageant le même espace mémoire (même processus).
+ *
+ * @param entry  Point d'entrée du thread (adresse en user space)
+ * @param stack  Stack pointer user pour le nouveau thread
+ * @param arg    Argument à passer au thread (non utilisé pour l'instant)
+ * @return TID du nouveau thread si succès, -1 si erreur
+ */
+static int sys_create_thread(void* entry, void* stack, void* arg)
+{
+    KLOG_INFO("SYSCALL", "sys_create_thread called");
+    KLOG_INFO_HEX("SYSCALL", "  entry: ", (uint64_t)entry);
+    KLOG_INFO_HEX("SYSCALL", "  stack: ", (uint64_t)stack);
+    KLOG_INFO_HEX("SYSCALL", "  arg: ", (uint64_t)arg);
+
+    /* 1. Récupérer le processus parent via current_process */
+    process_t* proc = current_process;
+    if (proc == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_create_thread: no current process");
+        return -1;
+    }
+
+    /* 2. Allouer une nouvelle kernel stack pour le nouveau thread */
+    void* kernel_stack = kmalloc(THREAD_DEFAULT_STACK_SIZE);
+    if (kernel_stack == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_create_thread: failed to allocate kernel stack");
+        return -1;
+    }
+
+    KLOG_INFO_HEX("SYSCALL", "  kernel_stack: ", (uint64_t)kernel_stack);
+
+    /* 3. Créer le thread user via thread_create_user */
+    thread_t* new_thread = thread_create_user(
+        proc,                           /* Processus propriétaire */
+        "user_thread",                  /* Nom du thread */
+        (uint64_t)entry,                /* Point d'entrée user */
+        (uint64_t)stack,                /* Stack pointer user */
+        arg,                            /* Argument pour le thread */
+        kernel_stack,                   /* Kernel stack allouée */
+        THREAD_DEFAULT_STACK_SIZE       /* Taille de la kernel stack */
+    );
+
+    if (new_thread == NULL) {
+        KLOG_ERROR("SYSCALL", "sys_create_thread: thread_create_user failed");
+        /* Libérer la kernel stack en cas d'échec */
+        kfree(kernel_stack);
+        return -1;
+    }
+
+    /* Incrémenter le compteur de threads du processus */
+    proc->thread_count++;
+
+    KLOG_INFO_DEC("SYSCALL", "sys_create_thread: created thread TID ", new_thread->tid);
+
+    /* 4. Retourner le TID du nouveau thread */
+    return (int)new_thread->tid;
 }
 
 /* ========================================

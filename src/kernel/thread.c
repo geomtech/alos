@@ -478,13 +478,14 @@ thread_t *thread_create_in_process(process_t *proc, const char *name,
  * @param name        Nom du thread
  * @param entry_point Point d'entrée en user mode (EIP)
  * @param user_rsp    Stack pointer user mode (ESP)
+ * @param arg         Argument à passer au thread (sera dans RDI)
  * @param kernel_stack Stack kernel pré-allouée (pour les syscalls)
  * @param kernel_stack_size Taille de la kernel stack
  * @return Thread créé, ou NULL si erreur
  */
 thread_t *thread_create_user(process_t *proc, const char *name,
                              uint64_t entry_point, uint64_t user_rsp,
-                             void *kernel_stack, uint64_t kernel_stack_size)
+                             void *arg, void *kernel_stack, uint64_t kernel_stack_size)
 {
     if (!proc || !kernel_stack) {
         KLOG_ERROR("THREAD", "thread_create_user: invalid parameters");
@@ -621,7 +622,7 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     *(--kstack_top) = 0;              /* RBX */
     *(--kstack_top) = 0;              /* RBP */
     *(--kstack_top) = 0;              /* RSI */
-    *(--kstack_top) = 0;              /* RDI */
+    *(--kstack_top) = (uint64_t)arg;  /* RDI = argument pour la fonction user */
     *(--kstack_top) = 0;              /* R8 */
     *(--kstack_top) = 0;              /* R9 */
     *(--kstack_top) = 0;              /* R10 */
