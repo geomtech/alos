@@ -102,6 +102,9 @@ extern void timer_tick(void);
 /* Déclaration de schedule() pour le multitasking */
 extern void schedule(void);
 
+/* Déclaration anticipée pour start_gui() */
+int start_gui(void);
+
 /**
  * Clear all debug registers to prevent spurious Debug exceptions.
  * This disables hardware breakpoints and clears the debug status.
@@ -438,6 +441,13 @@ void kmain(void) {
 
   /* Lancer le shell interactif */
   shell_init();
+
+  /* Démarrer automatiquement l'interface graphique */
+  if (start_gui() == 0) {
+    KLOG_INFO("GUI", "GUI started successfully");
+  } else {
+    KLOG_WARN("GUI", "Failed to start GUI, falling back to shell");
+  }
 
   /* Exécuter le script de démarrage si présent */
   if (config_run_startup_script() == 0) {
