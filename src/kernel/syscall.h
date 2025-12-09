@@ -50,6 +50,7 @@
 #define SYS_GET_EVENT 111       /* Obtenir un événement input */
 #define SYS_BRK 120 /* Modifier la taille du segment de données du processus  \
                      */
+#define SYS_NANOSLEEP 162 /* Dormir pendant un temps spécifié */
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256

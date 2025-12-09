@@ -169,6 +169,26 @@ static int sys_exit(int status) {
 }
 
 /**
+ * SYS_NANOSLEEP (162) - Dormir pendant un temps spécifié
+ *
+ * @param milliseconds  Temps de sommeil en millisecondes (simplifié)
+ * @return 0 si succès, -1 si interrompu
+ *
+ * Note: Implémentation simplifiée - accepte des ms au lieu de struct timespec
+ */
+static int sys_nanosleep(uint64_t milliseconds) {
+  (void)milliseconds; /* Ignore for now - just yield */
+  
+  /* Simple yield to let other threads run */
+  thread_t *current = thread_current();
+  if (current) {
+    /* Mark that we want to yield, scheduler will handle it */
+    current->needs_yield = true;
+  }
+  return 0;
+}
+
+/**
  * SYS_WRITE (4) - Écrire une chaîne
  *
  * @param fd      File descriptor (ignoré pour l'instant, tout va à la console)
@@ -1277,6 +1297,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
   case SYS_THREAD_CREATE:
     result = sys_create_thread((void *)regs->rdi, (void *)regs->rsi,
                                (void *)regs->rdx);
+    break;
+
+  case SYS_NANOSLEEP:
+    result = sys_nanosleep(regs->rdi);
     break;
 
   default:

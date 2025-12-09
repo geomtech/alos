@@ -212,11 +212,15 @@ void gui_process_event(input_event_t *event) {
     break;
 
   case INPUT_EVENT_MOUSE_BUTTON:
-    /* data.mouse.buttons = button mask, check button state for pressed */
-    /* For button events, we need dx/dy to encode the specific button */
-    /* Assuming buttons field contains the button mask */
-    events_mouse_button((mouse_button_t)event->data.mouse.buttons,
-                        event->data.mouse.dx != 0); /* dx used as pressed flag */
+    /* data.mouse.buttons = button mask (1=L, 2=R, 4=M) */
+    /* Ignore special buttons (like forward/back on gaming mice) */
+    {
+      uint32_t buttons = event->data.mouse.buttons & 0x07; /* Only L, R, M */
+      if (buttons != 0) {
+        events_mouse_button((mouse_button_t)buttons,
+                            event->data.mouse.dx != 0); /* dx used as pressed flag */
+      }
+    }
     break;
 
   case INPUT_EVENT_MOUSE_SCROLL:
