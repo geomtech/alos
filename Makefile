@@ -209,7 +209,7 @@ clean:
 	rm -f src/arch/x86_64/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
 	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
-	rm -f src/fs/*.o src/shell/*.o src/config/*.o src/gui/*.o src/gui/fonts/*.o
+	rm -f src/fs/*.o src/shell/*.o src/config/*.o
 	rm -f alos.elf alos.iso
 	rm -rf iso_root
 
