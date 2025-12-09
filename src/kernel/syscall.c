@@ -187,10 +187,11 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
     return -1;
   }
 
-  /* Log to kernel log for debugging */
-  KLOG_INFO("SYSCALL", "sys_write called:");
-  KLOG_INFO_DEC("SYSCALL", "  fd: ", fd);
-  KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
+  /* Logging disabled for performance:
+   * KLOG_INFO("SYSCALL", "sys_write called:");
+   * KLOG_INFO_DEC("SYSCALL", "  fd: ", fd);
+   * KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
+   */
 
   /* Write to console AND log */
   for (uint64_t i = 0; i < count; i++) {
@@ -1316,7 +1317,9 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     KLOG_INFO("SYSCALL", "Thread woken up, resuming syscall");
   }
 
-  KLOG_INFO("SYSCALL", "syscall_dispatcher returning");
+  /* Logging disabled for performance - uncomment for debugging:
+   * KLOG_INFO("SYSCALL", "syscall_dispatcher returning");
+   */
 }
 
 /* ========================================
