@@ -4,7 +4,7 @@ This document provides comprehensive guidance for AI assistants working with the
 
 ## Project Overview
 
-**ALOS** is a minimalist x86-64 operating system kernel written in C and Assembly, designed for educational purposes and running on QEMU/VirtualBox. It implements core OS concepts including memory management, multitasking, filesystem support, and a full TCP/IP networking stack.
+**ALOS** is a minimalist x86-64 operating system kernel written in C and Assembly, running on QEMU/VirtualBox. It implements core OS concepts including memory management, multitasking, filesystem support, and a full TCP/IP networking stack.
 
 ### Key Characteristics
 - **Language**: C (GNU99 standard) + x86-64 Assembly (NASM)
@@ -15,14 +15,13 @@ This document provides comprehensive guidance for AI assistants working with the
 - **Target Platform**: QEMU, VirtualBox (UEFI/BIOS compatible)
 
 ### Project Maturity
-This is a learning/educational OS with working implementations of:
+This is an active development OS with working implementations of:
 - ✅ Core kernel (GDT, IDT, interrupts, TSS)
 - ✅ Memory management (PMM, VMM, heap)
 - ✅ Multitasking with priority scheduler
 - ✅ User space (Ring 3) with system calls
 - ✅ VFS with Ext2 read/write support
 - ✅ Full TCP/IP stack (Ethernet → TCP/HTTP)
-- ✅ Linux binary compatibility (i386 static binaries)
 - ✅ GUI with mouse support
 - ✅ Interactive shell with persistent history
 
@@ -35,7 +34,7 @@ This is a learning/educational OS with working implementations of:
 │                  User Space (Ring 3)                   │
 │          ELF Programs  │  Userland libc  │  Shell      │
 ├────────────────────────────────────────────────────────┤
-│            System Calls (int 0x80) + Linux Compat      │
+│                 System Calls (int 0x80)                │
 ├────────────────────────────────────────────────────────┤
 │                 Kernel Space (Ring 0)                  │
 ├────────────────────────────────────────────────────────┤
@@ -95,7 +94,6 @@ This is a learning/educational OS with working implementations of:
 │   │   ├── workqueue.c/h     # Deferred work
 │   │   ├── syscall.c/h       # System call dispatcher
 │   │   ├── elf.c/h           # ELF32/64 loader
-│   │   ├── linux_compat.c/h  # Linux syscall compatibility
 │   │   ├── string.c          # String utilities
 │   │   └── mmio/             # Memory-mapped I/O
 │   │       ├── mmio.c/h      # MMIO abstractions
@@ -185,7 +183,6 @@ This is a learning/educational OS with working implementations of:
 ├── limine.conf               # Bootloader configuration
 ├── Dockerfile                # Docker build environment
 ├── README.md                 # User documentation
-├── LINUX-COMPAT.md          # Linux compatibility guide
 └── MULTIPROCESSING-OSDEV.org # Development notes
 ```
 
@@ -386,12 +383,6 @@ make run
 # On host: curl http://10.0.2.15/
 ```
 
-#### Linux Compatibility Testing
-```bash
-> linux on
-> exec /bin/busybox ls
-```
-
 ## Coding Conventions
 
 ### Style Guidelines
@@ -537,11 +528,6 @@ TX: Socket → TCP/UDP → IPv4 → Ethernet → NIC
 - RDI, RSI, RDX, R10, R8, R9: Arguments 1-6
 - RAX: Return value (or -errno)
 
-**Linux Compatibility**: `src/kernel/linux_compat.c`
-- Translates Linux syscall numbers to ALOS
-- Supports static i386 Linux binaries
-- Enable with `linux on` shell command
-
 ## Key Files Reference
 
 ### Boot and Initialization
@@ -647,14 +633,12 @@ If git operations fail due to network issues:
 
 ### Internal Documentation
 - `README.md`: User-facing documentation, feature checklist
-- `LINUX-COMPAT.md`: Linux binary compatibility guide
 - `MULTIPROCESSING-OSDEV.org`: Development notes (Org mode)
 - This file (`CLAUDE.md`): AI assistant guide
 
 ### External Resources
 - [OSDev Wiki](https://wiki.osdev.org/): Essential OS development reference
 - [Intel x86-64 Manual](https://software.intel.com/content/www/us/en/develop/articles/intel-sdm.html): Architecture specification
-- [Linux Syscall Reference](https://man7.org/linux/man-pages/man2/syscalls.2.html): For Linux compatibility
 - [Limine Boot Protocol](https://github.com/limine-bootloader/limine/blob/trunk/PROTOCOL.md): Bootloader interface
 - [Ext2 Specification](https://www.nongnu.org/ext2-doc/ext2.html): Filesystem format
 
@@ -675,7 +659,6 @@ lspci        - List PCI devices
 dhcp         - Request IP via DHCP
 ping [host]  - Ping host (IP or DNS name)
 httpd start  - Start HTTP server on port 80
-linux [on|off] - Toggle Linux compatibility mode
 ```
 
 ### Makefile Targets
@@ -708,7 +691,7 @@ make disk.img - Rebuild disk image
 
 ### Testing Strategy
 1. **Build after each change** - `make`
-2. **Test in emulator** - `make run`
+2. **Test in emulator** - `make run-qemu`
 3. **Check serial logs** - `tail -f serial.log`
 4. **Test affected subsystems** - E.g., if changing network code, test `ping`
 5. **Look for regressions** - Ensure old features still work

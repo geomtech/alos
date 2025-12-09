@@ -45,8 +45,8 @@ ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupt
 ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/linux_compat.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/linux_compat.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c

@@ -14,7 +14,6 @@
 #include "console.h"
 #include "keyboard.h"
 #include "klog.h"
-#include "linux_compat.h"
 #include "process.h"
 #include "sync.h"
 #include "thread.h"
@@ -1157,14 +1156,6 @@ void syscall_dispatcher(syscall_regs_t *regs) {
       __asm__ volatile("hlt");
   }
 
-  /* Vérifier si le mode compatibilité Linux est actif */
-  if (linux_compat_is_active()) {
-    /* Déléguer au handler Linux */
-    result = linux_syscall_handler(regs);
-    regs->rax = (uint32_t)result;
-    return;
-  }
-
   switch (syscall_num) {
   case SYS_EXIT:
     result = sys_exit((int)regs->rdi);
@@ -1372,10 +1363,6 @@ void syscall_init(void) {
   idt_set_gate(0x80, (uint64_t)syscall_handler_asm, 0x08, 0xEE, 0);
 
   KLOG_INFO("SYSCALL", "INT 0x80 registered (DPL=3)");
-
-  /* Initialiser la couche de compatibilité Linux */
-  linux_compat_init();
-
   KLOG_INFO("SYSCALL", "Syscall interface ready!");
 }
 
@@ -1580,45 +1567,4 @@ static int sys_create_thread(void *entry, void *stack, void *arg) {
 
   /* 4. Retourner le TID du nouveau thread */
   return (int)new_thread->tid;
-}
-
-/* ========================================
- * Fonctions syscall exportées (pour linux_compat)
- * ======================================== */
-
-void syscall_do_exit(int status) { sys_exit(status); }
-
-int syscall_do_read(int fd, void *buf, uint64_t count) {
-  return sys_read(fd, buf, count);
-}
-
-int syscall_do_write(int fd, const void *buf, uint64_t count) {
-  return sys_write(fd, buf, count);
-}
-
-int syscall_do_open(const char *path, uint64_t flags) {
-  return sys_open(path, flags);
-}
-
-int syscall_do_close(int fd) { return sys_close(fd); }
-
-int syscall_do_getpid(void) { return sys_getpid(); }
-
-int syscall_do_getcwd(char *buf, uint64_t size) {
-  return sys_getcwd(buf, size);
-}
-
-int syscall_do_chdir(const char *path) { return sys_chdir(path); }
-
-int syscall_do_mkdir(const char *path) { return sys_mkdir(path); }
-
-/* Implémentations des fonctions exportées pour les nouveaux syscalls */
-int syscall_do_fork(void) { return sys_fork(); }
-
-int syscall_do_execve(const char *filename, char **argv, char **envp) {
-  return sys_execve(filename, argv, envp);
-}
-
-int syscall_do_waitpid(int pid, int *status, int options) {
-  return sys_waitpid(pid, status, options);
 }

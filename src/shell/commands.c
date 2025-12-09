@@ -36,7 +36,6 @@ static int cmd_keymap(int argc, char **argv);
 static int cmd_script(int argc, char **argv);
 static int cmd_netconf(int argc, char **argv);
 static int cmd_savehist(int argc, char **argv);
-static int cmd_linux(int argc, char **argv);
 static int cmd_pci(int argc, char **argv);
 
 /* Nouvelles commandes filesystem et système */
@@ -81,7 +80,6 @@ static shell_command_t commands[] = {
     {"script", "Run a script file (/config/startup.sh)", cmd_script},
     {"netconf", "Configure network interface (eth0, etc.)", cmd_netconf},
     {"savehist", "Save command history to disk", cmd_savehist},
-    {"linux", "Toggle Linux compatibility mode", cmd_linux},
     {"pci", "List PCI devices", cmd_pci},
 
     /* Commandes filesystem et système */
@@ -2287,49 +2285,6 @@ static int cmd_worktest(int argc, char **argv) {
   console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
   console_puts("=== Worker Thread Pool Test Complete ===\n");
   console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
-  return 0;
-}
-
-/* ========================================
- * cmd_linux - Toggle Linux compatibility mode
- * ======================================== */
-
-static int cmd_linux(int argc, char **argv) {
-  extern void linux_compat_set_mode(int enable);
-  extern int linux_compat_is_active(void);
-
-  if (argc < 2) {
-    /* Afficher l'état actuel */
-    if (linux_compat_is_active()) {
-      console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-      console_puts("Linux compatibility mode: ENABLED\n");
-    } else {
-      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      console_puts("Linux compatibility mode: DISABLED\n");
-    }
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    console_puts("\nUsage: linux <on|off>\n");
-    console_puts("  on  - Enable Linux syscall compatibility\n");
-    console_puts("  off - Disable Linux syscall compatibility\n");
-    return 0;
-  }
-
-  if (strcmp(argv[1], "on") == 0) {
-    linux_compat_set_mode(1);
-    console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-    console_puts("Linux compatibility mode ENABLED\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    console_puts("You can now run statically-linked Linux ELF binaries.\n");
-  } else if (strcmp(argv[1], "off") == 0) {
-    linux_compat_set_mode(0);
-    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    console_puts("Linux compatibility mode DISABLED\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-  } else {
-    console_puts("Invalid argument. Use 'on' or 'off'.\n");
-    return -1;
-  }
 
   return 0;
 }

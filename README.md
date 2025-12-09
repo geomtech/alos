@@ -108,7 +108,6 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 
 ### User Space & Applications
 - [x] ELF Loader (32-bit executables)
-- [x] Linux Binary Compatibility (run statically-linked Linux i386 binaries)
 - [x] ELF 64-bit support
 - [ ] Dynamic linking (shared libraries .so)
 - [x] Standard C library (libc)
