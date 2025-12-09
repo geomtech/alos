@@ -181,12 +181,12 @@ int main(int argc, char **argv) {
       /* Process event */
       gui_process_event(&event);
       
-      /* Only render when we have an event */
-      gui_render();  // Draws cursor and processes internal event queue
-      render_flip(); // Swaps buffers (copies back buffer to front)
+      /* Cursor is now drawn directly to front buffer in gui_render(),
+       * so NO render_flip() needed for mouse moves! */
+      gui_render();
     } else {
       /* No event, yield CPU */
-      syscall1(SYS_SLEEP, 1); /* Shorter sleep for responsiveness */
+      syscall1(SYS_SLEEP, 1);
     }
   }
 
@@ -287,9 +287,12 @@ static int32_t g_cursor_save_y = -1;
 static inline int32_t cursor_max(int32_t a, int32_t b) { return a > b ? a : b; }
 static inline int32_t cursor_min(int32_t a, int32_t b) { return a < b ? a : b; }
 
-/* Sauvegarde les pixels sous le curseur (optimisé avec memcpy par ligne) */
+/* IMPORTANT: Cursor operations work directly on FRONT buffer
+ * to avoid full 3MB memcpy on every mouse move */
+
+/* Sauvegarde les pixels sous le curseur (depuis le FRONT buffer) */
 static void save_cursor_background(int32_t x, int32_t y) {
-  framebuffer_t *fb = render_get_active_buffer();
+  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
   if (!fb || !fb->pixels) return;
   
   uint32_t pitch_pixels = fb->pitch / 4;
@@ -319,12 +322,12 @@ static void save_cursor_background(int32_t x, int32_t y) {
   g_cursor_save_y = y;
 }
 
-/* Restaure les pixels sous le curseur (optimisé avec memcpy par ligne) */
+/* Restaure les pixels sous le curseur (vers le FRONT buffer) */
 static void restore_cursor_background(void) {
   if (g_cursor_save_x < 0)
     return;
 
-  framebuffer_t *fb = render_get_active_buffer();
+  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
   if (!fb || !fb->pixels) return;
   
   uint32_t pitch_pixels = fb->pitch / 4;
@@ -599,27 +602,31 @@ static const uint8_t cursor_data[19][12] = {
     {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0},
 };
 
+/* Dessine le curseur DIRECTEMENT sur le front buffer (évite le flip complet) */
 static void draw_cursor(int32_t x, int32_t y) {
   if (!g_mouse_visible)
     return;
 
+  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
+  if (!fb || !fb->pixels) return;
+  
+  uint32_t pitch_pixels = fb->pitch / 4;
+
   for (int32_t cy = 0; cy < CURSOR_HEIGHT; cy++) {
+    int32_t py = y + cy;
+    if (py < 0 || py >= (int32_t)g_screen_height) continue;
+    
     for (int32_t cx = 0; cx < CURSOR_WIDTH; cx++) {
       uint8_t pixel = cursor_data[cy][cx];
       if (pixel == 0)
         continue; /* Transparent */
 
       int32_t px = x + cx;
-      int32_t py = y + cy;
+      if (px < 0 || px >= (int32_t)g_screen_width) continue;
 
-      if (px >= 0 && px < (int32_t)g_screen_width && py >= 0 &&
-          py < (int32_t)g_screen_height) {
-        if (pixel == 1) {
-          draw_pixel(px, py, 0xFF000000); /* Noir (contour) */
-        } else {
-          draw_pixel(px, py, 0xFFFFFFFF); /* Blanc (intérieur) */
-        }
-      }
+      /* Write directly to front buffer */
+      uint32_t color = (pixel == 1) ? 0xFF000000 : 0xFFFFFFFF;
+      fb->pixels[py * pitch_pixels + px] = color;
     }
   }
 }
