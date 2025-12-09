@@ -68,4 +68,15 @@ typedef struct {
   int32_t extra;
 } input_event_t;
 
+/* Syscall wrapper functions */
+long syscall0(long number);
+long syscall1(long number, long arg1);
+long syscall2(long number, long arg1, long arg2);
+long syscall3(long number, long arg1, long arg2, long arg3);
+long syscall4(long number, long arg1, long arg2, long arg3, long arg4);
+long syscall5(long number, long arg1, long arg2, long arg3, long arg4,
+              long arg5);
+long syscall6(long number, long arg1, long arg2, long arg3, long arg4,
+              long arg5, long arg6);
+
 #endif

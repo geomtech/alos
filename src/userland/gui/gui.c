@@ -36,20 +36,48 @@ static bool g_needs_redraw = false;
 
 /* Forward declarations */
 void gui_process_event(input_event_t *event);
-long syscall1(long number, long arg1);
 
 int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 
+  /* Direct write to see if we reach main() - no malloc involved */
+  const char *msg = "GUI: Entered main()\n";
+  syscall3(SYS_WRITE, 1, (long)msg, 20); /* SYS_WRITE=4, stdout, msg, len */
+
+  /* Test heap/brk before doing anything else */
+  void *current_brk = (void *)syscall1(120, 0); /* SYS_BRK = 120 */
+
+  /* Try to expand heap by one page */
+  void *new_brk = (void *)((uint64_t)current_brk + 4096);
+  void *result_brk = (void *)syscall1(120, (long)new_brk);
+
+  /* Direct write to confirm brk worked */
+  if (result_brk == new_brk) {
+    const char *msg2 = "GUI: Heap test OK\n";
+    syscall3(SYS_WRITE, 1, (long)msg2, 18);
+  } else {
+    const char *msg2 = "GUI: Heap test FAILED\n";
+    syscall3(SYS_WRITE, 1, (long)msg2, 22);
+  }
+
   printf("Starting ALOS GUI (Userland)...\n");
 
   /* 1. Get Framebuffer Info */
+  const char *msg3 = "GUI: Getting framebuffer...\n";
+  syscall3(SYS_WRITE, 1, (long)msg3, 28);
+
   framebuffer_info_t fb_info;
-  if (syscall1(SYS_GET_FRAMEBUFFER, (long)&fb_info) != 0) {
-    printf("Error: Failed to get framebuffer info via syscall.\n");
+  long fb_result = syscall1(SYS_GET_FRAMEBUFFER, (long)&fb_info);
+
+  if (fb_result != 0) {
+    const char *msg4 = "GUI: Framebuffer syscall FAILED\n";
+    syscall3(SYS_WRITE, 1, (long)msg4, 32);
     return 1;
   }
+
+  const char *msg5 = "GUI: Framebuffer OK\n";
+  syscall3(SYS_WRITE, 1, (long)msg5, 20);
 
   printf("Framebuffer: %dx%d %d bpp at %lx\n", fb_info.width, fb_info.height,
          fb_info.bpp, fb_info.addr);
@@ -62,23 +90,45 @@ int main(int argc, char **argv) {
   /* Original render_init took struct limine_framebuffer* */
   /* We expect render.c to be refactored to accept raw userland pointers */
 
-  if (render_init_user(&fb_info) != 0) {
+  printf("Calling render_init_user...\n");
+  int render_result = render_init_user(&fb_info);
+  printf("render_init_user returned: %d\n", render_result);
+
+  if (render_result != 0) {
     printf("Error: Failed to initialize renderer.\n");
     return 1;
   }
 
+  printf("Renderer initialized successfully\n");
+
   /* Initialise les polices */
+  printf("Initializing fonts...\n");
   font_init();
 
   /* Initialise SSFN avec Unifont (support UTF-8) */
+  printf("Initializing SSFN...\n");
   ssfn_init();
 
   /* Initialise le compositeur AVANT de l'utiliser */
+  printf("Getting active framebuffer...\n");
   framebuffer_t *active_fb = render_get_active_buffer();
+  printf("Active FB: %p\n", active_fb);
+
+  if (active_fb == NULL) {
+    printf("Error: active_fb is NULL!\n");
+    return 1;
+  }
+
+  printf("Active FB pixels: %p, width: %u, height: %u\n", active_fb->pixels,
+         active_fb->width, active_fb->height);
+
+  printf("Calling compositor_init...\n");
   if (compositor_init(active_fb) != 0) {
     printf("Error: Failed to initialize compositor.\\n");
     return 1;
   }
+
+  printf("Compositor initialized successfully\n");
 
   /* 3. Setup WM and UI */
   compositor_set_background_gradient(rgba(30, 80, 140, 255),   /* Bleu foncé */

@@ -33,8 +33,15 @@ static void init_heap() {
   // Obtenir l'adresse actuelle de brk
   void *current_brk = sys_brk(NULL);
 
-  // Allouer une page initiale (4096 octets)
-  void *new_brk = (void *)(((uintptr_t)current_brk + 4095) & ~4095);
+  // Allouer au moins une page (4096 octets)
+  // Si current_brk est déjà aligné, on ajoute une page complète
+  uintptr_t aligned_brk = ((uintptr_t)current_brk + 4095) & ~4095;
+  if (aligned_brk == (uintptr_t)current_brk) {
+    // Déjà aligné, ajouter une page
+    aligned_brk += 4096;
+  }
+  void *new_brk = (void *)aligned_brk;
+
   if (sys_brk(new_brk) != new_brk) {
     // Échec de l'allocation initiale
     return;

@@ -57,15 +57,17 @@ int render_init_user(framebuffer_info_t *fb) {
   printf("RENDER: Main buffer at %p, size %dx%d\n", g_main_buffer.pixels,
          g_main_buffer.width, g_main_buffer.height);
 
-  // Allocate back buffer
-  size_t buffer_size = g_main_buffer.pitch * g_main_buffer.height;
-
+  // Initialize back buffer struct first
   g_back_buffer.width = g_main_buffer.width;
   g_back_buffer.height = g_main_buffer.height;
   g_back_buffer.pitch = g_main_buffer.pitch;
   g_back_buffer.owns_memory = true;
+  g_back_buffer.pixels = NULL; // Initialize to NULL before malloc
 
+  // Allocate back buffer
+  size_t buffer_size = g_main_buffer.pitch * g_main_buffer.height;
   g_back_buffer.pixels = (uint32_t *)malloc(buffer_size);
+
   printf("RENDER: Back buffer allocated at %p, size %lu\n",
          g_back_buffer.pixels, buffer_size);
 
@@ -73,6 +75,9 @@ int render_init_user(framebuffer_info_t *fb) {
     printf("RENDER: Failed to allocate back buffer\n");
     return -1;
   }
+
+  // Clear the back buffer
+  memset(g_back_buffer.pixels, 0, buffer_size);
 
   g_double_buffer_enabled = true;
 

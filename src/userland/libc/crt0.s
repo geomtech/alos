@@ -15,6 +15,22 @@ _start:
     ; Clear base pointer for backtraces
     xor rbp, rbp
 
+    ; Save stack pointer (we'll need it after BSS init)
+    ; mov r15, rsp
+
+    ; Zero-initialize BSS section BEFORE touching argc/argv
+    ; TEMPORARILY DISABLED FOR DEBUGGING
+    ; extern __bss_start
+    ; extern __bss_end
+    ; lea rdi, [rel __bss_start]
+    ; lea rcx, [rel __bss_end]
+    ; sub rcx, rdi           ; rcx = size of BSS
+    ; xor rax, rax           ; rax = 0
+    ; rep stosb              ; memset(bss, 0, size)
+
+    ; Restore stack pointer
+    ; mov rsp, r15
+
     ; Get argc from stack (it's at the top)
     pop rdi
 

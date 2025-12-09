@@ -176,12 +176,28 @@ static int sys_exit(int status) {
  * @param count   Nombre de caractères (dans ECX), 0 = null-terminated
  */
 static int sys_write(int fd, const char *buf, uint64_t count) {
-  (void)fd;
-  (void)buf;
-  (void)count;
+  /* For now, only support stdout (fd=1) and stderr (fd=2) */
+  if (fd != 1 && fd != 2) {
+    return -1; /* Invalid file descriptor */
+  }
 
-  /* COMPLETELY DISABLED FOR DEBUGGING */
-  return 0;
+  /* Safety check: ensure buffer is not NULL */
+  if (!buf) {
+    KLOG_ERROR("SYSCALL", "sys_write: NULL buffer");
+    return -1;
+  }
+
+  /* Log to kernel log for debugging */
+  KLOG_INFO("SYSCALL", "sys_write called:");
+  KLOG_INFO_DEC("SYSCALL", "  fd: ", fd);
+  KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
+
+  /* Write to console AND log */
+  for (uint64_t i = 0; i < count; i++) {
+    console_putc(buf[i]);
+  }
+
+  return (int)count;
 }
 
 /**
@@ -1030,17 +1046,36 @@ static void *sys_brk(void *addr) {
         }
 
         /* Allocate physical page */
-        void *phys = pmm_alloc_block();
-        if (!phys) {
+        void *phys_virt = pmm_alloc_block();
+        if (!phys_virt) {
           /* Out of memory - should rollback here but for V1 simple fail */
           KLOG_ERROR("SYSCALL", "sys_brk: OOM");
           return (void *)-1;
         }
 
-        /* Map page */
-        vmm_map_page((uint64_t)phys, virt, PAGE_USER | PAGE_RW | PAGE_PRESENT);
-        /* Zero out new memory for security */
-        memset((void *)virt, 0, PAGE_SIZE);
+        /* Convert to physical address */
+        uint64_t phys = pmm_virt_to_phys(phys_virt);
+
+        /* Map page in the PROCESS's page directory, not kernel's */
+        if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, phys, virt,
+                                PAGE_USER | PAGE_RW | PAGE_PRESENT) != 0) {
+          KLOG_ERROR("SYSCALL", "sys_brk: Failed to map page");
+          pmm_free_block(phys_virt);
+          return (void *)-1;
+        }
+
+        /* Zero out new memory for security
+         * We need to zero it in the process's address space, not kernel's.
+         * Since we're in kernel mode with the process's CR3 active (during
+         * syscall), we can access it directly, OR use vmm_copy_to_dir for
+         * safety.
+         */
+        static uint8_t zero_page[PAGE_SIZE] = {0};
+        if (vmm_copy_to_dir((page_directory_t *)proc->pml4, virt, zero_page,
+                            PAGE_SIZE) != 0) {
+          KLOG_ERROR("SYSCALL", "sys_brk: Failed to zero page");
+          /* Continue anyway, just a warning */
+        }
       }
     }
   } else {
