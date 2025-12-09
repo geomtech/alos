@@ -204,38 +204,35 @@ void gui_process_event(input_event_t *event) {
 
   switch (event->type) {
   case INPUT_EVENT_MOUSE_MOVE:
-    /* event->code = x, event->value = y */
-    events_mouse_move(event->code, event->value);
+    /* Use data.mouse.x and data.mouse.y for absolute position */
+    events_mouse_move(event->data.mouse.x, event->data.mouse.y);
     /* Update local cursor pos for drawing */
-    g_mouse_x = event->code;
-    g_mouse_y = event->value;
+    g_mouse_x = event->data.mouse.x;
+    g_mouse_y = event->data.mouse.y;
     break;
 
   case INPUT_EVENT_MOUSE_BUTTON:
-    /* event->code = button (1=Left, 2=Right, 4=Middle), event->value = pressed
-     */
-    /* Map kernel button codes to GUI buttons if needed */
-    /* Assuming 1:1 mapping for simplicity or adapting */
-    /* Kernel: 1=Left, 2=Right, 4=Middle */
-    /* GUI: MOUSE_BUTTON_LEFT=1, RIGHT=2, MIDDLE=4 */
-    events_mouse_button((mouse_button_t)event->code, event->value != 0);
+    /* data.mouse.buttons = button mask, check button state for pressed */
+    /* For button events, we need dx/dy to encode the specific button */
+    /* Assuming buttons field contains the button mask */
+    events_mouse_button((mouse_button_t)event->data.mouse.buttons,
+                        event->data.mouse.dx != 0); /* dx used as pressed flag */
     break;
 
   case INPUT_EVENT_MOUSE_SCROLL:
-    /* event->code = 0, event->value = delta */
-    events_mouse_scroll(event->value);
+    /* data.mouse.dy = scroll delta */
+    events_mouse_scroll(event->data.mouse.dy);
     break;
 
   case INPUT_EVENT_KEY_PRESS:
-    /* event->code = scancode, event->value = char, extra = mods? */
-    /* We need to decode modifiers/chars if not done by driver */
-    /* Assuming driver sends scancode+char */
-    events_key((uint8_t)event->code, (char)event->value, true,
+    /* data.key.scancode = scancode, data.key.key = character */
+    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, true,
                MOD_NONE /* TODO: track mods */);
     break;
 
   case INPUT_EVENT_KEY_RELEASE:
-    events_key((uint8_t)event->code, (char)event->value, false, MOD_NONE);
+    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, false,
+               MOD_NONE);
     break;
   }
 }

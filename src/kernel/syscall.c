@@ -1280,6 +1280,7 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   default:
     KLOG_ERROR("SYSCALL", "Unknown syscall number!");
+    KLOG_ERROR_DEC("SYSCALL", "  syscall_num: ", syscall_num);
     result = -1;
     break;
   }

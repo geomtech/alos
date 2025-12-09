@@ -60,12 +60,24 @@
 #define INPUT_EVENT_MOUSE_BUTTON 4
 #define INPUT_EVENT_MOUSE_SCROLL 5
 
-/* Structure for SYS_GET_EVENT */
+/* Structure for SYS_GET_EVENT - must match kernel definition! */
 typedef struct {
   uint32_t type;
-  uint32_t code;
-  int32_t value;
-  int32_t extra;
+  uint32_t time;
+  union {
+    struct {
+      uint32_t key;
+      uint32_t scancode;
+      uint32_t flags;
+    } key;
+    struct {
+      int32_t x;
+      int32_t y;
+      int32_t dx;
+      int32_t dy;
+      uint32_t buttons;
+    } mouse;
+  } data;
 } input_event_t;
 
 /* Syscall wrapper functions */
