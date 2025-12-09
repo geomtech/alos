@@ -180,17 +180,14 @@ int main(int argc, char **argv) {
     if (res == 1) {
       /* Process event */
       gui_process_event(&event);
+      
+      /* Only render when we have an event */
+      gui_render();  // Draws cursor and processes internal event queue
+      render_flip(); // Swaps buffers (copies back buffer to front)
     } else {
-      /* No event, yield */
-      syscall1(SYS_SLEEP, 10);
+      /* No event, yield CPU */
+      syscall1(SYS_SLEEP, 1); /* Shorter sleep for responsiveness */
     }
-
-    /* Update and Render */
-    /* Only render if we process events or on timer? */
-    /* For smoothness, render every loop or check needs_redraw? */
-    /* For now, simple loop */
-    gui_render();  // Draws cursor and processes internal event queue
-    render_flip(); // Swaps buffers if double buffering
   }
 
   gui_shutdown();
@@ -286,36 +283,65 @@ static uint32_t g_cursor_save[CURSOR_WIDTH * CURSOR_HEIGHT];
 static int32_t g_cursor_save_x = -1;
 static int32_t g_cursor_save_y = -1;
 
-/* Sauvegarde les pixels sous le curseur */
+/* Helper: inline min/max for cursor ops */
+static inline int32_t cursor_max(int32_t a, int32_t b) { return a > b ? a : b; }
+static inline int32_t cursor_min(int32_t a, int32_t b) { return a < b ? a : b; }
+
+/* Sauvegarde les pixels sous le curseur (optimisé avec memcpy par ligne) */
 static void save_cursor_background(int32_t x, int32_t y) {
+  framebuffer_t *fb = render_get_active_buffer();
+  if (!fb || !fb->pixels) return;
+  
+  uint32_t pitch_pixels = fb->pitch / 4;
+  
   for (int32_t cy = 0; cy < CURSOR_HEIGHT; cy++) {
-    for (int32_t cx = 0; cx < CURSOR_WIDTH; cx++) {
-      int32_t px = x + cx;
-      int32_t py = y + cy;
-      if (px >= 0 && px < (int32_t)g_screen_width && py >= 0 &&
-          py < (int32_t)g_screen_height) {
-        g_cursor_save[cy * CURSOR_WIDTH + cx] = read_pixel(px, py);
-      }
+    int32_t py = y + cy;
+    if (py < 0 || py >= (int32_t)g_screen_height) {
+      /* Clear this row in save buffer */
+      memset(&g_cursor_save[cy * CURSOR_WIDTH], 0, CURSOR_WIDTH * sizeof(uint32_t));
+      continue;
     }
+    
+    int32_t x_start = cursor_max(x, 0);
+    int32_t x_end = cursor_min(x + CURSOR_WIDTH, (int32_t)g_screen_width);
+    
+    if (x_start >= x_end) {
+      memset(&g_cursor_save[cy * CURSOR_WIDTH], 0, CURSOR_WIDTH * sizeof(uint32_t));
+      continue;
+    }
+    
+    /* Copy row from framebuffer to save buffer */
+    uint32_t *src = fb->pixels + py * pitch_pixels + x_start;
+    uint32_t *dst = &g_cursor_save[cy * CURSOR_WIDTH + (x_start - x)];
+    memcpy(dst, src, (x_end - x_start) * sizeof(uint32_t));
   }
   g_cursor_save_x = x;
   g_cursor_save_y = y;
 }
 
-/* Restaure les pixels sous le curseur */
+/* Restaure les pixels sous le curseur (optimisé avec memcpy par ligne) */
 static void restore_cursor_background(void) {
   if (g_cursor_save_x < 0)
     return;
 
+  framebuffer_t *fb = render_get_active_buffer();
+  if (!fb || !fb->pixels) return;
+  
+  uint32_t pitch_pixels = fb->pitch / 4;
+  
   for (int32_t cy = 0; cy < CURSOR_HEIGHT; cy++) {
-    for (int32_t cx = 0; cx < CURSOR_WIDTH; cx++) {
-      int32_t px = g_cursor_save_x + cx;
-      int32_t py = g_cursor_save_y + cy;
-      if (px >= 0 && px < (int32_t)g_screen_width && py >= 0 &&
-          py < (int32_t)g_screen_height) {
-        draw_pixel(px, py, g_cursor_save[cy * CURSOR_WIDTH + cx]);
-      }
-    }
+    int32_t py = g_cursor_save_y + cy;
+    if (py < 0 || py >= (int32_t)g_screen_height) continue;
+    
+    int32_t x_start = cursor_max(g_cursor_save_x, 0);
+    int32_t x_end = cursor_min(g_cursor_save_x + CURSOR_WIDTH, (int32_t)g_screen_width);
+    
+    if (x_start >= x_end) continue;
+    
+    /* Copy row from save buffer back to framebuffer */
+    uint32_t *src = &g_cursor_save[cy * CURSOR_WIDTH + (x_start - g_cursor_save_x)];
+    uint32_t *dst = fb->pixels + py * pitch_pixels + x_start;
+    memcpy(dst, src, (x_end - x_start) * sizeof(uint32_t));
   }
 }
 

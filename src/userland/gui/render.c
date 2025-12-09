@@ -34,6 +34,53 @@ static rect_t g_clip_rect = {0, 0, 0, 0};
 static bool g_clip_enabled = false;
 
 /* ============================================================================
+ * FAST MEMORY OPERATIONS (x86-64 optimized)
+ * ============================================================================
+ */
+
+/* Fast 32-bit memory fill using 64-bit operations on x86-64 */
+static inline void memset32(uint32_t *dest, uint32_t value, size_t count) {
+  /* Create 64-bit value with two 32-bit pixels */
+  uint64_t value64 = ((uint64_t)value << 32) | value;
+  uint64_t *dest64 = (uint64_t *)dest;
+  
+  /* Fill 2 pixels at a time using 64-bit stores */
+  size_t count64 = count / 2;
+  
+  /* Use rep stosq for large fills (very fast on x86-64) */
+  if (count64 >= 8) {
+    __asm__ volatile (
+      "rep stosq"
+      : "+D" (dest64), "+c" (count64)
+      : "a" (value64)
+      : "memory"
+    );
+    dest = (uint32_t *)dest64;
+    count = count % 2;
+  } else {
+    /* Small fills: manual unrolled loop */
+    while (count64 >= 4) {
+      dest64[0] = value64;
+      dest64[1] = value64;
+      dest64[2] = value64;
+      dest64[3] = value64;
+      dest64 += 4;
+      count64 -= 4;
+    }
+    while (count64--) {
+      *dest64++ = value64;
+    }
+    dest = (uint32_t *)dest64;
+    count = count % 2;
+  }
+  
+  /* Handle odd pixel at end */
+  if (count) {
+    *dest = value;
+  }
+}
+
+/* ============================================================================
  * INITIALISATION
  * ============================================================================
  */
@@ -252,9 +299,7 @@ void draw_hline(int32_t x1, int32_t x2, int32_t y, uint32_t color) {
     return;
 
   uint32_t *row = fb->pixels + y * (fb->pitch / 4);
-  for (int32_t x = x1; x <= x2; x++) {
-    row[x] = color;
-  }
+  memset32(row + x1, color, (size_t)(x2 - x1 + 1));
 }
 
 void draw_vline(int32_t x, int32_t y1, int32_t y2, uint32_t color) {
@@ -434,11 +479,9 @@ void draw_rect(rect_t rect, uint32_t color) {
     return;
 
   uint32_t pitch_pixels = fb->pitch / 4;
+  uint32_t width = (uint32_t)(x2 - x1);
   for (int32_t y = y1; y < y2; y++) {
-    uint32_t *row = fb->pixels + y * pitch_pixels;
-    for (int32_t x = x1; x < x2; x++) {
-      row[x] = color;
-    }
+    memset32(fb->pixels + y * pitch_pixels + x1, color, width);
   }
 }
 

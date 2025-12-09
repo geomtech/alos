@@ -23,6 +23,11 @@ static bool g_bg_gradient = false;
 static rgba_t g_bg_color1, g_bg_color2;
 static gradient_direction_t g_bg_dir;
 
+/* Cache du fond dégradé (évite de recalculer chaque frame) */
+static uint32_t *g_bg_cache = NULL;
+static uint32_t g_bg_cache_width = 0;
+static uint32_t g_bg_cache_height = 0;
+
 int compositor_init(framebuffer_t *fb) {
   if (!fb)
     return -1;
@@ -39,6 +44,12 @@ int compositor_init(framebuffer_t *fb) {
 }
 
 void compositor_shutdown(void) {
+  /* Libère le cache de fond */
+  if (g_bg_cache) {
+    free(g_bg_cache);
+    g_bg_cache = NULL;
+  }
+
   /* Libère toutes les couches */
   layer_t *layer = g_layers_head;
   while (layer) {
@@ -209,8 +220,75 @@ void compositor_invalidate_layer(layer_t *layer) {
   }
 }
 
+/* Helper: lerp color inline for cache building */
+static inline rgba_t cache_lerp_color(rgba_t c1, rgba_t c2, float t) {
+  rgba_t result;
+  result.r = (uint8_t)((float)c1.r + t * ((float)c2.r - (float)c1.r));
+  result.g = (uint8_t)((float)c1.g + t * ((float)c2.g - (float)c1.g));
+  result.b = (uint8_t)((float)c1.b + t * ((float)c2.b - (float)c1.b));
+  result.a = (uint8_t)((float)c1.a + t * ((float)c2.a - (float)c1.a));
+  return result;
+}
+
+/* Construit le cache du fond dégradé */
+static void build_gradient_cache(void) {
+  if (!g_main_fb || !g_bg_gradient) return;
+  
+  uint32_t w = g_main_fb->width;
+  uint32_t h = g_main_fb->height;
+  
+  /* Réalloue si dimensions changent */
+  if (g_bg_cache_width != w || g_bg_cache_height != h) {
+    if (g_bg_cache) free(g_bg_cache);
+    g_bg_cache = (uint32_t *)malloc(w * h * sizeof(uint32_t));
+    g_bg_cache_width = w;
+    g_bg_cache_height = h;
+  }
+  
+  if (!g_bg_cache) return;
+  
+  /* Pré-calcule le gradient */
+  for (uint32_t y = 0; y < h; y++) {
+    for (uint32_t x = 0; x < w; x++) {
+      float t;
+      switch (g_bg_dir) {
+      case GRADIENT_HORIZONTAL:
+        t = (float)x / (float)(w - 1);
+        break;
+      case GRADIENT_VERTICAL:
+        t = (float)y / (float)(h - 1);
+        break;
+      case GRADIENT_DIAGONAL_TL:
+        t = ((float)x + (float)y) / (float)(w + h - 2);
+        break;
+      case GRADIENT_DIAGONAL_TR:
+        t = ((float)(w - 1 - x) + (float)y) / (float)(w + h - 2);
+        break;
+      default:
+        t = 0.0f;
+      }
+      rgba_t color = cache_lerp_color(g_bg_color1, g_bg_color2, t);
+      g_bg_cache[y * w + x] = (color.a << 24) | (color.r << 16) | (color.g << 8) | color.b;
+    }
+  }
+}
+
 static void draw_background(rect_t region) {
-  if (g_bg_gradient) {
+  if (g_bg_gradient && g_bg_cache) {
+    /* Blit depuis le cache (très rapide) */
+    for (int32_t y = region.y; y < region.y + (int32_t)region.height; y++) {
+      if (y < 0 || y >= (int32_t)g_main_fb->height) continue;
+      int32_t x_start = region.x < 0 ? 0 : region.x;
+      int32_t x_end = region.x + (int32_t)region.width;
+      if (x_end > (int32_t)g_main_fb->width) x_end = (int32_t)g_main_fb->width;
+      if (x_start >= x_end) continue;
+      
+      /* Copie de ligne depuis le cache */
+      uint32_t *src = g_bg_cache + y * g_bg_cache_width + x_start;
+      uint32_t *dst = g_main_fb->pixels + y * (g_main_fb->pitch / 4) + x_start;
+      memcpy(dst, src, (x_end - x_start) * sizeof(uint32_t));
+    }
+  } else if (g_bg_gradient) {
     draw_gradient(region, g_bg_color1, g_bg_color2, g_bg_dir);
   } else {
     draw_rect(region, g_bg_color);
@@ -284,6 +362,9 @@ void compositor_set_background_gradient(rgba_t color1, rgba_t color2,
   g_bg_color2 = color2;
   g_bg_dir = dir;
   g_bg_gradient = true;
+
+  /* Rebuild gradient cache */
+  build_gradient_cache();
 
   /* Only invalidate if compositor is initialized */
   if (g_main_fb) {
