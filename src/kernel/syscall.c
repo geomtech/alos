@@ -571,11 +571,21 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   KLOG_INFO_HEX("SYSCALL", "Mapping FB Virt: ", vaddr_base);
   KLOG_INFO_DEC("SYSCALL", "Pages: ", pages);
 
+  /* Get the current process's page directory */
+  process_t *proc = process_current();
+  if (!proc || !proc->pml4) {
+    KLOG_ERROR("SYSCALL", "sys_get_framebuffer: no process or pml4");
+    return -1;
+  }
+
+  /* proc->pml4 is actually a page_directory_t* cast to uint64_t* */
+  page_directory_t *user_dir = (page_directory_t *)proc->pml4;
+
   for (uint64_t i = 0; i < pages; i++) {
     uint64_t offset = i * PAGE_SIZE;
     /* PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH (bit 3) */
-    vmm_map_page(phys_base + offset, vaddr_base + offset,
-                 PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH);
+    vmm_map_page_in_dir(user_dir, phys_base + offset, vaddr_base + offset,
+                        PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH);
   }
 
   /* Remplir la structure */

@@ -70,6 +70,19 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
     }
 
     format++;
+
+    /* Check for length modifier */
+    int is_long = 0;
+    if (*format == 'l') {
+      is_long = 1;
+      format++;
+      /* Check for 'll' (long long) */
+      if (*format == 'l') {
+        is_long = 2;
+        format++;
+      }
+    }
+
     switch (*format) {
     case 's': {
       const char *s = va_arg(ap, const char *);
@@ -84,27 +97,103 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
     }
     case 'd':
     case 'i': {
-      int n = va_arg(ap, int);
+      long long n;
+      if (is_long >= 2) {
+        n = va_arg(ap, long long);
+      } else if (is_long == 1) {
+        n = va_arg(ap, long);
+      } else {
+        n = va_arg(ap, int);
+      }
       char buf[32];
-      itoa(n, buf, 10);
-      char *b = buf;
-      while (*b) {
+      /* Handle negative numbers */
+      int neg = 0;
+      if (n < 0) {
+        neg = 1;
+        n = -n;
+      }
+      char *bp = buf + 31;
+      *bp = '\0';
+      do {
+        *(--bp) = '0' + (n % 10);
+        n /= 10;
+      } while (n);
+      if (neg)
+        *(--bp) = '-';
+      while (*bp) {
         if (ptr < end)
-          *ptr++ = *b;
-        b++;
+          *ptr++ = *bp;
+        bp++;
+      }
+      break;
+    }
+    case 'u': {
+      unsigned long long n;
+      if (is_long >= 2) {
+        n = va_arg(ap, unsigned long long);
+      } else if (is_long == 1) {
+        n = va_arg(ap, unsigned long);
+      } else {
+        n = va_arg(ap, unsigned int);
+      }
+      char buf[32];
+      char *bp = buf + 31;
+      *bp = '\0';
+      do {
+        *(--bp) = '0' + (n % 10);
+        n /= 10;
+      } while (n);
+      while (*bp) {
+        if (ptr < end)
+          *ptr++ = *bp;
+        bp++;
       }
       break;
     }
     case 'x':
     case 'X': {
-      unsigned int n = va_arg(ap, unsigned int);
+      unsigned long long n;
+      if (is_long >= 2) {
+        n = va_arg(ap, unsigned long long);
+      } else if (is_long == 1) {
+        n = va_arg(ap, unsigned long);
+      } else {
+        n = va_arg(ap, unsigned int);
+      }
       char buf[32];
-      itoa(n, buf, 16);
-      char *b = buf;
-      while (*b) {
+      const char *digits =
+          (*format == 'X') ? "0123456789ABCDEF" : "0123456789abcdef";
+      char *bp = buf + 31;
+      *bp = '\0';
+      do {
+        *(--bp) = digits[n & 0xF];
+        n >>= 4;
+      } while (n);
+      while (*bp) {
         if (ptr < end)
-          *ptr++ = *b;
-        b++;
+          *ptr++ = *bp;
+        bp++;
+      }
+      break;
+    }
+    case 'p': {
+      /* Pointer format */
+      unsigned long long n = (unsigned long long)(uintptr_t)va_arg(ap, void *);
+      if (ptr < end)
+        *ptr++ = '0';
+      if (ptr < end)
+        *ptr++ = 'x';
+      char buf[32];
+      char *bp = buf + 31;
+      *bp = '\0';
+      do {
+        *(--bp) = "0123456789abcdef"[n & 0xF];
+        n >>= 4;
+      } while (n);
+      while (*bp) {
+        if (ptr < end)
+          *ptr++ = *bp;
+        bp++;
       }
       break;
     }
@@ -119,6 +208,8 @@ int vsnprintf(char *str, size_t size, const char *format, va_list ap) {
     default:
       if (ptr < end)
         *ptr++ = '%';
+      if (is_long && ptr < end)
+        *ptr++ = 'l';
       if (ptr < end)
         *ptr++ = *format;
       break;
