@@ -1,7 +1,7 @@
 /* src/gui/gui.c - Implémentation du point d'entrée GUI */
 
 #include "gui.h"
-#include "ssfn_render.h"
+/* SSFN remplacé par FreeType */
 #include <stdlib.h>
 #include <string.h>
 
@@ -110,9 +110,8 @@ int main(int argc, char **argv) {
   printf("Initializing fonts...\n");
   font_init();
 
-  /* Initialise SSFN avec Unifont (support UTF-8) */
-  printf("Initializing SSFN...\n");
-  ssfn_init();
+  /* FreeType est maintenant utilisé pour le support UTF-8 */
+  /* SSFN a été remplacé par FreeType */
 
   /* Initialise le compositeur AVANT de l'utiliser */
   printf("Getting active framebuffer...\n");
@@ -417,49 +416,42 @@ static void demo_window_draw(window_t *win) {
   int32_t x = win->content_bounds.x + 20;
   int32_t y = win->content_bounds.y + 20;
 
-  /* Utiliser le renderer scalable si disponible (police plus fine) */
-  if (ssfn_scalable_available()) {
-    /* Titre en 14px */
-    ssfn_render_text_size(x, y, 14, COLOR_TEXT_PRIMARY,
-                          "Bienvenue dans ALOS GUI!");
+  /* Utiliser le système de font (FreeType pour UTF-8) */
+  draw_text_alpha("Bienvenue dans ALOS GUI!", point_make(x, y), font_system, 
+                  u32_to_rgba(COLOR_TEXT_PRIMARY));
 
-    y += 20;
-    ssfn_render_text_size(x, y, 12, 0xFF666666,
-                          "Système d'exploitation éducatif");
+  y += 20;
+  draw_text_alpha("Système d'exploitation éducatif", point_make(x, y), font_system,
+                  rgba(102, 102, 102, 255));
 
-    y += 18;
-    ssfn_render_text_size(x, y, 11, 0xFF666666,
-                          "Fonctionnalités: réseau, fichiers, GUI");
+  y += 18;
+  draw_text_alpha("Fonctionnalités: réseau, fichiers, GUI", point_make(x, y), font_system,
+                  rgba(102, 102, 102, 255));
 
-    y += 24;
-    ssfn_render_text_size(x, y, 12, COLOR_TEXT_PRIMARY,
-                          "Support UTF-8 complet:");
+  y += 24;
+  draw_text_alpha("Support UTF-8 complet:", point_make(x, y), font_system,
+                  u32_to_rgba(COLOR_TEXT_PRIMARY));
 
-    y += 16;
-    ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Français: àéèêëïôùûç");
-    y += 14;
-    ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Deutsch: äöüß");
-    y += 14;
-    ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• 日本語: ひらがな");
-    y += 14;
-    ssfn_render_text_size(x + 10, y, 11, 0xFF444444, "• Русский: Привет");
-  } else if (ssfn_is_initialized()) {
-    /* Fallback sur le renderer bitmap 16x16 */
-    ssfn_set_fg(COLOR_TEXT_PRIMARY);
-    ssfn_print_at(x, y, "Bienvenue dans ALOS GUI!");
-    y += 20;
-    ssfn_set_fg(0xFF666666);
-    ssfn_print_at(x, y, "UTF-8: àéèêëïôùûç 日本語");
-  }
+  y += 16;
+  draw_text_alpha("• Français: àéèêëïôùûç", point_make(x + 10, y), font_system,
+                  rgba(68, 68, 68, 255));
+  y += 14;
+  draw_text_alpha("• Deutsch: äöüß", point_make(x + 10, y), font_system,
+                  rgba(68, 68, 68, 255));
+  y += 14;
+  draw_text_alpha("• 日本語: ひらがな", point_make(x + 10, y), font_system,
+                  rgba(68, 68, 68, 255));
+  y += 14;
+  draw_text_alpha("• Русский: Привет", point_make(x + 10, y), font_system,
+                  rgba(68, 68, 68, 255));
 
   y += 24;
 
   /* Bouton */
   rect_t btn = {win->content_bounds.x + 20, y, 120, 28};
   draw_rounded_rect(btn, 6, COLOR_MACOS_BLUE);
-  if (ssfn_scalable_available()) {
-    ssfn_render_text_size(btn.x + 24, btn.y + 7, 12, 0xFFFFFFFF, "Démarrer ▶");
-  }
+  draw_text_alpha("Démarrer ▶", point_make(btn.x + 24, btn.y + 7), font_system,
+                  rgba(255, 255, 255, 255));
 
   y += 40;
 

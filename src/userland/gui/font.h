@@ -1,17 +1,28 @@
 /* src/gui/font.h - Système de rendu de texte pour ALOS
  * 
- * Ce module gère le chargement et le rendu des polices bitmap.
- * Supporte le format PSF (PC Screen Font) et un format bitmap simple.
- * Inclut un rendu avec anti-aliasing basique.
+ * Ce module gère le chargement et le rendu des polices.
+ * Supporte les polices bitmap et TrueType (via FreeType).
+ * Inclut un rendu avec anti-aliasing.
  */
 #ifndef FONT_H
 #define FONT_H
 
 #include "gui_types.h"
 
+/* Forward declaration */
+struct ft_font;
+
 /* ============================================================================
  * STRUCTURES
  * ============================================================================ */
+
+/**
+ * Type de police.
+ */
+typedef enum {
+    FONT_TYPE_BITMAP = 0,    /* Police bitmap (PSF ou raw) */
+    FONT_TYPE_TRUETYPE = 1   /* Police TrueType (FreeType) */
+} font_type_t;
 
 /**
  * Style de police.
@@ -24,17 +35,26 @@ typedef enum {
 } font_style_t;
 
 /**
- * Structure représentant une police bitmap.
+ * Structure représentant une police (bitmap ou TrueType).
  */
 typedef struct {
-    const uint8_t* glyphs;      /* Données des glyphes (bitmap 1-bit) */
-    uint32_t glyph_width;       /* Largeur d'un glyphe en pixels */
-    uint32_t glyph_height;      /* Hauteur d'un glyphe en pixels */
-    uint32_t bytes_per_glyph;   /* Octets par glyphe */
-    uint32_t first_char;        /* Premier caractère (généralement 0 ou 32) */
-    uint32_t num_chars;         /* Nombre de caractères */
-    font_style_t style;         /* Style de la police */
-    const char* name;           /* Nom de la police */
+    font_type_t type;            /* Type de police */
+    
+    /* Données pour polices bitmap */
+    const uint8_t* glyphs;        /* Données des glyphes (bitmap 1-bit) */
+    uint32_t glyph_width;         /* Largeur d'un glyphe en pixels */
+    uint32_t glyph_height;        /* Hauteur d'un glyphe en pixels */
+    uint32_t bytes_per_glyph;     /* Octets par glyphe */
+    uint32_t first_char;          /* Premier caractère (généralement 0 ou 32) */
+    uint32_t num_chars;           /* Nombre de caractères */
+    
+    /* Données pour polices TrueType */
+    struct ft_font* ft_font;      /* Police FreeType (si type == TRUETYPE) */
+    
+    /* Métadonnées communes */
+    font_style_t style;           /* Style de la police */
+    const char* name;             /* Nom de la police */
+    uint32_t size;                /* Taille de la police (pour TTF) */
 } font_t;
 
 /**

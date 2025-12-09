@@ -2,8 +2,10 @@
 
 #include "font.h"
 #include "render.h"
+#include "freetype_wrapper.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Police Roboto externe */
 extern const font_t* font_roboto;
@@ -118,17 +120,39 @@ static font_t g_font_vga = {
     .name = "VGA"
 };
 
-/* Police système par défaut - initialisée à VGA, puis Roboto dans font_init() */
+/* Police système par défaut - initialisée à VGA, puis TTF dans font_init() */
 const font_t* font_system = &g_font_vga;
+
+/* Forward declaration */
+extern font_t* font_get_system_ttf(void);
 const font_t* font_vga = &g_font_vga;
 const font_t* font_small = NULL;
 const font_t* font_large = NULL;
 
 int font_init(void) {
-    /* Utiliser Roboto comme police système par défaut */
-    if (font_roboto) {
-        font_system = font_roboto;
+    /* Initialiser FreeType */
+    if (ft_init() != 0) {
+        printf("font_init: ft_init failed, falling back to bitmap font\n");
+        /* Fallback sur Roboto bitmap si disponible */
+        if (font_roboto) {
+            font_system = font_roboto;
+        }
+        return 0;
     }
+
+    /* Essayer de charger la police TTF système */
+    font_t* ttf_font = font_get_system_ttf();
+    if (ttf_font) {
+        font_system = ttf_font;
+        printf("font_init: TTF system font loaded\n");
+    } else {
+        printf("font_init: TTF font not available, using bitmap font\n");
+        /* Fallback sur Roboto bitmap si disponible */
+        if (font_roboto) {
+            font_system = font_roboto;
+        }
+    }
+    
     return 0;
 }
 
@@ -184,6 +208,19 @@ void draw_text(const char* text, point_t pos, const font_t* font, uint32_t color
 void draw_text_alpha(const char* text, point_t pos, const font_t* font, rgba_t color) {
     if (!text) return;
     if (!font) font = font_system;
+    
+    /* Utiliser FreeType pour les polices TrueType */
+    if (font->type == FONT_TYPE_TRUETYPE && font->ft_font) {
+        framebuffer_t* fb = render_get_framebuffer();
+        if (fb) {
+            /* Ajuster y pour baseline (FreeType utilise baseline) */
+            int32_t baseline = ft_get_text_height(font->ft_font);
+            ft_render_text(font->ft_font, text, pos.x, pos.y + baseline, color, fb);
+        }
+        return;
+    }
+    
+    /* Rendu bitmap classique */
     int32_t x = pos.x, y = pos.y;
     
     while (*text) {
@@ -216,6 +253,17 @@ text_bounds_t measure_text(const char* text, const font_t* font) {
     if (!text) return b;
     if (!font) font = font_system;
     
+    /* Utiliser FreeType pour les polices TrueType */
+    if (font->type == FONT_TYPE_TRUETYPE && font->ft_font) {
+        int32_t width = 0, height = 0;
+        ft_get_text_dimensions(font->ft_font, text, &width, &height);
+        b.width = (uint32_t)width;
+        b.height = (uint32_t)height;
+        b.baseline = (uint32_t)height;
+        return b;
+    }
+    
+    /* Mesure bitmap classique */
     uint32_t x = 0, max_x = 0, lines = 1;
     while (*text) {
         if (*text == '\n') { if (x > max_x) max_x = x; x = 0; lines++; }

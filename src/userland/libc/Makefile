@@ -6,7 +6,7 @@ ASFLAGS = -f elf64
 
 SRC_DIRS = src/internal src/stdio src/stdlib src/string src/sys src/unistd
 SRCS = $(shell find $(SRC_DIRS) -name '*.c')
-OBJS = $(SRCS:.c=.o)
+OBJS = $(SRCS:.c=.o) src/stdlib/setjmp.o
 
 all: libc.a crt0.o
 
@@ -14,6 +14,9 @@ libc.a: $(OBJS)
 	$(AR) rcs $@ $^
 
 crt0.o: crt0.s
+	nasm $(ASFLAGS) $< -o $@
+
+src/stdlib/setjmp.o: src/stdlib/setjmp.s
 	nasm $(ASFLAGS) $< -o $@
 
 %.o: %.c

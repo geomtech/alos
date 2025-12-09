@@ -23,4 +23,16 @@ int putchar(int c);
 int puts(const char *s);
 int getchar(void);
 
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+FILE *fopen(const char *pathname, const char *mode);
+int fclose(FILE *stream);
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+int fseek(FILE *stream, long offset, int whence);
+long ftell(FILE *stream);
+
 #endif
+
