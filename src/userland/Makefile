@@ -9,8 +9,14 @@ LIBC_DIR = libc
 LIBC = $(LIBC_DIR)/libc.a
 CRT0 = $(LIBC_DIR)/crt0.o
 
+# Sources GUI de base
 GUI_SRC = gui/render.c gui/font.c gui/fonts/roboto.c gui/ssfn_render.c gui/fonts/unifont_sfn.c gui/compositor.c gui/wm.c gui/menubar.c gui/dock.c gui/events.c gui/gui.c
-GUI_OBJ = $(GUI_SRC:.c=.o)
+
+# Sources des composants UI
+COMPONENTS_SRC = gui/components/component.c gui/components/label.c gui/components/button.c gui/components/panel.c
+
+# Tous les objets GUI
+GUI_OBJ = $(GUI_SRC:.c=.o) $(COMPONENTS_SRC:.c=.o)
 
 all: threads-test gui_app
 
@@ -31,7 +37,7 @@ gui_app: libc_build $(GUI_OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o threads-test gui_app gui/*.o
+	rm -f *.o threads-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	$(MAKE) -C $(LIBC_DIR) clean
 
 .PHONY: all clean

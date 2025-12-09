@@ -15,6 +15,8 @@
 /* Nombre maximum de fenêtres */
 #define MAX_WINDOWS 64
 
+typedef struct gui_component gui_component_t;
+
 /* Structure d'une fenêtre */
 typedef struct window {
     uint32_t id;
@@ -32,6 +34,8 @@ typedef struct window {
     
     layer_t* layer;             /* Couche du compositeur */
     framebuffer_t* content_fb;  /* Buffer pour le contenu */
+
+    gui_component_t* root_component;  /* Composant racine */
     
     void* user_data;
     void (*on_draw)(struct window* win);

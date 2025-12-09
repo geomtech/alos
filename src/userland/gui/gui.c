@@ -22,6 +22,10 @@ static bool g_quit_requested = false;
 #include "menubar.h"
 #include "render.h"
 #include "wm.h"
+#include "components/component.h"
+#include "components/label.h"
+#include "components/button.h"
+#include "components/panel.h"
 
 /* Globals */
 uint32_t g_screen_width = 0;
@@ -36,6 +40,7 @@ static bool g_needs_redraw = false;
 
 /* Forward declarations */
 void gui_process_event(input_event_t *event);
+window_t *gui_create_components_test_window(void);
 
 int main(int argc, char **argv) {
   (void)argc;
@@ -161,13 +166,8 @@ int main(int argc, char **argv) {
   gui_setup_demo_menus();
   gui_setup_demo_dock();
 
-  gui_create_demo_window("Bienvenue", 150, 100);
-
-  /* Test UTF-8 */
-  if (ssfn_scalable_available()) {
-    ssfn_render_text_size(20, 50, 12, 0xFFFFFFFF, "ALOS - UTF-8 Test (12px):");
-    // ... (Rest of test can be simplified or omitted for brevity)
-  }
+  /* Créer la fenêtre de test des composants UI */
+  gui_create_components_test_window();
 
   /* Initial render */
   gui_render_full();
@@ -470,13 +470,99 @@ static void demo_window_draw(window_t *win) {
   draw_rounded_rect(progress_fg, 3, COLOR_MACOS_BLUE);
 }
 
-window_t *gui_create_demo_window(const char *title, int32_t x, int32_t y) {
-  rect_t bounds = {x, y, 400, 300};
-  window_t *win = wm_create_window(bounds, title, WINDOW_STYLE_DEFAULT);
+/* Callback pour le bouton de test */
+static void test_button_clicked(gui_button_t* button) {
+  (void)button;
+  printf("Bouton cliqué!\n");
+}
 
-  if (win) {
-    win->on_draw = demo_window_draw;
+/* Callback de dessin pour la fenêtre de test des composants */
+static void components_test_window_draw(window_t *win)
+{
+  if (!win)
+    return;
+
+  /* 1. Dessiner le fond standard */
+  draw_rect(win->content_bounds, COLOR_WINDOW_BG);
+
+  /* 2. Dessiner les composants */
+  if (win->root_component)
+  {
+    /* * CORRECTION : On récupère le buffer actif (le back buffer si double buffer activé)
+     * et on le passe à la fonction de dessin.
+     */
+    framebuffer_t *fb = render_get_framebuffer();
+    component_draw(win->root_component, fb);
   }
+}
+
+window_t *gui_create_components_test_window(void)
+{
+  rect_t bounds = {200, 150, 500, 400};
+  window_t *win = wm_create_window(bounds, "Test Composants UI", WINDOW_STYLE_DEFAULT);
+
+  if (!win)
+    return NULL;
+
+  /* Initialiser la racine à NULL par sécurité */
+  win->root_component = NULL;
+  win->on_draw = components_test_window_draw;
+
+  /* --- 1. Création du Panel Principal (Root) --- */
+  /* On le place à 0,0 relatif au contenu de la fenêtre */
+  gui_panel_t *panel = panel_create((rect_t){0, 0, 500, 400}); // Pleine taille
+  panel_set_bg_color(panel, rgba(240, 240, 245, 255));         // Gris très clair
+  // Pas de bordure pour le panel racine, c'est plus joli
+
+  /* --- 2. Création des Enfants --- */
+
+  /* Titre */
+  gui_label_t *title_label = label_create((rect_t){20, 20, 460, 30},
+                                          "Démonstration des Composants",
+                                          rgba(50, 50, 50, 255));
+  label_set_align(title_label, LABEL_ALIGN_CENTER);
+
+  /* Bouton Bleu */
+  gui_button_t *btn_blue = button_create((rect_t){50, 80, 120, 35}, "Confirmer");
+  button_set_bg_color(btn_blue, BUTTON_STATE_NORMAL, rgba(0, 122, 255, 255)); // Bleu macOS
+  button_set_text_color(btn_blue, rgba(255, 255, 255, 255));
+  button_set_on_click(btn_blue, test_button_clicked);
+
+  /* Bouton Rouge */
+  gui_button_t *btn_red = button_create((rect_t){190, 80, 120, 35}, "Annuler");
+  button_set_bg_color(btn_red, BUTTON_STATE_NORMAL, rgba(255, 59, 48, 255)); // Rouge macOS
+  button_set_text_color(btn_red, rgba(255, 255, 255, 255));
+
+  /* Panel Imbriqué (Nested) */
+  gui_panel_t *sub_panel = panel_create((rect_t){50, 150, 400, 100});
+  panel_set_bg_color(sub_panel, rgba(255, 255, 255, 255)); // Blanc
+  panel_set_border(sub_panel, rgba(200, 200, 200, 255), 1);
+  panel_set_shadow(sub_panel, true); // Petite ombre sympa
+
+  /* Label DANS le sous-panel (coordonnées relatives au sous-panel !) */
+  gui_label_t *sub_label = label_create((rect_t){10, 10, 380, 20},
+                                        "Je suis dans un sous-panel",
+                                        rgba(100, 100, 100, 255));
+  label_set_align(sub_label, LABEL_ALIGN_CENTER);
+
+  /* Petit bouton dans le sous-panel */
+  gui_button_t *sub_btn = button_create((rect_t){140, 50, 120, 30}, "Click Me");
+
+  /* --- 3. Construction de l'Arbre (Hierarchy) --- */
+
+  /* Remplissage du sous-panel */
+  // NOTE: On cast en (gui_component_t*) car C n'a pas d'héritage auto
+  component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_label);
+  component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_btn);
+
+  /* Remplissage du panel principal */
+  component_add_child((gui_component_t *)panel, (gui_component_t *)title_label);
+  component_add_child((gui_component_t *)panel, (gui_component_t *)btn_blue);
+  component_add_child((gui_component_t *)panel, (gui_component_t *)btn_red);
+  component_add_child((gui_component_t *)panel, (gui_component_t *)sub_panel);
+
+  /* --- 4. Attachement à la fenêtre --- */
+  win->root_component = (gui_component_t *)panel;
 
   return win;
 }
@@ -497,31 +583,10 @@ void gui_setup_demo_dock(void) {
 
 /* Callbacks pour les menus */
 static void menu_about(void) {
-  gui_create_demo_window("A propos d'ALOS", 200, 150);
+  gui_create_components_test_window();
 }
 
 static void menu_quit(void) { gui_request_quit(); }
-
-static void menu_new_window(void) {
-  static int window_count = 1;
-  char title[64];
-
-  /* Génère un titre unique */
-  title[0] = 'F';
-  title[1] = 'e';
-  title[2] = 'n';
-  title[3] = 'e';
-  title[4] = 't';
-  title[5] = 'r';
-  title[6] = 'e';
-  title[7] = ' ';
-  title[8] = '0' + (window_count % 10);
-  title[9] = '\0';
-
-  gui_create_demo_window(title, 100 + window_count * 30,
-                         100 + window_count * 30);
-  window_count++;
-}
 
 void gui_setup_demo_menus(void) {
   menubar_set_app_name("Finder");
@@ -539,7 +604,7 @@ void gui_setup_demo_menus(void) {
   /* Menu File */
   menu_t *file_menu = menubar_add_menu("File");
   if (file_menu) {
-    menubar_add_item(file_menu, "Nouvelle fenetre", "Cmd+N", menu_new_window);
+    menubar_add_item(file_menu, "Nouvelle fenêtre", "Cmd+N", NULL);
     menubar_add_item(file_menu, "Ouvrir...", "Cmd+O", NULL);
     menubar_add_separator(file_menu);
     menubar_add_item(file_menu, "Fermer", "Cmd+W", NULL);
