@@ -299,10 +299,13 @@ gui_component_t* component_hit_test(gui_component_t* comp, point_t pos) {
     }
 
     /* Parcourir les enfants en ordre inverse (du dessus vers le dessous) */
-    for (int32_t i = (int32_t)comp->child_count - 1; i >= 0; i--) {
-        gui_component_t* child_result = component_hit_test(comp->children[i], pos);
-        if (child_result) {
-            return child_result;
+    if (comp->child_count > 0) {
+        for (uint32_t i = comp->child_count; i > 0; i--) {
+            uint32_t idx = i - 1;
+            gui_component_t* child_result = component_hit_test(comp->children[idx], pos);
+            if (child_result) {
+                return child_result;
+            }
         }
     }
 

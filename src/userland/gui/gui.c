@@ -495,7 +495,8 @@ window_t *gui_create_components_test_window(void)
     return NULL;
 
   /* --- 1. Création du Panel Principal (Root) --- */
-  gui_panel_t *panel = panel_create((rect_t){0, 0, 500, 400});
+  /* Les bounds doivent être relatifs à la fenêtre (0,0 = coin supérieur gauche du content area) */
+  gui_panel_t *panel = panel_create((rect_t){0, 0, win->content_bounds.width, win->content_bounds.height});
   if (!panel) {
     wm_destroy_window(win);
     return NULL;

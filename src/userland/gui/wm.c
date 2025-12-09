@@ -99,6 +99,12 @@ void wm_destroy_window(window_t* win) {
         free(win->content_fb);
     }
     
+    /* Libère le root component et tous ses enfants */
+    if (win->root_component) {
+        component_destroy(win->root_component);
+        win->root_component = NULL;
+    }
+    
     /* Met à jour le focus */
     if (g_focused_window == win) {
         g_focused_window = g_windows_head;
@@ -314,13 +320,23 @@ void wm_draw_window(window_t* win) {
 
     /* 2. Dessiner l'arbre de composants si présent */
     if (win->root_component) {
-        /* Positionner root par rapport à content_bounds */
+        /* Mettre à jour les bounds relatives du root pour correspondre au content area */
+        win->root_component->bounds.x = 0;
+        win->root_component->bounds.y = 0;
+        win->root_component->bounds.width = win->content_bounds.width;
+        win->root_component->bounds.height = win->content_bounds.height;
+
+        /* Pour le root component (sans parent), définir directement les bounds absolus */
         win->root_component->abs_bounds.x = win->content_bounds.x;
         win->root_component->abs_bounds.y = win->content_bounds.y;
         win->root_component->abs_bounds.width = win->content_bounds.width;
         win->root_component->abs_bounds.height = win->content_bounds.height;
 
-        component_update_abs_bounds(win->root_component);
+        /* Mettre à jour les bounds absolus des enfants uniquement (récursif) */
+        for (uint32_t i = 0; i < win->root_component->child_count; i++) {
+            component_update_abs_bounds(win->root_component->children[i]);
+        }
+        
         component_draw(win->root_component, render_get_framebuffer());
     }
 
