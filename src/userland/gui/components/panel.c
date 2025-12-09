@@ -13,23 +13,16 @@ static void panel_on_destroy(gui_component_t* comp);
 /* === Création === */
 
 gui_panel_t* panel_create(rect_t bounds) {
-    /* Créer le composant de base */
-    gui_component_t* base = component_create(COMPONENT_TYPE_PANEL, bounds);
-    if (!base) {
-        return NULL;
-    }
-
-    /* Allouer la structure panel */
+    /* Allouer la structure panel (contient base intégrée) */
     gui_panel_t* panel = (gui_panel_t*)malloc(sizeof(gui_panel_t));
     if (!panel) {
-        component_destroy(base);
         printf("panel_create: malloc failed\n");
         return NULL;
     }
 
-    /* Copier la base */
-    panel->base = *base;
-    free(base);
+    /* Initialiser à zéro puis initialiser la base directement */
+    memset(panel, 0, sizeof(gui_panel_t));
+    component_init(&panel->base, COMPONENT_TYPE_PANEL, bounds);
 
     /* Configurer les callbacks */
     panel->base.on_draw = panel_on_draw;
@@ -42,17 +35,14 @@ gui_panel_t* panel_create(rect_t bounds) {
     panel->corner_radius = 4;
     panel->has_shadow = false;
 
-    /* Stocker le pointeur panel dans user_data de la base */
-    panel->base.user_data = panel;
-
     return panel;
 }
 
 /* === Callbacks === */
 
 static void panel_on_draw(gui_component_t* comp, framebuffer_t* fb) {
-    gui_panel_t* panel = (gui_panel_t*)comp->user_data;
-    if (!panel) return;
+    (void)fb;
+    gui_panel_t* panel = (gui_panel_t*)comp;
 
     /* Dessiner ombre si activée */
     if (panel->has_shadow) {
@@ -84,12 +74,9 @@ static void panel_on_draw(gui_component_t* comp, framebuffer_t* fb) {
 }
 
 static void panel_on_destroy(gui_component_t* comp) {
-    gui_panel_t* panel = (gui_panel_t*)comp->user_data;
-    if (!panel) return;
-
-    /* Libérer la structure panel */
-    free(panel);
-    comp->user_data = NULL;
+    /* Panel n'a pas de ressources dynamiques à libérer
+     * component_destroy() fera le free(comp) final */
+    (void)comp;
 }
 
 /* === Setters === */

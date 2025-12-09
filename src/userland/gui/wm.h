@@ -85,4 +85,7 @@ window_t* wm_get_window_by_id(uint32_t id);
 /* Itération */
 window_t* wm_get_first_window(void);
 
+/* Gestion des composants */
+void wm_set_root_component(window_t* win, gui_component_t* root);
+
 #endif /* WM_H */

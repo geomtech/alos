@@ -63,7 +63,15 @@ typedef struct gui_component {
 /* === API de gestion des composants === */
 
 /**
- * Créer un composant de base
+ * Initialiser un composant existant (pour utilisation dans sous-structures)
+ * @param comp Pointeur vers le composant à initialiser
+ * @param type Type du composant
+ * @param bounds Position et taille relatives au parent
+ */
+void component_init(gui_component_t* comp, component_type_t type, rect_t bounds);
+
+/**
+ * Créer un composant de base (alloue mémoire)
  * @param type Type du composant
  * @param bounds Position et taille relatives au parent
  * @return Pointeur vers le composant créé (malloc), NULL si échec
@@ -175,5 +183,30 @@ void component_set_visible(gui_component_t* comp, bool visible);
  * @param enabled true pour activer, false pour désactiver
  */
 void component_set_enabled(gui_component_t* comp, bool enabled);
+
+/* === Dispatch d'événements === */
+
+/**
+ * Dispatcher un événement mouse_move à l'arbre de composants
+ * @param root Composant racine
+ * @param pos Position absolue de la souris
+ */
+void component_dispatch_mouse_move(gui_component_t* root, point_t pos);
+
+/**
+ * Dispatcher un événement mouse_down à l'arbre de composants
+ * @param root Composant racine
+ * @param pos Position absolue de la souris
+ * @param button Bouton pressé
+ */
+void component_dispatch_mouse_down(gui_component_t* root, point_t pos, mouse_button_t button);
+
+/**
+ * Dispatcher un événement mouse_up à l'arbre de composants
+ * @param root Composant racine
+ * @param pos Position absolue de la souris
+ * @param button Bouton relâché
+ */
+void component_dispatch_mouse_up(gui_component_t* root, point_t pos, mouse_button_t button);
 
 #endif /* COMPONENT_H */

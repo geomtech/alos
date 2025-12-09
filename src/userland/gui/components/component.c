@@ -15,22 +15,17 @@ static uint32_t g_next_component_id = 1;
 
 /* === Création/Destruction === */
 
-gui_component_t* component_create(component_type_t type, rect_t bounds) {
-    gui_component_t* comp = (gui_component_t*)malloc(sizeof(gui_component_t));
-    if (!comp) {
-        printf("component_create: malloc failed\n");
-        return NULL;
-    }
+void component_init(gui_component_t* comp, component_type_t type, rect_t bounds) {
+    if (!comp) return;
 
-    memset(comp, 0, sizeof(gui_component_t));
-
+    /* Ne pas utiliser memset - la structure peut contenir des données valides */
     comp->id = g_next_component_id++;
     comp->type = type;
     comp->bounds = bounds;
-    comp->abs_bounds = bounds;  // Sera mis à jour par component_update_abs_bounds()
+    comp->abs_bounds = bounds;  /* Sera mis à jour par component_update_abs_bounds() */
     comp->visible = true;
     comp->enabled = true;
-    comp->dirty = true;          // Forcer redraw initial
+    comp->dirty = true;          /* Forcer redraw initial */
     comp->focused = false;
 
     comp->parent = NULL;
@@ -52,7 +47,16 @@ gui_component_t* component_create(component_type_t type, rect_t bounds) {
     comp->on_destroy = NULL;
 
     comp->user_data = NULL;
+}
 
+gui_component_t* component_create(component_type_t type, rect_t bounds) {
+    gui_component_t* comp = (gui_component_t*)malloc(sizeof(gui_component_t));
+    if (!comp) {
+        printf("component_create: malloc failed\n");
+        return NULL;
+    }
+
+    component_init(comp, type, bounds);
     return comp;
 }
 
@@ -83,6 +87,15 @@ void component_destroy(gui_component_t* comp) {
 
 /* === Gestion de la hiérarchie === */
 
+/* Helper pour propager owner_window récursivement */
+static void component_propagate_owner(gui_component_t* comp, struct window* win) {
+    if (!comp) return;
+    comp->owner_window = win;
+    for (uint32_t i = 0; i < comp->child_count; i++) {
+        component_propagate_owner(comp->children[i], win);
+    }
+}
+
 bool component_add_child(gui_component_t* parent, gui_component_t* child) {
     if (!parent || !child) return false;
 
@@ -109,7 +122,9 @@ bool component_add_child(gui_component_t* parent, gui_component_t* child) {
     /* Ajouter l'enfant */
     parent->children[parent->child_count++] = child;
     child->parent = parent;
-    child->owner_window = parent->owner_window;
+
+    /* Propager owner_window récursivement */
+    component_propagate_owner(child, parent->owner_window);
 
     /* Mettre à jour les bounds absolus */
     component_update_abs_bounds(child);
@@ -159,8 +174,7 @@ void component_invalidate(gui_component_t* comp) {
 
     /* Propager à la fenêtre propriétaire pour invalidation compositor */
     if (comp->owner_window) {
-        /* TODO: appeler wm_invalidate_window(comp->owner_window) */
-        /* Pour l'instant, juste marquer dirty */
+        wm_invalidate_window((window_t*)comp->owner_window);
     }
 
     /* Marquer aussi les enfants comme dirty */
@@ -172,13 +186,7 @@ void component_invalidate(gui_component_t* comp) {
 void component_draw(gui_component_t* comp, framebuffer_t* fb) {
     if (!comp || !comp->visible || !fb) return;
 
-    /* Sauvegarder clip actuel */
-    rect_t old_clip = render_get_clip();
-
-    /* Définir clip sur les abs_bounds du composant */
-    render_push_clip(comp->abs_bounds);
-
-    /* Appeler callback custom de dessin */
+    /* Appeler callback custom de dessin (sans clipping pour le moment) */
     if (comp->on_draw) {
         comp->on_draw(comp, fb);
     }
@@ -187,9 +195,6 @@ void component_draw(gui_component_t* comp, framebuffer_t* fb) {
     for (uint32_t i = 0; i < comp->child_count; i++) {
         component_draw(comp->children[i], fb);
     }
-
-    /* Restaurer clip */
-    render_pop_clip();
 
     /* Marquer comme propre */
     comp->dirty = false;
@@ -332,4 +337,48 @@ void component_clear_focus(gui_component_t* comp) {
     }
 
     component_invalidate(comp);
+}
+
+/* === Dispatch d'événements === */
+
+void component_dispatch_mouse_move(gui_component_t* root, point_t pos) {
+    if (!root || !root->visible) return;
+
+    /* Trouver le composant sous la souris */
+    gui_component_t* target = component_hit_test(root, pos);
+
+    /* Notifier tous les composants dans l'arbre (pour hover states) */
+    /* On parcourt récursivement et chaque composant décide s'il est concerné */
+    if (root->on_mouse_move && root->enabled) {
+        root->on_mouse_move(root, pos);
+    }
+
+    /* Dispatcher aux enfants */
+    for (uint32_t i = 0; i < root->child_count; i++) {
+        component_dispatch_mouse_move(root->children[i], pos);
+    }
+}
+
+void component_dispatch_mouse_down(gui_component_t* root, point_t pos, mouse_button_t button) {
+    if (!root || !root->visible) return;
+
+    /* Trouver le composant le plus profond sous la souris */
+    gui_component_t* target = component_hit_test(root, pos);
+
+    if (target && target->enabled && target->on_mouse_down) {
+        /* Donner le focus au composant cliqué */
+        component_set_focus(target);
+        target->on_mouse_down(target, pos, button);
+    }
+}
+
+void component_dispatch_mouse_up(gui_component_t* root, point_t pos, mouse_button_t button) {
+    if (!root || !root->visible) return;
+
+    /* Trouver le composant le plus profond sous la souris */
+    gui_component_t* target = component_hit_test(root, pos);
+
+    if (target && target->enabled && target->on_mouse_up) {
+        target->on_mouse_up(target, pos, button);
+    }
 }

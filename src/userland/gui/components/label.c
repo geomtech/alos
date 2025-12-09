@@ -14,23 +14,16 @@ static void label_on_destroy(gui_component_t* comp);
 /* === Création === */
 
 gui_label_t* label_create(rect_t bounds, const char* text, rgba_t color) {
-    /* Créer le composant de base */
-    gui_component_t* base = component_create(COMPONENT_TYPE_LABEL, bounds);
-    if (!base) {
-        return NULL;
-    }
-
-    /* Allouer la structure label */
+    /* Allouer la structure label (contient base intégrée) */
     gui_label_t* label = (gui_label_t*)malloc(sizeof(gui_label_t));
     if (!label) {
-        component_destroy(base);
         printf("label_create: malloc failed\n");
         return NULL;
     }
 
-    /* Copier la base */
-    label->base = *base;
-    free(base);  /* Libérer la base temporaire */
+    /* Initialiser à zéro puis initialiser la base directement */
+    memset(label, 0, sizeof(gui_label_t));
+    component_init(&label->base, COMPONENT_TYPE_LABEL, bounds);
 
     /* Configurer les callbacks spécifiques au label */
     label->base.on_draw = label_on_draw;
@@ -53,17 +46,15 @@ gui_label_t* label_create(rect_t bounds, const char* text, rgba_t color) {
     label->font = font_system;            /* Police par défaut */
     label->word_wrap = false;
 
-    /* Stocker le pointeur label dans user_data de la base */
-    label->base.user_data = label;
-
     return label;
 }
 
 /* === Callbacks === */
 
 static void label_on_draw(gui_component_t* comp, framebuffer_t* fb) {
-    gui_label_t* label = (gui_label_t*)comp->user_data;
-    if (!label || !label->text) return;
+    (void)fb;
+    gui_label_t* label = (gui_label_t*)comp;
+    if (!label->text) return;
 
     /* Dessiner fond si opaque */
     if (label->bg_color.a > 0) {
@@ -101,8 +92,7 @@ static void label_on_draw(gui_component_t* comp, framebuffer_t* fb) {
 }
 
 static void label_on_destroy(gui_component_t* comp) {
-    gui_label_t* label = (gui_label_t*)comp->user_data;
-    if (!label) return;
+    gui_label_t* label = (gui_label_t*)comp;
 
     /* Libérer le texte */
     if (label->text) {
@@ -110,9 +100,8 @@ static void label_on_destroy(gui_component_t* comp) {
         label->text = NULL;
     }
 
-    /* Libérer la structure label elle-même */
-    free(label);
-    comp->user_data = NULL;
+    /* NOTE: Ne PAS libérer label ici - c'est la même allocation que comp
+     * component_destroy() fera le free(comp) final */
 }
 
 /* === Setters === */

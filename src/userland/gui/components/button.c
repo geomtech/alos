@@ -17,23 +17,16 @@ static void button_on_destroy(gui_component_t* comp);
 /* === Création === */
 
 gui_button_t* button_create(rect_t bounds, const char* text) {
-    /* Créer le composant de base */
-    gui_component_t* base = component_create(COMPONENT_TYPE_BUTTON, bounds);
-    if (!base) {
-        return NULL;
-    }
-
-    /* Allouer la structure button */
+    /* Allouer la structure button (contient base intégrée) */
     gui_button_t* button = (gui_button_t*)malloc(sizeof(gui_button_t));
     if (!button) {
-        component_destroy(base);
         printf("button_create: malloc failed\n");
         return NULL;
     }
 
-    /* Copier la base */
-    button->base = *base;
-    free(base);
+    /* Initialiser à zéro puis initialiser la base directement */
+    memset(button, 0, sizeof(gui_button_t));
+    component_init(&button->base, COMPONENT_TYPE_BUTTON, bounds);
 
     /* Configurer les callbacks */
     button->base.on_draw = button_on_draw;
@@ -71,17 +64,15 @@ gui_button_t* button_create(rect_t bounds, const char* text) {
     button->on_click = NULL;
     button->user_data = NULL;
 
-    /* Stocker le pointeur button dans user_data de la base */
-    button->base.user_data = button;
-
     return button;
 }
 
 /* === Callbacks === */
 
 static void button_on_draw(gui_component_t* comp, framebuffer_t* fb) {
-    gui_button_t* button = (gui_button_t*)comp->user_data;
-    if (!button) return;
+    /* comp est le premier membre de gui_button_t, donc on peut caster directement */
+    gui_button_t* button = (gui_button_t*)comp;
+    (void)fb;
 
     /* Déterminer la couleur de fond selon l'état */
     rgba_t bg_color;
@@ -136,8 +127,8 @@ static void button_on_draw(gui_component_t* comp, framebuffer_t* fb) {
 }
 
 static bool button_on_mouse_down(gui_component_t* comp, point_t pos, mouse_button_t btn) {
-    gui_button_t* button = (gui_button_t*)comp->user_data;
-    if (!button || !comp->enabled) return false;
+    gui_button_t* button = (gui_button_t*)comp;
+    if (!comp->enabled) return false;
 
     if (btn == MOUSE_BUTTON_LEFT && component_contains_point(comp, pos)) {
         button->state = BUTTON_STATE_PRESSED;
@@ -149,8 +140,8 @@ static bool button_on_mouse_down(gui_component_t* comp, point_t pos, mouse_butto
 }
 
 static bool button_on_mouse_up(gui_component_t* comp, point_t pos, mouse_button_t btn) {
-    gui_button_t* button = (gui_button_t*)comp->user_data;
-    if (!button || !comp->enabled) return false;
+    gui_button_t* button = (gui_button_t*)comp;
+    if (!comp->enabled) return false;
 
     if (btn == MOUSE_BUTTON_LEFT && button->state == BUTTON_STATE_PRESSED) {
         /* Clic réussi si le relâchement est sur le bouton */
@@ -173,8 +164,8 @@ static bool button_on_mouse_up(gui_component_t* comp, point_t pos, mouse_button_
 }
 
 static bool button_on_mouse_move(gui_component_t* comp, point_t pos) {
-    gui_button_t* button = (gui_button_t*)comp->user_data;
-    if (!button || !comp->enabled) return false;
+    gui_button_t* button = (gui_button_t*)comp;
+    if (!comp->enabled) return false;
 
     bool contains = component_contains_point(comp, pos);
     button_state_t new_state = button->state;
@@ -197,8 +188,7 @@ static bool button_on_mouse_move(gui_component_t* comp, point_t pos) {
 }
 
 static void button_on_destroy(gui_component_t* comp) {
-    gui_button_t* button = (gui_button_t*)comp->user_data;
-    if (!button) return;
+    gui_button_t* button = (gui_button_t*)comp;
 
     /* Libérer le texte */
     if (button->text) {
@@ -206,9 +196,8 @@ static void button_on_destroy(gui_component_t* comp) {
         button->text = NULL;
     }
 
-    /* Libérer la structure button */
-    free(button);
-    comp->user_data = NULL;
+    /* NOTE: Ne PAS libérer button ici - c'est la même allocation que comp
+     * component_destroy() fera le free(comp) final */
 }
 
 /* === Setters === */

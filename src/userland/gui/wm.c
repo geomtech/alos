@@ -3,6 +3,7 @@
 #include "wm.h"
 #include "render.h"
 #include "font.h"
+#include "components/component.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -304,11 +305,26 @@ void wm_draw_window(window_t* win) {
     }
     
     /* Contenu de la fenêtre */
+    render_push_clip(win->content_bounds);
+
+    /* 1. Callback custom si présent */
     if (win->on_draw) {
-        render_push_clip(win->content_bounds);
         win->on_draw(win);
-        render_pop_clip();
     }
+
+    /* 2. Dessiner l'arbre de composants si présent */
+    if (win->root_component) {
+        /* Positionner root par rapport à content_bounds */
+        win->root_component->abs_bounds.x = win->content_bounds.x;
+        win->root_component->abs_bounds.y = win->content_bounds.y;
+        win->root_component->abs_bounds.width = win->content_bounds.width;
+        win->root_component->abs_bounds.height = win->content_bounds.height;
+
+        component_update_abs_bounds(win->root_component);
+        component_draw(win->root_component, render_get_framebuffer());
+    }
+
+    render_pop_clip();
 }
 
 void wm_draw_all(void) {
@@ -389,8 +405,10 @@ void wm_handle_mouse_move(point_t pos) {
         wm_move_window(g_dragging_window,
                        g_dragging_window->bounds.x + dx,
                        g_dragging_window->bounds.y + dy);
+        g_last_mouse_pos = pos;
+        return;
     }
-    
+
     /* Redimensionnement */
     if (g_resizing_window) {
         int32_t new_w = pos.x - g_resizing_window->bounds.x;
@@ -398,20 +416,29 @@ void wm_handle_mouse_move(point_t pos) {
         if (new_w < 200) new_w = 200;
         if (new_h < 100) new_h = 100;
         wm_resize_window(g_resizing_window, (uint32_t)new_w, (uint32_t)new_h);
+        g_last_mouse_pos = pos;
+        return;
     }
-    
+
     g_last_mouse_pos = pos;
+
+    /* Dispatcher aux composants de la fenêtre sous la souris */
+    window_t* win = wm_find_window_at(pos);
+    if (win && win->root_component && point_in_rect(pos, win->content_bounds)) {
+        /* Position en coordonnées absolues (component utilise abs_bounds) */
+        component_dispatch_mouse_move(win->root_component, pos);
+    }
 }
 
 void wm_handle_mouse_down(point_t pos, mouse_button_t button) {
     if (button != MOUSE_BUTTON_LEFT) return;
-    
+
     window_t* win = wm_find_window_at(pos);
     if (!win) return;
-    
+
     /* Focus */
     wm_focus_window(win);
-    
+
     /* Vérifie les boutons de fenêtre */
     int btn = get_button_at(win, pos);
     if (btn == 0) {
@@ -425,32 +452,49 @@ void wm_handle_mouse_down(point_t pos, mouse_button_t button) {
         else wm_maximize_window(win);
         return;
     }
-    
+
     /* Redimensionnement */
     if (is_on_resize_border(win, pos)) {
         g_resizing_window = win;
         g_last_mouse_pos = pos;
         return;
     }
-    
+
     /* Drag de la titlebar */
     if (is_on_titlebar(win, pos)) {
         g_dragging_window = win;
         g_last_mouse_pos = pos;
-        
+
         /* Si maximisée, restaure d'abord */
         if (win->is_maximized) {
             wm_restore_window(win);
         }
+        return;
+    }
+
+    /* Dispatcher aux composants si clic dans le content area */
+    if (win->root_component && point_in_rect(pos, win->content_bounds)) {
+        component_dispatch_mouse_down(win->root_component, pos, button);
     }
 }
 
 void wm_handle_mouse_up(point_t pos, mouse_button_t button) {
-    (void)pos;
     if (button != MOUSE_BUTTON_LEFT) return;
-    
+
+    /* Fin de drag/resize */
+    bool was_dragging = (g_dragging_window != NULL);
+    bool was_resizing = (g_resizing_window != NULL);
     g_dragging_window = NULL;
     g_resizing_window = NULL;
+
+    /* Si on était en train de drag/resize, ne pas dispatcher aux composants */
+    if (was_dragging || was_resizing) return;
+
+    /* Dispatcher aux composants */
+    window_t* win = wm_find_window_at(pos);
+    if (win && win->root_component && point_in_rect(pos, win->content_bounds)) {
+        component_dispatch_mouse_up(win->root_component, pos, button);
+    }
 }
 
 window_t* wm_find_window_at(point_t pos) {
@@ -474,4 +518,39 @@ window_t* wm_get_window_by_id(uint32_t id) {
 
 window_t* wm_get_first_window(void) {
     return g_windows_head;
+}
+
+/* === Gestion des composants === */
+
+/* Helper pour propager owner_window récursivement */
+static void propagate_owner_window(gui_component_t* comp, window_t* win) {
+    if (!comp) return;
+    comp->owner_window = (struct window*)win;
+    for (uint32_t i = 0; i < comp->child_count; i++) {
+        propagate_owner_window(comp->children[i], win);
+    }
+}
+
+void wm_set_root_component(window_t* win, gui_component_t* root) {
+    if (!win) return;
+
+    /* Si ancien root, le déconnecter */
+    if (win->root_component) {
+        propagate_owner_window(win->root_component, NULL);
+    }
+
+    win->root_component = root;
+
+    if (root) {
+        /* Lier la fenêtre à tous les composants */
+        propagate_owner_window(root, win);
+
+        /* Positionner root pour couvrir tout le content area */
+        root->bounds.x = 0;
+        root->bounds.y = 0;
+        root->bounds.width = win->content_bounds.width;
+        root->bounds.height = win->content_bounds.height;
+    }
+
+    wm_invalidate_window(win);
 }

@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
   gui_setup_demo_menus();
   gui_setup_demo_dock();
 
-  /* Créer la fenêtre de test des composants UI */
+  /* Fenêtre de test des composants */
   gui_create_components_test_window();
 
   /* Initial render */
@@ -482,18 +482,8 @@ static void components_test_window_draw(window_t *win)
   if (!win)
     return;
 
-  /* 1. Dessiner le fond standard */
+  /* Dessiner le fond standard - c'est tout pour l'instant */
   draw_rect(win->content_bounds, COLOR_WINDOW_BG);
-
-  /* 2. Dessiner les composants */
-  if (win->root_component)
-  {
-    /* * CORRECTION : On récupère le buffer actif (le back buffer si double buffer activé)
-     * et on le passe à la fonction de dessin.
-     */
-    framebuffer_t *fb = render_get_framebuffer();
-    component_draw(win->root_component, fb);
-  }
 }
 
 window_t *gui_create_components_test_window(void)
@@ -504,65 +494,65 @@ window_t *gui_create_components_test_window(void)
   if (!win)
     return NULL;
 
-  /* Initialiser la racine à NULL par sécurité */
-  win->root_component = NULL;
-  win->on_draw = components_test_window_draw;
-
   /* --- 1. Création du Panel Principal (Root) --- */
-  /* On le place à 0,0 relatif au contenu de la fenêtre */
-  gui_panel_t *panel = panel_create((rect_t){0, 0, 500, 400}); // Pleine taille
-  panel_set_bg_color(panel, rgba(240, 240, 245, 255));         // Gris très clair
-  // Pas de bordure pour le panel racine, c'est plus joli
+  gui_panel_t *panel = panel_create((rect_t){0, 0, 500, 400});
+  if (!panel) {
+    wm_destroy_window(win);
+    return NULL;
+  }
+  panel_set_bg_color(panel, rgba(240, 240, 245, 255));
 
   /* --- 2. Création des Enfants --- */
-
-  /* Titre */
   gui_label_t *title_label = label_create((rect_t){20, 20, 460, 30},
                                           "Démonstration des Composants",
                                           rgba(50, 50, 50, 255));
-  label_set_align(title_label, LABEL_ALIGN_CENTER);
+  if (title_label)
+    label_set_align(title_label, LABEL_ALIGN_CENTER);
 
-  /* Bouton Bleu */
   gui_button_t *btn_blue = button_create((rect_t){50, 80, 120, 35}, "Confirmer");
-  button_set_bg_color(btn_blue, BUTTON_STATE_NORMAL, rgba(0, 122, 255, 255)); // Bleu macOS
-  button_set_text_color(btn_blue, rgba(255, 255, 255, 255));
-  button_set_on_click(btn_blue, test_button_clicked);
+  if (btn_blue) {
+    button_set_bg_color(btn_blue, BUTTON_STATE_NORMAL, rgba(0, 122, 255, 255));
+    button_set_text_color(btn_blue, rgba(255, 255, 255, 255));
+    button_set_on_click(btn_blue, test_button_clicked);
+  }
 
-  /* Bouton Rouge */
   gui_button_t *btn_red = button_create((rect_t){190, 80, 120, 35}, "Annuler");
-  button_set_bg_color(btn_red, BUTTON_STATE_NORMAL, rgba(255, 59, 48, 255)); // Rouge macOS
-  button_set_text_color(btn_red, rgba(255, 255, 255, 255));
+  if (btn_red) {
+    button_set_bg_color(btn_red, BUTTON_STATE_NORMAL, rgba(255, 59, 48, 255));
+    button_set_text_color(btn_red, rgba(255, 255, 255, 255));
+  }
 
-  /* Panel Imbriqué (Nested) */
   gui_panel_t *sub_panel = panel_create((rect_t){50, 150, 400, 100});
-  panel_set_bg_color(sub_panel, rgba(255, 255, 255, 255)); // Blanc
-  panel_set_border(sub_panel, rgba(200, 200, 200, 255), 1);
-  panel_set_shadow(sub_panel, true); // Petite ombre sympa
+  if (sub_panel) {
+    panel_set_bg_color(sub_panel, rgba(255, 255, 255, 255));
+    panel_set_border(sub_panel, rgba(200, 200, 200, 255), 1);
+    panel_set_shadow(sub_panel, true);
+  }
 
-  /* Label DANS le sous-panel (coordonnées relatives au sous-panel !) */
   gui_label_t *sub_label = label_create((rect_t){10, 10, 380, 20},
                                         "Je suis dans un sous-panel",
                                         rgba(100, 100, 100, 255));
-  label_set_align(sub_label, LABEL_ALIGN_CENTER);
+  if (sub_label)
+    label_set_align(sub_label, LABEL_ALIGN_CENTER);
 
-  /* Petit bouton dans le sous-panel */
   gui_button_t *sub_btn = button_create((rect_t){140, 50, 120, 30}, "Click Me");
 
   /* --- 3. Construction de l'Arbre (Hierarchy) --- */
 
   /* Remplissage du sous-panel */
-  // NOTE: On cast en (gui_component_t*) car C n'a pas d'héritage auto
-  component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_label);
-  component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_btn);
+  if (sub_panel) {
+    if (sub_label) component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_label);
+    if (sub_btn) component_add_child((gui_component_t *)sub_panel, (gui_component_t *)sub_btn);
+  }
 
   /* Remplissage du panel principal */
-  component_add_child((gui_component_t *)panel, (gui_component_t *)title_label);
-  component_add_child((gui_component_t *)panel, (gui_component_t *)btn_blue);
-  component_add_child((gui_component_t *)panel, (gui_component_t *)btn_red);
-  component_add_child((gui_component_t *)panel, (gui_component_t *)sub_panel);
+  if (title_label) component_add_child((gui_component_t *)panel, (gui_component_t *)title_label);
+  if (btn_blue) component_add_child((gui_component_t *)panel, (gui_component_t *)btn_blue);
+  if (btn_red) component_add_child((gui_component_t *)panel, (gui_component_t *)btn_red);
+  if (sub_panel) component_add_child((gui_component_t *)panel, (gui_component_t *)sub_panel);
 
-  /* --- 4. Attachement à la fenêtre --- */
-  win->root_component = (gui_component_t *)panel;
+  /* --- 4. Attachement à la fenêtre via la nouvelle API --- */
+  wm_set_root_component(win, (gui_component_t *)panel);
 
   return win;
 }
@@ -604,7 +594,7 @@ void gui_setup_demo_menus(void) {
   /* Menu File */
   menu_t *file_menu = menubar_add_menu("File");
   if (file_menu) {
-    menubar_add_item(file_menu, "Nouvelle fenêtre", "Cmd+N", NULL);
+    menubar_add_item(file_menu, "Nouvelle fenetre", "Cmd+N", NULL);
     menubar_add_item(file_menu, "Ouvrir...", "Cmd+O", NULL);
     menubar_add_separator(file_menu);
     menubar_add_item(file_menu, "Fermer", "Cmd+W", NULL);
