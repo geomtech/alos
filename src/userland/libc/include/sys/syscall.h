@@ -45,6 +45,7 @@
 #define SYS_STAT 106
 #define SYS_GET_FRAMEBUFFER 110
 #define SYS_GET_EVENT 111
+#define SYS_BRK 120
 #define SYS_SLEEP 162
 #define SYS_NANOSLEEP 162
 #define SYS_GETCWD 183

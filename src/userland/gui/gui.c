@@ -15,6 +15,7 @@ static bool g_quit_requested = false;
 #include <sys/framebuffer.h>
 #include <sys/syscall.h>
 
+#include "compositor.h"
 #include "dock.h"
 #include "events.h"
 #include "gui.h"
@@ -72,12 +73,12 @@ int main(int argc, char **argv) {
   /* Initialise SSFN avec Unifont (support UTF-8) */
   ssfn_init();
 
-  /* Initialise le compositeur */
-  // This part of the original gui_init is now handled by the userland main.
-  // The original gui_init used g_framebuffer, which is a kernel-side concept.
-  // For userland, compositor_init would need to be adapted or removed.
-  // Assuming compositor_init is now part of the userland setup or removed.
-  // The provided diff snippet ends here, implying the rest of gui_init is gone.
+  /* Initialise le compositeur AVANT de l'utiliser */
+  framebuffer_t *active_fb = render_get_active_buffer();
+  if (compositor_init(active_fb) != 0) {
+    printf("Error: Failed to initialize compositor.\\n");
+    return 1;
+  }
 
   /* 3. Setup WM and UI */
   compositor_set_background_gradient(rgba(30, 80, 140, 255),   /* Bleu foncé */

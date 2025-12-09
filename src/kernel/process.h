@@ -2,26 +2,31 @@
 #ifndef PROCESS_H
 #define PROCESS_H
 
-#include <stdint.h>
-#include <stddef.h>
+#include "thread.h" /* Include du nouveau système de threads */
 #include <stdbool.h>
-#include "thread.h"  /* Include du nouveau système de threads */
+#include <stddef.h>
+#include <stdint.h>
 
 /* ========================================
  * Constantes
  * ======================================== */
 
-#define KERNEL_STACK_SIZE   32768   /* Taille de la stack kernel par thread (32 KiB) */
-#define MAX_PROCESSES       64      /* Nombre max de processus */
-#define PROCESS_NAME_MAX    32      /* Longueur max du nom de processus */
+#define KERNEL_STACK_SIZE                                                      \
+  32768                     /* Taille de la stack kernel par thread (32 KiB) */
+#define MAX_PROCESSES 64    /* Nombre max de processus */
+#define PROCESS_NAME_MAX 32 /* Longueur max du nom de processus */
+
+/* User stack definitions */
+#define USER_STACK_TOP 0x00007FFFFFFFF000ULL /* Top of user stack */
+#define USER_STACK_SIZE (16 * 4096)          /* 64 KiB stack size */
 
 /* États des processus */
 typedef enum {
-    PROCESS_STATE_READY,        /* Prêt à être exécuté */
-    PROCESS_STATE_RUNNING,      /* En cours d'exécution */
-    PROCESS_STATE_BLOCKED,      /* En attente (I/O, sleep, etc.) */
-    PROCESS_STATE_ZOMBIE,       /* Terminé, en attente de join */
-    PROCESS_STATE_TERMINATED    /* Terminé */
+  PROCESS_STATE_READY,     /* Prêt à être exécuté */
+  PROCESS_STATE_RUNNING,   /* En cours d'exécution */
+  PROCESS_STATE_BLOCKED,   /* En attente (I/O, sleep, etc.) */
+  PROCESS_STATE_ZOMBIE,    /* Terminé, en attente de join */
+  PROCESS_STATE_TERMINATED /* Terminé */
 } process_state_t;
 
 /* ========================================
@@ -30,10 +35,10 @@ typedef enum {
 
 /**
  * Registres CPU sauvegardés lors d'un context switch (x86-64).
- * 
+ *
  * Note: On ne sauvegarde que les registres callee-saved
  * selon la convention System V AMD64 ABI.
- * 
+ *
  * Registres callee-saved: RBX, RBP, R12-R15
  * Layout sur la stack après un switch:
  *   [R15]
@@ -45,13 +50,13 @@ typedef enum {
  *   [RIP]  <- Adresse de retour (ret sautera ici)
  */
 typedef struct {
-    uint64_t rbx;
-    uint64_t rbp;
-    uint64_t r12;
-    uint64_t r13;
-    uint64_t r14;
-    uint64_t r15;
-    uint64_t rip;       /* Adresse de retour */
+  uint64_t rbx;
+  uint64_t rbp;
+  uint64_t r12;
+  uint64_t r13;
+  uint64_t r14;
+  uint64_t r15;
+  uint64_t rip; /* Adresse de retour */
 } __attribute__((packed)) context_t;
 
 /**
@@ -59,42 +64,44 @@ typedef struct {
  * Un processus peut contenir plusieurs threads.
  */
 typedef struct process {
-    uint32_t pid;                   /* Process ID unique */
-    char name[PROCESS_NAME_MAX];    /* Nom du processus (debug) */
-    process_state_t state;          /* État du processus */
-    volatile int should_terminate;  /* Flag pour demander l'arrêt (CTRL+C) */
-    int exit_status;                /* Code de sortie */
-    
-    /* ===== Context (x86-64) ===== */
-    uint64_t rsp;                   /* Stack Pointer sauvegardé */
-    uint64_t rsp0;                  /* Stack Pointer kernel (base pour TSS) */
-    uint64_t cr3;                   /* Adresse physique du PML4 (pour switch CR3) */
-    
-    /* ===== Mémoire ===== */
-    uint64_t* pml4;                 /* PML4 (Page Map Level 4) */
-    
-    /* ===== Stack ===== */
-    void* stack_base;               /* Base de la stack allouée (pour kfree) */
-    uint64_t stack_size;            /* Taille de la stack */
-    
-    /* ===== Threads ===== */
-    thread_t* main_thread;          /* Thread principal du processus */
-    thread_t* thread_list;          /* Liste de tous les threads */
-    uint32_t thread_count;          /* Nombre de threads actifs */
-    
-    /* ===== Synchronisation ===== */
-    wait_queue_t wait_queue;        /* Pour process_join */
-    
-    /* ===== Hiérarchie ===== */
-    struct process* parent;         /* Processus parent */
-    struct process* first_child;    /* Premier enfant */
-    struct process* sibling_next;   /* Prochain frère */
-    struct process* sibling_prev;   /* Frère précédent */
-    
-    /* ===== Liste chaînée circulaire ===== */
-    struct process* next;           /* Processus suivant dans la liste */
-    struct process* prev;           /* Processus précédent */
-    
+  uint32_t pid;                  /* Process ID unique */
+  char name[PROCESS_NAME_MAX];   /* Nom du processus (debug) */
+  process_state_t state;         /* État du processus */
+  volatile int should_terminate; /* Flag pour demander l'arrêt (CTRL+C) */
+  int exit_status;               /* Code de sortie */
+
+  /* ===== Context (x86-64) ===== */
+  uint64_t rsp;  /* Stack Pointer sauvegardé */
+  uint64_t rsp0; /* Stack Pointer kernel (base pour TSS) */
+  uint64_t cr3;  /* Adresse physique du PML4 (pour switch CR3) */
+
+  /* ===== Mémoire ===== */
+  uint64_t *pml4;      /* PML4 (Page Map Level 4) */
+  uint64_t heap_start; /* Start of heap (initial program break) */
+  uint64_t heap_brk;   /* Current program break */
+
+  /* ===== Stack ===== */
+  void *stack_base;    /* Base de la stack allouée (pour kfree) */
+  uint64_t stack_size; /* Taille de la stack */
+
+  /* ===== Threads ===== */
+  thread_t *main_thread; /* Thread principal du processus */
+  thread_t *thread_list; /* Liste de tous les threads */
+  uint32_t thread_count; /* Nombre de threads actifs */
+
+  /* ===== Synchronisation ===== */
+  wait_queue_t wait_queue; /* Pour process_join */
+
+  /* ===== Hiérarchie ===== */
+  struct process *parent;       /* Processus parent */
+  struct process *first_child;  /* Premier enfant */
+  struct process *sibling_next; /* Prochain frère */
+  struct process *sibling_prev; /* Frère précédent */
+
+  /* ===== Liste chaînée circulaire ===== */
+  struct process *next; /* Processus suivant dans la liste */
+  struct process *prev; /* Processus précédent */
+
 } process_t;
 
 /* ========================================
@@ -102,13 +109,13 @@ typedef struct process {
  * ======================================== */
 
 /* Processus actuellement en cours d'exécution */
-extern process_t* current_process;
+extern process_t *current_process;
 
 /* Liste de tous les processus (tête de la liste circulaire) */
-extern process_t* process_list;
+extern process_t *process_list;
 
 /* Processus idle (le kernel main) */
-extern process_t* idle_process;
+extern process_t *idle_process;
 
 /* ========================================
  * Fonctions publiques
@@ -122,12 +129,12 @@ void init_multitasking(void);
 
 /**
  * Crée un nouveau thread kernel.
- * 
+ *
  * @param function  Fonction à exécuter dans le thread
  * @param name      Nom du thread (pour debug)
  * @return          Pointeur vers le nouveau processus, ou NULL si erreur
  */
-process_t* create_kernel_thread(void (*function)(void), const char* name);
+process_t *create_kernel_thread(void (*function)(void), const char *name);
 
 /**
  * Ordonnanceur (Round Robin).
@@ -137,10 +144,10 @@ void schedule(void);
 
 /**
  * Force un changement de contexte vers un processus spécifique.
- * 
+ *
  * @param next  Processus vers lequel basculer
  */
-void switch_to(process_t* next);
+void switch_to(process_t *next);
 
 /**
  * Termine le processus courant.
@@ -178,22 +185,22 @@ int should_exit(void);
 /**
  * Exécute un programme ELF en créant un nouveau processus User Mode.
  * Le processus est ajouté au scheduler et s'exécutera lors du prochain cycle.
- * 
+ *
  * @param filename  Chemin du fichier ELF à exécuter
  * @return          PID du nouveau processus, ou -1 si erreur
  */
-int process_execute(const char* filename);
+int process_execute(const char *filename);
 
 /**
  * Lance immédiatement un programme ELF (bloquant).
  * Charge et exécute le programme, puis retourne au shell via sys_exit.
- * 
+ *
  * @param filename  Chemin du fichier ELF à exécuter
  * @param argc      Nombre d'arguments
  * @param argv      Tableau d'arguments
  * @return          0 si succès, -1 si erreur (ne retourne pas normalement)
  */
-int process_exec_and_wait(const char* filename, int argc, char** argv);
+int process_exec_and_wait(const char *filename, int argc, char **argv);
 
 /* ========================================
  * Nouvelles fonctions Multithreading
@@ -202,8 +209,8 @@ int process_exec_and_wait(const char* filename, int argc, char** argv);
 /**
  * Crée un nouveau processus kernel.
  */
-process_t* process_create_kernel(const char* name, thread_entry_t entry, void* arg, 
-                                 uint32_t stack_size);
+process_t *process_create_kernel(const char *name, thread_entry_t entry,
+                                 void *arg, uint32_t stack_size);
 
 /**
  * Met le processus courant en sommeil pendant un nombre de millisecondes.
@@ -219,47 +226,47 @@ void process_yield(void);
  * Attend la fin d'un processus.
  * @return Code de sortie du processus
  */
-int process_join(process_t* proc);
+int process_join(process_t *proc);
 
 /**
  * Tue un processus et tous ses threads.
  */
-void process_kill(process_t* proc);
+void process_kill(process_t *proc);
 
 /**
  * Tue l'arbre de processus (process et tous ses enfants).
  */
-void process_kill_tree(process_t* proc);
+void process_kill_tree(process_t *proc);
 
 /**
  * Retourne le processus courant.
  */
-process_t* process_current(void);
+process_t *process_current(void);
 
 /**
  * Vérifie si un processus est zombie.
  */
-bool process_is_zombie(process_t* proc);
+bool process_is_zombie(process_t *proc);
 
 /**
  * Retourne le nom de l'état d'un processus.
  */
-const char* process_state_name(process_state_t state);
+const char *process_state_name(process_state_t state);
 
 /**
  * Prend un snapshot de tous les processus.
  */
 typedef struct {
-    uint32_t pid;
-    process_state_t state;
-    thread_state_t thread_state;
-    const char* name;
-    const char* thread_name;
-    bool is_current;
-    uint32_t time_slice_remaining;
+  uint32_t pid;
+  process_state_t state;
+  thread_state_t thread_state;
+  const char *name;
+  const char *thread_name;
+  bool is_current;
+  uint32_t time_slice_remaining;
 } process_info_t;
 
-size_t process_snapshot(process_info_t* buffer, size_t capacity);
+size_t process_snapshot(process_info_t *buffer, size_t capacity);
 
 /* ========================================
  * Fonction ASM (définie dans switch.s)
@@ -267,15 +274,16 @@ size_t process_snapshot(process_info_t* buffer, size_t capacity);
 
 /**
  * Effectue le context switch (défini en assembleur dans switch.s).
- * 
+ *
  * @param old_esp_ptr  Pointeur où sauvegarder l'ESP actuel
  * @param new_esp      Nouvel ESP à charger
  * @param new_cr3      Adresse physique du nouveau Page Directory
- * 
+ *
  * Note: Le changement de CR3 est effectué de manière atomique dans cette
  * fonction pour garantir que le code kernel reste accessible pendant
  * la transition entre espaces mémoire.
  */
-extern void switch_task(uint64_t* old_rsp_ptr, uint64_t new_rsp, uint64_t new_cr3);
+extern void switch_task(uint64_t *old_rsp_ptr, uint64_t new_rsp,
+                        uint64_t new_cr3);
 
 #endif /* PROCESS_H */

@@ -4,7 +4,9 @@
 #include "../arch/x86_64/io.h"
 #include "../fs/file.h"
 #include "../fs/vfs.h"
+#include "../include/string.h"
 #include "../mm/kheap.h"
+#include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "../net/core/net.h"
 #include "../net/l4/tcp.h"
@@ -532,8 +534,9 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 
   /* Adresse virtuelle cible pour le framebuffer en userland */
-  /* On choisit une adresse fixe élevée (32GB) pour éviter les collisions */
-  uint64_t vaddr_base = 0x800000000ULL;
+  /* On choisit une adresse fixe (1.5GB) qui rentre dans 32 bits pour éviter
+   * les problèmes de troncature */
+  uint64_t vaddr_base = 0x60000000ULL;
 
   /* Mapper les pages */
   /* Limine donne l'adresse physique dans address (si mapped en hhdm, on peut
@@ -978,6 +981,96 @@ static int sys_waitpid(int pid, int *status, int options);
 static int sys_create_thread(void *entry, void *stack, void *arg);
 
 /* ========================================
+ * Memory Management Syscalls
+ * ======================================== */
+
+/**
+ * SYS_BRK (120) - Change data segment size (heap)
+ *
+ * @param addr  Requested new program break (0 to get current)
+ * @return Current/New program break on success, -1 on failure
+ */
+static void *sys_brk(void *addr) {
+  process_t *proc = current_process;
+  if (!proc)
+    return (void *)-1;
+
+  /* If addr is NULL or 0, just return current break */
+  if (addr == NULL || addr == 0) {
+    return (void *)proc->heap_brk;
+  }
+
+  uint64_t new_brk = (uint64_t)addr;
+  uint64_t old_brk = proc->heap_brk;
+
+  /* Validate range - cannot shrink below heap_start */
+  if (new_brk < proc->heap_start) {
+    return (void *)-1;
+  }
+
+  /* Page align addresses for allocation/deallocation */
+  uint64_t old_page_aligned = PAGE_ALIGN_UP(old_brk);
+  uint64_t new_page_aligned = PAGE_ALIGN_UP(new_brk);
+
+  if (new_brk > old_brk) {
+    /* Expanding heap */
+    KLOG_DEBUG_HEX("SYSCALL", "sys_brk expand to ", new_brk);
+
+    /* Check if we need to allocate new pages */
+    if (new_page_aligned > old_page_aligned) {
+      uint64_t pages_needed = (new_page_aligned - old_page_aligned) / PAGE_SIZE;
+
+      for (uint64_t i = 0; i < pages_needed; i++) {
+        uint64_t virt = old_page_aligned + (i * PAGE_SIZE);
+
+        /* Check safety limit (e.g. dont overwrite stack 2GB limit) */
+        if (virt >= USER_STACK_TOP - USER_STACK_SIZE) {
+          KLOG_ERROR("SYSCALL", "sys_brk: Heap/Stack collision");
+          return (void *)-1;
+        }
+
+        /* Allocate physical page */
+        void *phys = pmm_alloc_block();
+        if (!phys) {
+          /* Out of memory - should rollback here but for V1 simple fail */
+          KLOG_ERROR("SYSCALL", "sys_brk: OOM");
+          return (void *)-1;
+        }
+
+        /* Map page */
+        vmm_map_page((uint64_t)phys, virt, PAGE_USER | PAGE_RW | PAGE_PRESENT);
+        /* Zero out new memory for security */
+        memset((void *)virt, 0, PAGE_SIZE);
+      }
+    }
+  } else {
+    /* Shrinking heap (optional optimization) */
+    /* For V1, we can just update the pointer or actually free pages */
+    KLOG_DEBUG_HEX("SYSCALL", "sys_brk shrink to ", new_brk);
+
+    if (new_page_aligned < old_page_aligned) {
+      uint64_t pages_to_free =
+          (old_page_aligned - new_page_aligned) / PAGE_SIZE;
+
+      for (uint64_t i = 0; i < pages_to_free; i++) {
+        uint64_t virt = new_page_aligned + (i * PAGE_SIZE);
+        /* Note: vmm_unmap_page usually doesn't free physical memory in simple
+         * VMMs */
+        /* Ideally we should free the physical frame back to PMM */
+        uint64_t phys = vmm_get_physical(virt);
+        if (phys) {
+          pmm_free_block((void *)phys);
+          vmm_unmap_page(virt);
+        }
+      }
+    }
+  }
+
+  proc->heap_brk = new_brk;
+  return (void *)new_brk;
+}
+
+/* ========================================
  * Dispatcher principal
  * ======================================== */
 
@@ -1103,6 +1196,19 @@ void syscall_dispatcher(syscall_regs_t *regs) {
   case SYS_GET_FRAMEBUFFER:
     result = sys_get_framebuffer((framebuffer_info_t *)regs->rdi);
     break;
+
+  case SYS_BRK:
+    regs->rax = (uint64_t)sys_brk((void *)regs->rdi);
+    /* Special handling: sys_brk returns void*, possibly > 2GB or negative error
+     */
+    /* If we cast void* to int directly, it might truncate or look weird */
+    /* But for syscall result variable 'result' (int), we might have issues if
+     * address > 2GB */
+    /* So we write directly to RAX and return via return; or break; */
+    /* However, the end of function does regs->rax = result; */
+    /* We should probably change result to uint64_t or int64_t */
+    /* For now, let's treat it carefully. */
+    return; /* Early return to avoid overwriting RAX with (int)result */
 
   case SYS_GET_EVENT:
     result = sys_get_event((input_event_t *)regs->rdi);

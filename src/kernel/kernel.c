@@ -195,6 +195,10 @@ void kmain(void) {
   /* Initialiser les keymaps clavier (QWERTY par défaut) */
   keymap_init();
 
+  /* Initialiser le driver clavier (buffer + semaphore) */
+  extern void keyboard_init(void);
+  keyboard_init();
+
   /* Initialiser le système de logs précoce (buffer mémoire) */
   klog_early_init();
 
@@ -250,7 +254,7 @@ void kmain(void) {
   /* Initialisation du Kernel Heap               */
   /* ============================================ */
 
-#define HEAP_PAGES 256 /* 1 MiB */
+#define HEAP_PAGES 16384 /* 64 MiB */
   void *heap_mem = pmm_alloc_blocks(HEAP_PAGES);
 
   if (heap_mem == NULL) {
@@ -432,6 +436,13 @@ void kmain(void) {
   console_refresh();
 
   /* ============================================ */
+  /* Initialiser l'input subsystem AVANT le       */
+  /* multitasking pour éviter les race conditions */
+  /* ============================================ */
+  extern void input_init(void);
+  input_init();
+
+  /* ============================================ */
   /* Initialiser le User Mode Support (TSS)       */
   /* ============================================ */
   init_usermode();
@@ -443,13 +454,17 @@ void kmain(void) {
 
   /* Activer la préemption timer maintenant que le scheduler est prêt */
   timer_enable_scheduling();
+  KLOG_INFO("KERNEL", "Preemption enabled");
+
+  /* Petite pause pour laisser les worker threads se stabiliser */
+  /* Cela évite les race conditions pendant le démarrage du shell */
+  for (volatile int i = 0; i < 5000000; i++)
+    ;
 
   /* Lancer le shell interactif */
+  KLOG_INFO("KERNEL", "Initializing shell...");
   shell_init();
-
-  /* Initialiser l'input */
-  extern void input_init(void);
-  input_init();
+  KLOG_INFO("KERNEL", "Shell initialized");
 
   /* Exécuter le script de démarrage si présent */
   if (config_run_startup_script() == 0) {

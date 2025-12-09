@@ -1,22 +1,13 @@
 /* src/userland/libc/src/stdlib/malloc.c - Userland Memory Allocation */
-#include "internal/syscall.h"
+#include "../internal/syscall.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* Syscall pour brk - obtenir/étendre le heap */
 static void *sys_brk(void *addr) {
-  // Utiliser le syscall SYS_BRK (simulé par un syscall placeholder pour le
-  // moment ou mmap) Note: Dans libc.h original c'était syscall3(45...) qui
-  // semble être SYS_RECV dans le header? Vérification: SYS_BRK n'est PAS défini
-  // dans les headers standards fournis. On assume que le kernel gère brk ou on
-  // utilise mmap. Pour compatibilité avec le code original qui utilisait 45
-  // (qui est étrangement SYS_RECV?) STOP: Le code original utilisait 45 pour
-  // SYS_BRK. Cependant, dans syscall.h, 45 est SYS_RECV. Il y a un conflit ou
-  // une erreur dans l'original. On va garder 45 pour l'instant si c'est ce que
-  // le kernel attend, mais c'est suspect.
-
-  return (void *)syscall3(45, (long)addr, 0, 0);
+  /* Use correct syscall SYS_BRK (120) */
+  return (void *)syscall3(120, (long)addr, 0, 0);
 }
 
 /* Structure pour un bloc mémoire */

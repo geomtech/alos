@@ -104,20 +104,36 @@ void keyboard_clear_buffer(void) {
 }
 
 /**
+ * Initialise le driver clavier.
+ * Doit être appelé avant toute utilisation du clavier.
+ */
+void keyboard_init(void) {
+  /* Initialiser le buffer */
+  kb_head = 0;
+  kb_tail = 0;
+
+  /* Initialiser les modificateurs */
+  ctrl_pressed = false;
+  shift_pressed = false;
+  alt_pressed = false;
+  altgr_pressed = false;
+  capslock_active = false;
+  e0_prefix = false;
+  pending_dead_key = 0;
+
+  /* Initialiser le sémaphore */
+  semaphore_init(&keyboard_sem, 0, KEYBOARD_BUFFER_SIZE);
+  keyboard_sem_initialized = true;
+
+  KLOG_INFO("KBD", "Keyboard driver initialized");
+}
+
+/**
  * Lit un caractère du buffer (bloquant).
  * Bloque le thread jusqu'à ce qu'une touche soit disponible.
  * Utilise un sémaphore pour une synchronisation efficace avec l'IRQ.
  */
 char keyboard_getchar(void) {
-  /* Initialiser le sémaphore si pas encore fait.
-   * On ne peut pas le faire dans keyboard_init() car sync n'est pas encore
-   * prêt. */
-  if (!keyboard_sem_initialized) {
-    semaphore_init(&keyboard_sem, 0, KEYBOARD_BUFFER_SIZE);
-    keyboard_sem_initialized = true;
-    KLOG_INFO("KBD", "Keyboard semaphore initialized");
-  }
-
   /* Si des caractères sont déjà dans le buffer, les retourner directement */
   if (keyboard_has_char()) {
     return keyboard_buffer_get();
