@@ -35,6 +35,8 @@ bool g_gui_running = true;
 /* Position du curseur souris */
 static int32_t g_mouse_x = 0;
 static int32_t g_mouse_y = 0;
+static int32_t g_last_cursor_x = -1;
+static int32_t g_last_cursor_y = -1;
 static bool g_mouse_visible = true;
 static bool g_needs_redraw = false;
 
@@ -260,15 +262,15 @@ void gui_render_full(void) {
   rect_t full_screen = {0, 0, g_screen_width, g_screen_height};
   compositor_invalidate_rect(full_screen);
 
-  /* Rendu du compositeur (fond + couches) vers BackBuffer */
+  /* Rendu du compositeur - fait aussi le flip partiel (ici = full screen) */
   compositor_render();
-  
-  /* Initialiser g_last_cursor pour la logic optimisée */
-  /* On dessine le curseur sur le FrontBuffer après le Flip */
-  render_flip();
-  
-  framebuffer_t *front = render_get_framebuffer(); // Front
+
+  /* Dessiner le curseur sur le FrontBuffer */
+  framebuffer_t *front = render_get_framebuffer();
   draw_cursor(front, g_mouse_x, g_mouse_y);
+
+  g_last_cursor_x = g_mouse_x;
+  g_last_cursor_y = g_mouse_y;
 }
 
 /* Helper to copy a rect from BackBuffer to FrontBuffer (restore background) */
@@ -308,42 +310,36 @@ static void restore_cursor_rect(int32_t x, int32_t y) {
     }
 }
 
-static int32_t g_last_cursor_x = -1;
-static int32_t g_last_cursor_y = -1;
-
 void gui_render(void) {
   if (g_state != GUI_STATE_RUNNING)
     return;
 
   events_process();
 
-  /* 1. Update UI (Backbuffer) if needed */
-  bool ui_dirty = compositor_render(); /* Returns true if BackBuffer changed */
-  
   framebuffer_t *front = render_get_framebuffer();
-  
+  bool cursor_moved = (g_mouse_x != g_last_cursor_x || g_mouse_y != g_last_cursor_y);
+
+  /* 1. Update UI - compositor fait les partial flips automatiquement */
+  bool ui_dirty = compositor_render();
+
   if (ui_dirty || g_needs_redraw) {
-      /* UI changed: Full Flip (Slow but necessary) */
-      render_flip();
-      
-      /* Draw cursor on top of fresh FrontBuffer */
+      /* UI a changé - le curseur peut avoir été écrasé par le flip partiel */
+      /* Redessiner le curseur sur le front buffer */
       draw_cursor(front, g_mouse_x, g_mouse_y);
-      
+
       g_last_cursor_x = g_mouse_x;
       g_last_cursor_y = g_mouse_y;
       g_needs_redraw = false;
-  } else {
-      /* UI static: Optimize Mouse */
-      if (g_mouse_x != g_last_cursor_x || g_mouse_y != g_last_cursor_y) {
-          /* 1. Restore background at OLD position (Back -> Front) */
-          restore_cursor_rect(g_last_cursor_x, g_last_cursor_y);
-          
-          /* 2. Draw cursor at NEW position (Front) */
-          draw_cursor(front, g_mouse_x, g_mouse_y);
-          
-          g_last_cursor_x = g_mouse_x;
-          g_last_cursor_y = g_mouse_y;
-      }
+  } else if (cursor_moved) {
+      /* UI static mais souris a bougé - optimisation rapide */
+      /* 1. Restaurer l'arrière-plan à l'ancienne position */
+      restore_cursor_rect(g_last_cursor_x, g_last_cursor_y);
+
+      /* 2. Dessiner curseur à la nouvelle position */
+      draw_cursor(front, g_mouse_x, g_mouse_y);
+
+      g_last_cursor_x = g_mouse_x;
+      g_last_cursor_y = g_mouse_y;
   }
 }
 

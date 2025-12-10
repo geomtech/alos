@@ -167,6 +167,35 @@ void render_flip(void) {
   memcpy(g_main_buffer.pixels, g_back_buffer.pixels, buffer_size);
 }
 
+void render_flip_region(rect_t region) {
+  if (!g_double_buffer_enabled)
+    return;
+
+  /* Clipping au framebuffer */
+  int32_t x1 = region.x;
+  int32_t y1 = region.y;
+  int32_t x2 = region.x + (int32_t)region.width;
+  int32_t y2 = region.y + (int32_t)region.height;
+
+  if (x1 < 0) x1 = 0;
+  if (y1 < 0) y1 = 0;
+  if (x2 > (int32_t)g_main_buffer.width) x2 = (int32_t)g_main_buffer.width;
+  if (y2 > (int32_t)g_main_buffer.height) y2 = (int32_t)g_main_buffer.height;
+
+  if (x1 >= x2 || y1 >= y2)
+    return;
+
+  /* Copie ligne par ligne seulement la région */
+  uint32_t pitch_pixels = g_main_buffer.pitch / 4;
+  uint32_t copy_width = (uint32_t)(x2 - x1);
+
+  for (int32_t y = y1; y < y2; y++) {
+    uint32_t *src = g_back_buffer.pixels + y * pitch_pixels + x1;
+    uint32_t *dst = g_main_buffer.pixels + y * pitch_pixels + x1;
+    memcpy(dst, src, copy_width * sizeof(uint32_t));
+  }
+}
+
 framebuffer_t *render_get_active_buffer(void) {
   if (g_double_buffer_enabled && g_back_buffer.pixels) {
     return &g_back_buffer;

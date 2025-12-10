@@ -8,3 +8,4 @@ alos.elf
 alos.bin
 serial.log
 busybox*
+/src/userland/gui_app

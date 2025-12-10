@@ -55,6 +55,14 @@ void render_set_double_buffer(bool enabled);
 void render_flip(void);
 
 /**
+ * Copie une région spécifique du back buffer vers le front buffer.
+ * Beaucoup plus rapide que render_flip() pour les petites régions.
+ *
+ * @param region Rectangle à copier
+ */
+void render_flip_region(rect_t region);
+
+/**
  * Retourne le buffer actif (back buffer si double buffering, sinon front).
  */
 framebuffer_t *render_get_active_buffer(void);

@@ -299,14 +299,16 @@ bool compositor_render(void) {
   if (!g_main_fb || g_dirty_count == 0)
     return false;
 
-  /* Rend chaque dirty rectangle */
+  /* Rend chaque dirty rectangle et le flip immédiatement (optimisation) */
   for (uint32_t i = 0; i < g_dirty_count; i++) {
     compositor_render_region(g_dirty_rects[i]);
+    /* Flip seulement cette région au lieu de tout l'écran */
+    render_flip_region(g_dirty_rects[i]);
   }
 
   g_dirty_count = 0;
 
-  /* Flip est géré par la boucle principale */
+  /* Le flip partiel est fait ci-dessus, plus besoin de flip complet */
   return true;
 }
 
