@@ -51,6 +51,8 @@
 #define SYS_GETCWD 183
 #define SYS_GETTID 186
 #define SYS_TKILL 200
+#define SYS_GET_MICROSECONDS 163 /* Obtenir le temps en microsecondes */
+#define SYS_SLEEP_MICROS 164 /* Dormir pendant un temps spécifié en microsecondes */
 
 /* Event types for SYS_GET_EVENT */
 #define INPUT_EVENT_NONE 0

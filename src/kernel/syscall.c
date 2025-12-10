@@ -188,6 +188,51 @@ static int sys_nanosleep(uint64_t milliseconds) {
 }
 
 /**
+ * SYS_GET_MICROSECONDS (163) - Obtenir le temps en microsecondes
+ *
+ * @return Temps en microsecondes depuis le démarrage
+ */
+static uint32_t sys_get_microseconds(void) {
+  /* Utiliser le timer système pour obtenir le temps en microsecondes */
+  /* Cette implémentation est simplifiée et dépend de l'architecture */
+  /* Pour l'instant, retourner un temps basé sur le timer */
+  /* Dans un vrai système, cela utiliserait le TSC ou un autre timer de haute résolution */
+  
+  /* Obtenir le temps depuis le démarrage en millisecondes */
+  /* et convertir en microsecondes */
+  /* Limiter à 32 bits pour éviter les débordements */
+  uint32_t uptime_ms = (uint32_t)timer_get_uptime_ms();
+  return uptime_ms * 1000;
+}
+
+/**
+ * SYS_SLEEP_MICROS (164) - Dormir pendant un temps spécifié en microsecondes
+ *
+ * @param microseconds  Temps de sommeil en microsecondes
+ * @return 0 si succès, -1 si interrompu
+ */
+static int sys_sleep_micros(uint32_t microseconds) {
+  /* Convertir les microsecondes en millisecondes pour utiliser le timer */
+  uint32_t milliseconds = microseconds / 1000;
+  
+  /* Si le temps est très court, juste céder le CPU */
+  if (milliseconds == 0) {
+    thread_t *current = thread_current();
+    if (current) {
+      current->needs_yield = true;
+    }
+    return 0;
+  }
+  
+  /* Utiliser le timer pour dormir */
+  /* Cette implémentation est simplifiée et dépend de l'architecture */
+  /* Dans un vrai système, cela utiliserait un timer de haute résolution */
+  timer_sleep_ms(milliseconds);
+  
+  return 0;
+}
+
+/**
  * SYS_WRITE (4) - Écrire une chaîne
  *
  * @param fd      File descriptor (ignoré pour l'instant, tout va à la console)
@@ -1005,7 +1050,7 @@ static int sys_close(int fd) {
       /* Ne pas libérer le FD ni le socket - on le réutilise */
       return 0;
     } else {
-      /* Socket client séparé : fermer et libérer */
+      /* Socket client séparé : fermement et libérer */
       tcp_close(sock);
       fd_free(fd);
       return 0;
@@ -1150,8 +1195,22 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   /* DEBUG: Vérification de sanité du RIP */
   uint64_t entry_rip_low = regs->rip & 0xFFFFFFFF;
-  if (entry_rip_low >= 0xBFFF0000 && entry_rip_low <= 0xC0000000) {
-    KLOG_ERROR("SYSCALL", "FATAL: Entry RIP corrupted (points to stack)!");
+  /* La vérification précédente était trop restrictive - elle bloquait les adresses légitimes dans la plage utilisateur */
+  /* Nouvelle vérification: seulement bloquer les adresses clairement invalides */
+  if (entry_rip_low == 0 || entry_rip_low >= 0xFFFFFFFF) {
+    KLOG_ERROR("SYSCALL", "FATAL: Entry RIP invalid!");
+    KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
+    KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
+    KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
+    KLOG_ERROR_HEX("SYSCALL", "  RSP (low): ", (uint32_t)regs->rsp);
+    KLOG_ERROR_HEX("SYSCALL", "  RFLAGS: ", (uint32_t)regs->rflags);
+    for (;;)
+      __asm__ volatile("hlt");
+  }
+
+  /* Vérifier si l'adresse de retour est dans la plage utilisateur valide */
+  if ((regs->rip & 0xFFFFFFFF) < 0x400000 || (regs->rip & 0xFFFFFFFF) >= 0xBFFFF000) {
+    KLOG_ERROR("SYSCALL", "FATAL: Entry RIP out of user space range!");
     KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
     KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
     KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
@@ -1297,6 +1356,14 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_NANOSLEEP:
     result = sys_nanosleep(regs->rdi);
+    break;
+
+  case SYS_GET_MICROSECONDS:
+    result = sys_get_microseconds();
+    break;
+
+  case SYS_SLEEP_MICROS:
+    result = sys_sleep_micros((uint32_t)regs->rdi);
     break;
 
   default:

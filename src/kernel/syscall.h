@@ -51,6 +51,8 @@
 #define SYS_BRK 120 /* Modifier la taille du segment de données du processus  \
                      */
 #define SYS_NANOSLEEP 162 /* Dormir pendant un temps spécifié */
+#define SYS_GET_MICROSECONDS 163 /* Obtenir le temps en microsecondes */
+#define SYS_SLEEP_MICROS 164     /* Dormir pendant un temps spécifié en microsecondes */
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256
