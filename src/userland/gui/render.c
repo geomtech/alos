@@ -185,14 +185,34 @@ void render_flip_region(rect_t region) {
   if (x1 >= x2 || y1 >= y2)
     return;
 
-  /* Copie ligne par ligne seulement la région */
+  /* Copie ligne par ligne avec optimisation 64-bit */
   uint32_t pitch_pixels = g_main_buffer.pitch / 4;
   uint32_t copy_width = (uint32_t)(x2 - x1);
+  size_t bytes_per_line = copy_width * sizeof(uint32_t);
 
   for (int32_t y = y1; y < y2; y++) {
     uint32_t *src = g_back_buffer.pixels + y * pitch_pixels + x1;
     uint32_t *dst = g_main_buffer.pixels + y * pitch_pixels + x1;
-    memcpy(dst, src, copy_width * sizeof(uint32_t));
+
+    /* Utiliser rep movsq pour copie 64-bit ultra-rapide */
+    size_t qwords = bytes_per_line / 8;
+    if (qwords > 0) {
+      __asm__ volatile (
+        "rep movsq"
+        : "+S" (src), "+D" (dst), "+c" (qwords)
+        :
+        : "memory"
+      );
+    }
+    /* Copier les octets restants (0-7) */
+    size_t remaining = bytes_per_line % 8;
+    if (remaining) {
+      uint8_t *src8 = (uint8_t *)src;
+      uint8_t *dst8 = (uint8_t *)dst;
+      while (remaining--) {
+        *dst8++ = *src8++;
+      }
+    }
   }
 }
 

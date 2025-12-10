@@ -9,3 +9,4 @@ alos.bin
 serial.log
 busybox*
 /src/userland/gui_app
+/essence-master
