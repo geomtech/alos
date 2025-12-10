@@ -54,8 +54,8 @@ void compositor_lower_layer(layer_t* layer);
 void compositor_invalidate_rect(rect_t rect);
 void compositor_invalidate_layer(layer_t* layer);
 
-/* Rendu */
-void compositor_render(void);
+/* Rendu - retourne true si le rendu a eu lieu (flip) */
+bool compositor_render(void);
 void compositor_render_region(rect_t region);
 
 /* Fond d'écran */

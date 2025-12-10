@@ -212,9 +212,14 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
    * KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
    */
 
-  /* Write to console AND log */
+  /* Write to console AND log to serial */
   for (uint64_t i = 0; i < count; i++) {
     console_putc(buf[i]);
+    
+    /* Output to serial port 0x3F8 for debugging */
+    /* Wait for transmit empty */
+    while ((inb(0x3F8 + 5) & 0x20) == 0);
+    outb(0x3F8, buf[i]);
   }
 
   return (int)count;

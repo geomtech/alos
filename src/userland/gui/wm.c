@@ -40,6 +40,13 @@ void wm_shutdown(void) {
     g_focused_window = NULL;
 }
 
+/* Wrapper pour le callback du compositeur */
+static void wm_draw_window_layer(layer_t* layer) {
+    if (layer && layer->user_data) {
+        wm_draw_window((window_t*)layer->user_data);
+    }
+}
+
 window_t* wm_create_window(rect_t bounds, const char* title, uint32_t flags) {
     window_t* win = (window_t*)malloc(sizeof(window_t));
     if (!win) return NULL;
@@ -61,10 +68,13 @@ window_t* wm_create_window(rect_t bounds, const char* title, uint32_t flags) {
     win->content_bounds.width = bounds.width;
     win->content_bounds.height = bounds.height - titlebar_h;
     
+
+
     /* Crée la couche du compositeur */
     win->layer = compositor_create_layer(LAYER_WINDOW, bounds);
     if (win->layer) {
         win->layer->user_data = win;
+        win->layer->draw_callback = wm_draw_window_layer;
         compositor_add_layer(win->layer);
     }
     

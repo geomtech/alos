@@ -36,6 +36,11 @@ static void calculate_dock_bounds(void) {
     }
 }
 
+static void dock_draw_layer(layer_t* layer) {
+    (void)layer;
+    dock_draw();
+}
+
 int dock_init(void) {
     render_get_screen_size(&g_screen_width, &g_screen_height);
     
@@ -49,9 +54,12 @@ int dock_init(void) {
     
     calculate_dock_bounds();
     
+    calculate_dock_bounds();
+
     /* Crée la couche du dock */
     g_dock_layer = compositor_create_layer(LAYER_DOCK, g_dock_bounds);
     if (g_dock_layer) {
+        g_dock_layer->draw_callback = dock_draw_layer;
         compositor_add_layer(g_dock_layer);
     }
     

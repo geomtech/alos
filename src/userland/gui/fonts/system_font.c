@@ -18,14 +18,8 @@
 static ft_font_t* g_system_ttf_font = NULL;
 static font_t g_system_font_struct = {0};
 
-/* Données de police TTF par défaut - placeholder
- * En production, remplacer par une vraie police TTF convertie en tableau C
- */
-static const uint8_t default_ttf_data[] = {
-    /* Placeholder - remplacer par vraie police TTF */
-    0x00, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x80,
-    0x00, 0x03, 0x00, 0x60, 0x4F, 0x53, 0x2F, 0x32
-};
+/* Inclure les données de la police générées */
+#include "system_font_data.h"
 
 /* Charge la police système TTF */
 static int load_system_ttf_font(void) {
@@ -39,11 +33,9 @@ static int load_system_ttf_font(void) {
     }
 
     /* Charger la police depuis les données en mémoire */
-    /* NOTE: Pour l'instant, utilise des données placeholder
-     * En production, utiliser une vraie police TTF */
     g_system_ttf_font = ft_load_font_from_memory(
-        default_ttf_data,
-        sizeof(default_ttf_data),
+        src_userland_gui_fonts_system_font_ttf,
+        src_userland_gui_fonts_system_font_ttf_len,
         16  /* Taille par défaut 16px */
     );
 
@@ -57,7 +49,7 @@ static int load_system_ttf_font(void) {
     g_system_font_struct.ft_font = g_system_ttf_font;
     g_system_font_struct.size = 16;
     g_system_font_struct.style = FONT_STYLE_REGULAR;
-    g_system_font_struct.name = "System TTF";
+    g_system_font_struct.name = "Roboto Regular";
     g_system_font_struct.glyphs = NULL;
     g_system_font_struct.glyph_width = 0;
     g_system_font_struct.glyph_height = 0;

@@ -295,9 +295,9 @@ static void draw_background(rect_t region) {
   }
 }
 
-void compositor_render(void) {
+bool compositor_render(void) {
   if (!g_main_fb || g_dirty_count == 0)
-    return;
+    return false;
 
   /* Rend chaque dirty rectangle */
   for (uint32_t i = 0; i < g_dirty_count; i++) {
@@ -308,6 +308,7 @@ void compositor_render(void) {
 
   /* Flip si double buffering */
   render_flip();
+  return true;
 }
 
 void compositor_render_region(rect_t region) {

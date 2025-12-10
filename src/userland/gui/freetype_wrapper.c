@@ -86,21 +86,11 @@ ft_font_t* ft_load_font_from_memory(const uint8_t* font_data, size_t font_size, 
     font->size = size;
     font->library = g_ft_library;
 
-    /* Créer un stream mémoire */
-    FT_StreamRec stream;
-    stream.base = NULL;
-    stream.size = (unsigned long)font_size;
-    stream.pos = 0;
-    stream.descriptor.pointer = (void*)font_data;
-    stream.read = ft_memory_read;
-    stream.close = ft_memory_close;
-
     FT_Open_Args args;
-    args.flags = FT_OPEN_STREAM;
-    args.stream = &stream;
-    args.driver = NULL;
-    args.num_params = 0;
-    args.params = NULL;
+    memset(&args, 0, sizeof(args));
+    args.flags = FT_OPEN_MEMORY;
+    args.memory_base = (const FT_Byte*)font_data;
+    args.memory_size = (FT_Long)font_size;
 
     FT_Error error = FT_Open_Face(g_ft_library, &args, 0, &font->face);
     if (error) {
@@ -288,8 +278,9 @@ void ft_get_text_dimensions(ft_font_t* font, const char* text,
 /* Rend un texte dans le framebuffer */
 void ft_render_text(ft_font_t* font, const char* text, int32_t x, int32_t y,
                     rgba_t color, framebuffer_t* fb) {
-    if (!font || !font->face || !text || !fb || !fb->pixels)
+    if (!font || !font->face || !text || !fb || !fb->pixels) {
         return;
+    }
 
     int32_t pen_x = x;
     int32_t pen_y = y;
@@ -300,13 +291,16 @@ void ft_render_text(ft_font_t* font, const char* text, int32_t x, int32_t y,
         if (unicode == 0)
             break;
 
+        /* printf("DEBUG: char U+%X\n", unicode); */
+
         FT_UInt glyph_index = FT_Get_Char_Index(font->face, unicode);
         if (glyph_index == 0)
             continue;
 
         FT_Error error = FT_Load_Glyph(font->face, glyph_index, FT_LOAD_RENDER);
-        if (error)
+        if (error) {
             continue;
+        }
 
         FT_Bitmap* bitmap = &font->face->glyph->bitmap;
         int32_t glyph_x = pen_x + font->face->glyph->bitmap_left;

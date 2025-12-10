@@ -1,10 +1,9 @@
-/* src/gui/menubar.c - Implémentation de la barre de menu */
-
 #include "menubar.h"
 #include "render.h"
 #include "font.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* État de la menubar */
 static layer_t* g_menubar_layer = NULL;
@@ -25,14 +24,21 @@ static char g_time_str[32] = "12:00";
 /* Dimensions de l'écran */
 static uint32_t g_screen_width = 0;
 
+static void menubar_draw_layer(layer_t* layer) {
+    (void)layer;
+    menubar_draw();
+}
+
 int menubar_init(void) {
     render_get_screen_size(&g_screen_width, NULL);
     
+    render_get_screen_size(&g_screen_width, NULL);
+
     /* Crée la couche de la menubar */
     rect_t bounds = {0, 0, g_screen_width, MENUBAR_HEIGHT};
     g_menubar_layer = compositor_create_layer(LAYER_PANEL, bounds);
     if (g_menubar_layer) {
-        g_menubar_layer->draw_callback = NULL;  /* On dessine manuellement */
+        g_menubar_layer->draw_callback = menubar_draw_layer;
         compositor_add_layer(g_menubar_layer);
     }
     

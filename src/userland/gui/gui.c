@@ -46,93 +46,40 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 
-  /* Direct write to see if we reach main() - no malloc involved */
-  const char *msg = "GUI: Entered main()\n";
-  syscall3(SYS_WRITE, 1, (long)msg, 20); /* SYS_WRITE=4, stdout, msg, len */
-
-  /* Test heap/brk before doing anything else */
-  void *current_brk = (void *)syscall1(120, 0); /* SYS_BRK = 120 */
-
-  /* Try to expand heap by one page */
+  /* Test heap/brk - silent check */
+  void *current_brk = (void *)syscall1(120, 0); 
   void *new_brk = (void *)((uint64_t)current_brk + 4096);
   void *result_brk = (void *)syscall1(120, (long)new_brk);
-
-  /* Direct write to confirm brk worked */
-  if (result_brk == new_brk) {
-    const char *msg2 = "GUI: Heap test OK\n";
-    syscall3(SYS_WRITE, 1, (long)msg2, 18);
-  } else {
-    const char *msg2 = "GUI: Heap test FAILED\n";
-    syscall3(SYS_WRITE, 1, (long)msg2, 22);
-  }
-
-  printf("Starting ALOS GUI (Userland)...\n");
+  (void)result_brk;
 
   /* 1. Get Framebuffer Info */
-  const char *msg3 = "GUI: Getting framebuffer...\n";
-  syscall3(SYS_WRITE, 1, (long)msg3, 28);
-
   framebuffer_info_t fb_info;
   long fb_result = syscall1(SYS_GET_FRAMEBUFFER, (long)&fb_info);
 
   if (fb_result != 0) {
-    const char *msg4 = "GUI: Framebuffer syscall FAILED\n";
-    syscall3(SYS_WRITE, 1, (long)msg4, 32);
     return 1;
   }
-
-  const char *msg5 = "GUI: Framebuffer OK\n";
-  syscall3(SYS_WRITE, 1, (long)msg5, 20);
-
-  printf("Framebuffer: %dx%d %d bpp at %lx\n", fb_info.width, fb_info.height,
-         fb_info.bpp, fb_info.addr);
 
   g_screen_width = fb_info.width;
   g_screen_height = fb_info.height;
 
   /* 2. Initialize Renderer */
-  /* Note: render_init now takes framebuffer_info_t* or we adapt it */
-  /* Original render_init took struct limine_framebuffer* */
-  /* We expect render.c to be refactored to accept raw userland pointers */
-
-  printf("Calling render_init_user...\n");
-  int render_result = render_init_user(&fb_info);
-  printf("render_init_user returned: %d\n", render_result);
-
-  if (render_result != 0) {
-    printf("Error: Failed to initialize renderer.\n");
+  if (render_init_user(&fb_info) != 0) {
     return 1;
   }
-
-  printf("Renderer initialized successfully\n");
 
   /* Initialise les polices */
-  printf("Initializing fonts...\n");
   font_init();
 
-  /* FreeType est maintenant utilisé pour le support UTF-8 */
-  /* SSFN a été remplacé par FreeType */
-
   /* Initialise le compositeur AVANT de l'utiliser */
-  printf("Getting active framebuffer...\n");
   framebuffer_t *active_fb = render_get_active_buffer();
-  printf("Active FB: %p\n", active_fb);
-
   if (active_fb == NULL) {
-    printf("Error: active_fb is NULL!\n");
     return 1;
   }
 
-  printf("Active FB pixels: %p, width: %u, height: %u\n", active_fb->pixels,
-         active_fb->width, active_fb->height);
-
-  printf("Calling compositor_init...\n");
   if (compositor_init(active_fb) != 0) {
-    printf("Error: Failed to initialize compositor.\\n");
     return 1;
   }
-
-  printf("Compositor initialized successfully\n");
 
   /* 3. Setup WM and UI */
   compositor_set_background_gradient(rgba(30, 80, 140, 255),   /* Bleu foncé */
@@ -140,22 +87,18 @@ int main(int argc, char **argv) {
                                      GRADIENT_VERTICAL);
 
   if (wm_init() != 0) {
-    printf("Error: Failed to init WM.\n");
     return 1;
   }
 
   if (menubar_init() != 0) {
-    printf("Error: Failed to init menubar.\n");
     return 1;
   }
 
   if (dock_init() != 0) {
-    printf("Error: Failed to init dock.\n");
     return 1;
   }
 
   if (events_init() != 0) {
-    printf("Error: Failed to init events.\n");
     return 1;
   }
 
@@ -170,7 +113,7 @@ int main(int argc, char **argv) {
 
   /* Initial render */
   gui_render_full();
-
+  
   /* 4. Event Loop */
   input_event_t event;
   while (g_gui_running && !g_quit_requested) {
@@ -179,19 +122,21 @@ int main(int argc, char **argv) {
     if (res == 1) {
       /* Process event */
       gui_process_event(&event);
-      
-      /* Cursor is now drawn directly to front buffer in gui_render(),
-       * so NO render_flip() needed for mouse moves! */
       gui_render();
     } else {
       /* No event, yield CPU */
-      syscall1(SYS_SLEEP, 1);
+      syscall1(SYS_SLEEP, 10); /* Sleep 10ms to let others run */
     }
   }
 
+  printf("GUI: Loop exit\n");
   gui_shutdown();
   return 0;
 }
+
+/* Dimensions du curseur */
+#define CURSOR_WIDTH 12
+#define CURSOR_HEIGHT 19
 
 /* Traite un événement système et l'injecte dans le système GUI */
 void gui_process_event(input_event_t *event) {
@@ -200,11 +145,21 @@ void gui_process_event(input_event_t *event) {
 
   switch (event->type) {
   case INPUT_EVENT_MOUSE_MOVE:
+    /* Mark old cursor pos as dirty */
+    compositor_invalidate_rect((rect_t){
+        g_mouse_x, g_mouse_y, CURSOR_WIDTH, CURSOR_HEIGHT
+    });
+
     /* Use data.mouse.x and data.mouse.y for absolute position */
     events_mouse_move(event->data.mouse.x, event->data.mouse.y);
     /* Update local cursor pos for drawing */
     g_mouse_x = event->data.mouse.x;
     g_mouse_y = event->data.mouse.y;
+
+    /* Mark new cursor pos as dirty */
+    compositor_invalidate_rect((rect_t){
+        g_mouse_x, g_mouse_y, CURSOR_WIDTH, CURSOR_HEIGHT
+    });
     break;
 
   case INPUT_EVENT_MOUSE_BUTTON:
@@ -237,9 +192,7 @@ void gui_process_event(input_event_t *event) {
   }
 }
 
-/* Dimensions du curseur */
-#define CURSOR_WIDTH 12
-#define CURSOR_HEIGHT 19
+
 
 /* Déclaration forward du curseur */
 static void draw_cursor(int32_t x, int32_t y);
@@ -277,76 +230,6 @@ void gui_update(float delta_time) {
   /* TODO: autres animations */
 }
 
-/* Sauvegarde de la zone sous le curseur pour restauration rapide */
-static uint32_t g_cursor_save[CURSOR_WIDTH * CURSOR_HEIGHT];
-static int32_t g_cursor_save_x = -1;
-static int32_t g_cursor_save_y = -1;
-
-/* Helper: inline min/max for cursor ops */
-static inline int32_t cursor_max(int32_t a, int32_t b) { return a > b ? a : b; }
-static inline int32_t cursor_min(int32_t a, int32_t b) { return a < b ? a : b; }
-
-/* IMPORTANT: Cursor operations work directly on FRONT buffer
- * to avoid full 3MB memcpy on every mouse move */
-
-/* Sauvegarde les pixels sous le curseur (depuis le FRONT buffer) */
-static void save_cursor_background(int32_t x, int32_t y) {
-  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
-  if (!fb || !fb->pixels) return;
-  
-  uint32_t pitch_pixels = fb->pitch / 4;
-  
-  for (int32_t cy = 0; cy < CURSOR_HEIGHT; cy++) {
-    int32_t py = y + cy;
-    if (py < 0 || py >= (int32_t)g_screen_height) {
-      /* Clear this row in save buffer */
-      memset(&g_cursor_save[cy * CURSOR_WIDTH], 0, CURSOR_WIDTH * sizeof(uint32_t));
-      continue;
-    }
-    
-    int32_t x_start = cursor_max(x, 0);
-    int32_t x_end = cursor_min(x + CURSOR_WIDTH, (int32_t)g_screen_width);
-    
-    if (x_start >= x_end) {
-      memset(&g_cursor_save[cy * CURSOR_WIDTH], 0, CURSOR_WIDTH * sizeof(uint32_t));
-      continue;
-    }
-    
-    /* Copy row from framebuffer to save buffer */
-    uint32_t *src = fb->pixels + py * pitch_pixels + x_start;
-    uint32_t *dst = &g_cursor_save[cy * CURSOR_WIDTH + (x_start - x)];
-    memcpy(dst, src, (x_end - x_start) * sizeof(uint32_t));
-  }
-  g_cursor_save_x = x;
-  g_cursor_save_y = y;
-}
-
-/* Restaure les pixels sous le curseur (vers le FRONT buffer) */
-static void restore_cursor_background(void) {
-  if (g_cursor_save_x < 0)
-    return;
-
-  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
-  if (!fb || !fb->pixels) return;
-  
-  uint32_t pitch_pixels = fb->pitch / 4;
-  
-  for (int32_t cy = 0; cy < CURSOR_HEIGHT; cy++) {
-    int32_t py = g_cursor_save_y + cy;
-    if (py < 0 || py >= (int32_t)g_screen_height) continue;
-    
-    int32_t x_start = cursor_max(g_cursor_save_x, 0);
-    int32_t x_end = cursor_min(g_cursor_save_x + CURSOR_WIDTH, (int32_t)g_screen_width);
-    
-    if (x_start >= x_end) continue;
-    
-    /* Copy row from save buffer back to framebuffer */
-    uint32_t *src = &g_cursor_save[cy * CURSOR_WIDTH + (x_start - g_cursor_save_x)];
-    uint32_t *dst = fb->pixels + py * pitch_pixels + x_start;
-    memcpy(dst, src, (x_end - x_start) * sizeof(uint32_t));
-  }
-}
-
 /* Rendu complet de l'interface (appelé une seule fois au démarrage) */
 void gui_render_full(void) {
   if (g_state != GUI_STATE_RUNNING)
@@ -368,8 +251,7 @@ void gui_render_full(void) {
   /* Rendu du dock */
   dock_draw();
 
-  /* Sauvegarde le fond sous le curseur puis dessine */
-  save_cursor_background(g_mouse_x, g_mouse_y);
+  /* Dessine le curseur */
   draw_cursor(g_mouse_x, g_mouse_y);
 
   render_flip();
@@ -379,17 +261,18 @@ void gui_render(void) {
   if (g_state != GUI_STATE_RUNNING)
     return;
 
-  /* Restaure le fond sous l'ancien curseur */
-  restore_cursor_background();
-
   /* Traite les événements en attente */
   events_process();
 
-  /* Sauvegarde le fond sous le nouveau curseur */
-  save_cursor_background(g_mouse_x, g_mouse_y);
+  /* Mise à jour du compositeur (dessine les fenêtres/menus si nécessaire) */
+  /* Cela redessine aussi le fond sous le curseur grâce aux invalidations */
+  compositor_render();
 
-  /* Dessine le curseur à la nouvelle position */
+  /* Dessine le curseur par dessus le tout (sur le back buffer) */
   draw_cursor(g_mouse_x, g_mouse_y);
+
+  /* Flip final pour tout afficher */
+  render_flip();
 
   g_needs_redraw = false;
 }
@@ -650,12 +533,12 @@ static const uint8_t cursor_data[19][12] = {
     {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0},
 };
 
-/* Dessine le curseur DIRECTEMENT sur le front buffer (évite le flip complet) */
+/* Dessine le curseur sur le back buffer */
 static void draw_cursor(int32_t x, int32_t y) {
   if (!g_mouse_visible)
     return;
 
-  framebuffer_t *fb = render_get_framebuffer(); /* Front buffer! */
+  framebuffer_t *fb = render_get_active_buffer(); /* Back buffer (or Active) */
   if (!fb || !fb->pixels) return;
   
   uint32_t pitch_pixels = fb->pitch / 4;

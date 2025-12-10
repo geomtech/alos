@@ -211,7 +211,7 @@ void draw_text_alpha(const char* text, point_t pos, const font_t* font, rgba_t c
     
     /* Utiliser FreeType pour les polices TrueType */
     if (font->type == FONT_TYPE_TRUETYPE && font->ft_font) {
-        framebuffer_t* fb = render_get_framebuffer();
+        framebuffer_t* fb = render_get_active_buffer();
         if (fb) {
             /* Ajuster y pour baseline (FreeType utilise baseline) */
             int32_t baseline = ft_get_text_height(font->ft_font);
