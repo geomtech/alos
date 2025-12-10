@@ -116,20 +116,43 @@ int main(int argc, char **argv) {
   
   /* 4. Event Loop */
   input_event_t event;
+  uint32_t loop_heartbeat = 0;
+  bool event_indicator = false;
+  
   while (g_gui_running && !g_quit_requested) {
-    /* Poll for events */
-    int res = syscall1(SYS_GET_EVENT, (long)&event);
-    if (res == 1) {
-      /* Process event */
-      gui_process_event(&event);
-      gui_render();
+      /* Visual Heartbeat (Pixel 0,0) - Toggles Red/Green every ~60 frames */
+      loop_heartbeat++;
+      if (render_get_framebuffer() && render_get_framebuffer()->pixels) {
+          uint32_t *pixels = render_get_framebuffer()->pixels;
+          pixels[0] = (loop_heartbeat % 120 < 60) ? 0xFFFF0000 : 0xFF00FF00;
+      }
+  
+    /* Drain event queue (batch processing) */
+    bool events_processed = false;
+    for (int i = 0; i < 50; i++) {
+        int res = syscall1(SYS_GET_EVENT, (long)&event);
+        if (res != 1) break; /* No more events */
+
+        /* Visual Event Indicator (Pixel 5,0) */
+        event_indicator = !event_indicator;
+        if (render_get_framebuffer() && render_get_framebuffer()->pixels) {
+            uint32_t *pixels = render_get_framebuffer()->pixels;
+            pixels[5] = event_indicator ? 0xFF0000FF : 0xFFFFFFFF;
+        }
+
+        gui_process_event(&event);
+        events_processed = true;
+    }
+
+    /* Render only if we processed events or if redraw is requested */
+    if (events_processed || g_needs_redraw) {
+        gui_render();
     } else {
-      /* No event, yield CPU */
-      syscall1(SYS_SLEEP, 10); /* Sleep 10ms to let others run */
+        /* No events, yield CPU */
+        syscall1(SYS_SLEEP, 10);
     }
   }
 
-  printf("GUI: Loop exit\n");
   gui_shutdown();
   return 0;
 }
@@ -145,21 +168,11 @@ void gui_process_event(input_event_t *event) {
 
   switch (event->type) {
   case INPUT_EVENT_MOUSE_MOVE:
-    /* Mark old cursor pos as dirty */
-    compositor_invalidate_rect((rect_t){
-        g_mouse_x, g_mouse_y, CURSOR_WIDTH, CURSOR_HEIGHT
-    });
-
     /* Use data.mouse.x and data.mouse.y for absolute position */
     events_mouse_move(event->data.mouse.x, event->data.mouse.y);
     /* Update local cursor pos for drawing */
     g_mouse_x = event->data.mouse.x;
     g_mouse_y = event->data.mouse.y;
-
-    /* Mark new cursor pos as dirty */
-    compositor_invalidate_rect((rect_t){
-        g_mouse_x, g_mouse_y, CURSOR_WIDTH, CURSOR_HEIGHT
-    });
     break;
 
   case INPUT_EVENT_MOUSE_BUTTON:
@@ -195,7 +208,7 @@ void gui_process_event(input_event_t *event) {
 
 
 /* Déclaration forward du curseur */
-static void draw_cursor(int32_t x, int32_t y);
+static void draw_cursor(framebuffer_t *fb, int32_t x, int32_t y);
 
 void gui_shutdown(void) {
   g_state = GUI_STATE_SHUTDOWN;
@@ -239,42 +252,91 @@ void gui_render_full(void) {
   rect_t full_screen = {0, 0, g_screen_width, g_screen_height};
   compositor_invalidate_rect(full_screen);
 
-  /* Rendu du compositeur (fond + couches) */
+  /* Rendu du compositeur (fond + couches) vers BackBuffer */
   compositor_render();
-
-  /* Rendu de la menubar */
-  menubar_draw();
-
-  /* Rendu des fenêtres */
-  wm_draw_all();
-
-  /* Rendu du dock */
-  dock_draw();
-
-  /* Dessine le curseur */
-  draw_cursor(g_mouse_x, g_mouse_y);
-
+  
+  /* Initialiser g_last_cursor pour la logic optimisée */
+  /* On dessine le curseur sur le FrontBuffer après le Flip */
   render_flip();
+  
+  framebuffer_t *front = render_get_framebuffer(); // Front
+  draw_cursor(front, g_mouse_x, g_mouse_y);
 }
+
+/* Helper to copy a rect from BackBuffer to FrontBuffer (restore background) */
+static void restore_cursor_rect(int32_t x, int32_t y) {
+    if (x < 0 || y < 0) return;
+    
+    framebuffer_t *front = render_get_framebuffer();
+    framebuffer_t *back = render_get_active_buffer(); // Assuming this is Back
+    
+    // Safety check
+    if (!front || !back || !front->pixels || !back->pixels) return;
+    if (front == back) return; // No double buffering?
+    
+    // Calculate clipped rect
+    int32_t x_start = x;
+    int32_t y_start = y;
+    int32_t x_end = x + CURSOR_WIDTH;
+    int32_t y_end = y + CURSOR_HEIGHT;
+    
+    if (x_start < 0) x_start = 0;
+    if (y_start < 0) y_start = 0;
+    if (x_end > (int32_t)g_screen_width) x_end = (int32_t)g_screen_width;
+    if (y_end > (int32_t)g_screen_height) y_end = (int32_t)g_screen_height;
+    
+    if (x_start >= x_end || y_start >= y_end) return;
+    
+    uint32_t copy_width = x_end - x_start;
+    uint32_t copy_height = y_end - y_start;
+    uint32_t pitch_pixels = front->pitch / 4;
+    
+    // Copy rect
+    for (int32_t cy = 0; cy < copy_height; cy++) {
+        int32_t py = y_start + cy;
+        uint32_t *src_row = back->pixels + py * pitch_pixels + x_start;
+        uint32_t *dst_row = front->pixels + py * pitch_pixels + x_start;
+        memcpy(dst_row, src_row, copy_width * sizeof(uint32_t));
+    }
+}
+
+static int32_t g_last_cursor_x = -1;
+static int32_t g_last_cursor_y = -1;
 
 void gui_render(void) {
   if (g_state != GUI_STATE_RUNNING)
     return;
 
-  /* Traite les événements en attente */
   events_process();
 
-  /* Mise à jour du compositeur (dessine les fenêtres/menus si nécessaire) */
-  /* Cela redessine aussi le fond sous le curseur grâce aux invalidations */
-  compositor_render();
-
-  /* Dessine le curseur par dessus le tout (sur le back buffer) */
-  draw_cursor(g_mouse_x, g_mouse_y);
-
-  /* Flip final pour tout afficher */
-  render_flip();
-
-  g_needs_redraw = false;
+  /* 1. Update UI (Backbuffer) if needed */
+  bool ui_dirty = compositor_render(); /* Returns true if BackBuffer changed */
+  
+  framebuffer_t *front = render_get_framebuffer();
+  
+  if (ui_dirty || g_needs_redraw) {
+      /* UI changed: Full Flip (Slow but necessary) */
+      render_flip();
+      
+      /* Draw cursor on top of fresh FrontBuffer */
+      draw_cursor(front, g_mouse_x, g_mouse_y);
+      
+      g_last_cursor_x = g_mouse_x;
+      g_last_cursor_y = g_mouse_y;
+      g_needs_redraw = false;
+  } else {
+      /* UI static: Optimize Mouse */
+      if (g_mouse_x != g_last_cursor_x || g_mouse_y != g_last_cursor_y) {
+          /* 1. Restore background at OLD position (Back -> Front) */
+          restore_cursor_rect(g_last_cursor_x, g_last_cursor_y);
+          
+          /* 2. Draw cursor at NEW position (Front) */
+          draw_cursor(front, g_mouse_x, g_mouse_y);
+          
+          g_last_cursor_x = g_mouse_x;
+          g_last_cursor_y = g_mouse_y;
+      }
+  }
 }
 
 void gui_request_quit(void) { g_quit_requested = true; }
@@ -533,12 +595,11 @@ static const uint8_t cursor_data[19][12] = {
     {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0},
 };
 
-/* Dessine le curseur sur le back buffer */
-static void draw_cursor(int32_t x, int32_t y) {
+/* Dessine le curseur sur le buffer spécifié */
+static void draw_cursor(framebuffer_t *fb, int32_t x, int32_t y) {
   if (!g_mouse_visible)
     return;
 
-  framebuffer_t *fb = render_get_active_buffer(); /* Back buffer (or Active) */
   if (!fb || !fb->pixels) return;
   
   uint32_t pitch_pixels = fb->pitch / 4;
@@ -555,7 +616,7 @@ static void draw_cursor(int32_t x, int32_t y) {
       int32_t px = x + cx;
       if (px < 0 || px >= (int32_t)g_screen_width) continue;
 
-      /* Write directly to front buffer */
+      /* Write pixel */
       uint32_t color = (pixel == 1) ? 0xFF000000 : 0xFFFFFFFF;
       fb->pixels[py * pitch_pixels + px] = color;
     }

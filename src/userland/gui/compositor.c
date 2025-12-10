@@ -306,8 +306,7 @@ bool compositor_render(void) {
 
   g_dirty_count = 0;
 
-  /* Flip si double buffering */
-  render_flip();
+  /* Flip est géré par la boucle principale */
   return true;
 }
 
