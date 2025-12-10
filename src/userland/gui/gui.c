@@ -38,6 +38,9 @@ static int32_t g_mouse_y = 0;
 static bool g_mouse_visible = true;
 static bool g_needs_redraw = false;
 
+/* État précédent des boutons souris (pour détecter press/release) */
+static uint32_t g_prev_mouse_buttons = 0;
+
 /* Forward declarations */
 void gui_process_event(input_event_t *event);
 window_t *gui_create_components_test_window(void);
@@ -175,17 +178,22 @@ void gui_process_event(input_event_t *event) {
     g_mouse_y = event->data.mouse.y;
     break;
 
-  case INPUT_EVENT_MOUSE_BUTTON:
+  case INPUT_EVENT_MOUSE_BUTTON: {
     /* data.mouse.buttons = button mask (1=L, 2=R, 4=M) */
-    /* Ignore special buttons (like forward/back on gaming mice) */
-    {
-      uint32_t buttons = event->data.mouse.buttons & 0x07; /* Only L, R, M */
-      if (buttons != 0) {
-        events_mouse_button((mouse_button_t)buttons,
-                            event->data.mouse.dx != 0); /* dx used as pressed flag */
-      }
+    uint32_t new_buttons = event->data.mouse.buttons & 0x07; /* Only L, R, M */
+    uint32_t changed = new_buttons ^ g_prev_mouse_buttons;
+
+    /* Détecter chaque bouton qui a changé et générer l'événement approprié */
+    for (int i = 0; i < 3; i++) {
+        uint32_t mask = (1 << i);
+        if (changed & mask) {
+            bool pressed = (new_buttons & mask) != 0;
+            events_mouse_button((mouse_button_t)mask, pressed);
+        }
     }
+    g_prev_mouse_buttons = new_buttons;
     break;
+  }
 
   case INPUT_EVENT_MOUSE_SCROLL:
     /* data.mouse.dy = scroll delta */

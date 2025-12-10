@@ -10,6 +10,9 @@
 /* Compteur global pour IDs uniques */
 static uint32_t g_next_component_id = 1;
 
+/* Composant qui a capturé la souris (reçoit mouse_up même si souris hors bounds) */
+static gui_component_t* g_captured_component = NULL;
+
 /* Capacité initiale du tableau d'enfants */
 #define INITIAL_CHILD_CAPACITY 4
 
@@ -371,14 +374,27 @@ void component_dispatch_mouse_down(gui_component_t* root, point_t pos, mouse_but
     if (target && target->enabled && target->on_mouse_down) {
         /* Donner le focus au composant cliqué */
         component_set_focus(target);
-        target->on_mouse_down(target, pos, button);
+        /* Si le composant consomme l'événement, il capture la souris */
+        if (target->on_mouse_down(target, pos, button)) {
+            g_captured_component = target;
+        }
     }
 }
 
 void component_dispatch_mouse_up(gui_component_t* root, point_t pos, mouse_button_t button) {
     if (!root || !root->visible) return;
 
-    /* Trouver le composant le plus profond sous la souris */
+    /* Priorité au composant qui a capturé la souris */
+    if (g_captured_component) {
+        gui_component_t* captured = g_captured_component;
+        g_captured_component = NULL;  /* Libérer la capture */
+        if (captured->on_mouse_up) {
+            captured->on_mouse_up(captured, pos, button);
+        }
+        return;
+    }
+
+    /* Fallback: composant sous la souris */
     gui_component_t* target = component_hit_test(root, pos);
 
     if (target && target->enabled && target->on_mouse_up) {
