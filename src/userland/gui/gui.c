@@ -137,29 +137,14 @@ int main(int argc, char **argv) {
   
   /* 4. Event Loop */
   input_event_t event;
-  uint32_t loop_heartbeat = 0;
-  bool event_indicator = false;
-  
-  while (g_gui_running && !g_quit_requested) {
-      /* Visual Heartbeat (Pixel 0,0) - Toggles Red/Green every ~60 frames */
-      loop_heartbeat++;
-      if (render_get_framebuffer() && render_get_framebuffer()->pixels) {
-          uint32_t *pixels = render_get_framebuffer()->pixels;
-          pixels[0] = (loop_heartbeat % 120 < 60) ? 0xFFFF0000 : 0xFF00FF00;
-      }
+  uint32_t idle_frames = 0;
 
+  while (g_gui_running && !g_quit_requested) {
     /* Drain event queue (batch processing) */
     bool events_processed = false;
     for (int i = 0; i < 50; i++) {
         int res = syscall1(SYS_GET_EVENT, (long)&event);
         if (res != 1) break; /* No more events */
-
-        /* Visual Event Indicator (Pixel 5,0) */
-        event_indicator = !event_indicator;
-        if (render_get_framebuffer() && render_get_framebuffer()->pixels) {
-            uint32_t *pixels = render_get_framebuffer()->pixels;
-            pixels[5] = event_indicator ? 0xFF0000FF : 0xFFFFFFFF;
-        }
 
         gui_process_event(&event);
         events_processed = true;
@@ -171,9 +156,17 @@ int main(int argc, char **argv) {
     /* Render only if we processed events or if redraw is requested */
     if (events_processed || g_needs_redraw) {
         gui_render();
+        idle_frames = 0; // Reset idle counter
     } else {
-        /* No events, yield CPU */
-        syscall1(SYS_SLEEP, 10);
+        /* Adaptive sleep based on idle time */
+        idle_frames++;
+        if (idle_frames < 10) {
+            syscall1(SYS_SLEEP, 5);   // 5ms for responsive UI
+        } else if (idle_frames < 50) {
+            syscall1(SYS_SLEEP, 10);  // 10ms after some idle time
+        } else {
+            syscall1(SYS_SLEEP, 16);  // ~60Hz when fully idle
+        }
     }
   }
 
@@ -294,38 +287,44 @@ void gui_render_full(void) {
 
 /* Helper to copy a rect from BackBuffer to FrontBuffer (restore background) */
 static void restore_cursor_rect(int32_t x, int32_t y) {
+    // Early exit optimizations
     if (x < 0 || y < 0) return;
-    
+    if (x >= (int32_t)g_screen_width || y >= (int32_t)g_screen_height) return;
+
     framebuffer_t *front = render_get_framebuffer();
-    framebuffer_t *back = render_get_active_buffer(); // Assuming this is Back
-    
-    // Safety check
-    if (!front || !back || !front->pixels || !back->pixels) return;
-    if (front == back) return; // No double buffering?
-    
-    // Calculate clipped rect
-    int32_t x_start = x;
-    int32_t y_start = y;
-    int32_t x_end = x + CURSOR_WIDTH;
-    int32_t y_end = y + CURSOR_HEIGHT;
-    
-    if (x_start < 0) x_start = 0;
-    if (y_start < 0) y_start = 0;
-    if (x_end > (int32_t)g_screen_width) x_end = (int32_t)g_screen_width;
-    if (y_end > (int32_t)g_screen_height) y_end = (int32_t)g_screen_height;
-    
-    if (x_start >= x_end || y_start >= y_end) return;
-    
-    uint32_t copy_width = x_end - x_start;
-    uint32_t copy_height = y_end - y_start;
+    framebuffer_t *back = render_get_active_buffer();
+
+    // Safety checks (branchless when possible)
+    if (!front || !back) return;
+    if (front == back) return; // No double buffering
+
+    // Calculate clipped rect (optimized bounds checking)
+    int32_t x_end = (x + CURSOR_WIDTH > (int32_t)g_screen_width) ? (int32_t)g_screen_width : x + CURSOR_WIDTH;
+    int32_t y_end = (y + CURSOR_HEIGHT > (int32_t)g_screen_height) ? (int32_t)g_screen_height : y + CURSOR_HEIGHT;
+
+    uint32_t copy_width = x_end - x;
+    uint32_t copy_height = y_end - y;
+
+    // Fast path: use 64-bit copies when aligned
     uint32_t pitch_pixels = front->pitch / 4;
-    
-    // Copy rect
-    for (int32_t cy = 0; cy < copy_height; cy++) {
-        int32_t py = y_start + cy;
-        uint32_t *src_row = back->pixels + py * pitch_pixels + x_start;
-        uint32_t *dst_row = front->pixels + py * pitch_pixels + x_start;
-        memcpy(dst_row, src_row, copy_width * sizeof(uint32_t));
+
+    // Optimized copy with 64-bit transfers when possible
+    for (uint32_t cy = 0; cy < copy_height; cy++) {
+        uint32_t py = y + cy;
+        uint64_t *src_row = (uint64_t*)(back->pixels + py * pitch_pixels + x);
+        uint64_t *dst_row = (uint64_t*)(front->pixels + py * pitch_pixels + x);
+
+        uint32_t qwords = copy_width / 2;
+        for (uint32_t i = 0; i < qwords; i++) {
+            dst_row[i] = src_row[i];
+        }
+
+        // Handle odd pixel
+        if (copy_width & 1) {
+            uint32_t *src32 = (uint32_t*)src_row;
+            uint32_t *dst32 = (uint32_t*)dst_row;
+            dst32[copy_width - 1] = src32[copy_width - 1];
+        }
     }
 }
 

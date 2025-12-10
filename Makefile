@@ -256,6 +256,44 @@ run-qemu: iso
 		-no-reboot \
 		-no-shutdown
 
+# Run QEMU avec accélération GPU optimisée (RECOMMANDÉ pour GUI)
+run-qemu-fast: iso
+	@echo "=== Starting QEMU with GPU acceleration ==="
+	rm -f serial.log
+	qemu-system-x86_64 -cdrom alos.iso -m 4096M \
+		-accel kvm -cpu host -smp 2 \
+		-drive if=pflash,format=raw,readonly,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 \
+		-device virtio-net-pci,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk \
+		-device virtio-vga-gl -display sdl,gl=on \
+		-serial file:serial.log \
+		-no-reboot \
+		-no-shutdown
+	@echo ""
+	@echo "=== Performance tips ==="
+	@echo "  - virtio-vga-gl: GPU accéléré (au lieu de bochs-display)"
+	@echo "  - KVM: Accélération matérielle CPU"
+	@echo "  - SDL+OpenGL: Rendu accéléré"
+	@echo "  - Serial log: tail -f serial.log"
+
+# Run QEMU fast sans KVM (pour machines virtuelles ou non-Linux)
+run-qemu-fast-no-kvm: iso
+	@echo "=== Starting QEMU with GPU acceleration (no KVM) ==="
+	rm -f serial.log
+	qemu-system-x86_64 -cdrom alos.iso -m 4096M \
+		-cpu qemu64 -smp 2 \
+		-drive if=pflash,format=raw,readonly,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+		-drive if=pflash,format=raw,file=/usr/share/OVMF/OVMF_VARS_4M.fd \
+		-boot d -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80 \
+		-device virtio-net-pci,netdev=net0 \
+		-drive file=disk.img,format=raw,index=0,media=disk \
+		-device virtio-vga-gl -display sdl,gl=on \
+		-serial file:serial.log \
+		-no-reboot \
+		-no-shutdown
+
 # Run avec capture de paquets (pour Wireshark)
 run-pcap: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M \

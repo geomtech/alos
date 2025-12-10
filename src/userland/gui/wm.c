@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/syscall.h>
 
 /* Liste des fenêtres */
 static window_t* g_windows_head = NULL;
@@ -37,10 +38,9 @@ static bool g_resize_slow = false; // Indique si le redimensionnement précéden
 
 /* Fonction pour obtenir le timestamp actuel en millisecondes */
 static uint64_t wm_get_current_time_ms(void) {
-    /* Implémentation simple - à remplacer par une implémentation réelle */
-    /* Pour l'instant, on utilise un compteur simple qui s'incrémente */
-    static uint64_t counter = 0;
-    return counter += 10; // Simule 10ms par appel
+    /* Utilise SYS_GET_MICROSECONDS pour un timestamp réel */
+    uint64_t microseconds = (uint64_t)syscall0(SYS_GET_MICROSECONDS);
+    return microseconds / 1000; // Convertir en millisecondes
 }
 
 int wm_init(void) {
@@ -225,7 +225,6 @@ void wm_resize_window(window_t* win, uint32_t width, uint32_t height) {
     compositor_invalidate_rect(win->bounds);
 
     // Mettre à jour les dimensions de la fenêtre
-    rect_t old_bounds = win->bounds;
     win->bounds.width = width;
     win->bounds.height = height;
 
@@ -394,23 +393,31 @@ void wm_draw_window(window_t* win) {
 
     /* 2. Dessiner l'arbre de composants si présent */
     if (win->root_component) {
-        /* Mettre à jour les bounds relatives du root pour correspondre au content area */
-        win->root_component->bounds.x = 0;
-        win->root_component->bounds.y = 0;
-        win->root_component->bounds.width = win->content_bounds.width;
-        win->root_component->bounds.height = win->content_bounds.height;
+        /* Vérifier si les bounds ont changé avant de mettre à jour */
+        bool bounds_changed = (win->root_component->abs_bounds.x != win->content_bounds.x ||
+                               win->root_component->abs_bounds.y != win->content_bounds.y ||
+                               win->root_component->abs_bounds.width != win->content_bounds.width ||
+                               win->root_component->abs_bounds.height != win->content_bounds.height);
 
-        /* Pour le root component (sans parent), définir directement les bounds absolus */
-        win->root_component->abs_bounds.x = win->content_bounds.x;
-        win->root_component->abs_bounds.y = win->content_bounds.y;
-        win->root_component->abs_bounds.width = win->content_bounds.width;
-        win->root_component->abs_bounds.height = win->content_bounds.height;
+        if (bounds_changed) {
+            /* Mettre à jour les bounds relatives du root */
+            win->root_component->bounds.x = 0;
+            win->root_component->bounds.y = 0;
+            win->root_component->bounds.width = win->content_bounds.width;
+            win->root_component->bounds.height = win->content_bounds.height;
 
-        /* Mettre à jour les bounds absolus des enfants uniquement (récursif) */
-        for (uint32_t i = 0; i < win->root_component->child_count; i++) {
-            component_update_abs_bounds(win->root_component->children[i]);
+            /* Définir directement les bounds absolus du root */
+            win->root_component->abs_bounds.x = win->content_bounds.x;
+            win->root_component->abs_bounds.y = win->content_bounds.y;
+            win->root_component->abs_bounds.width = win->content_bounds.width;
+            win->root_component->abs_bounds.height = win->content_bounds.height;
+
+            /* Mettre à jour les bounds absolus des enfants (récursif) */
+            for (uint32_t i = 0; i < win->root_component->child_count; i++) {
+                component_update_abs_bounds(win->root_component->children[i]);
+            }
         }
-        
+
         component_draw(win->root_component, render_get_framebuffer());
     }
 
@@ -588,15 +595,15 @@ void wm_handle_mouse_up(point_t pos, mouse_button_t button) {
 }
 
 window_t* wm_find_window_at(point_t pos) {
-    /* Parcourt les fenêtres du premier plan vers l'arrière */
-    window_t* found = NULL;
+    /* Parcourt les fenêtres du premier plan vers l'arrière
+     * La liste est en Z-order, la première fenêtre trouvée est la bonne */
     for (window_t* win = g_windows_head; win; win = win->next) {
         if (win->is_minimized) continue;
         if (point_in_rect(pos, win->bounds)) {
-            found = win;
+            return win; /* Early exit - première fenêtre = top-most */
         }
     }
-    return found;
+    return NULL;
 }
 
 window_t* wm_get_window_by_id(uint32_t id) {
