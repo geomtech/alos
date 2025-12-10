@@ -1210,9 +1210,13 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame) {
    * bloquants qui appellent scheduler_schedule().
    *
    * On détecte Ring 3 en regardant le CS sauvegardé sur la stack.
+   *
+   * IMPORTANT: On doit AUSSI ne pas préempter si le thread actuel est
+   * un thread user, MÊME s'il est temporairement en Ring 0 (dans un syscall).
+   * Sinon, on pourrait corrompre son contexte pendant le syscall.
    */
-  if ((frame->cs & 0x03) == 3) {
-    /* On était en Ring 3 (user mode), ne pas préempter */
+  if ((frame->cs & 0x03) == 3 || g_current_thread->owner != NULL) {
+    /* On était en Ring 3 OU c'est un thread user dans un syscall - ne pas préempter */
     return 0;
   }
 
