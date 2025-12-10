@@ -88,4 +88,9 @@ window_t* wm_get_first_window(void);
 /* Gestion des composants */
 void wm_set_root_component(window_t* win, gui_component_t* root);
 
+/* Optimisations de redimensionnement sans scintillement */
+void wm_mark_container_bits_received(window_t* win);
+void wm_mark_embed_bits_received(window_t* win);
+void wm_check_queued_resizes(void);
+
 #endif /* WM_H */

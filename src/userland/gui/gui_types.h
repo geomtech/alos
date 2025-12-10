@@ -340,6 +340,35 @@ static inline bool rects_intersect(rect_t a, rect_t b) {
 }
 
 /**
+ * Vérifie si deux rectangles se chevauchent.
+ */
+static inline bool rect_intersects(rect_t a, rect_t b) {
+    return !(a.x + (int32_t)a.width <= b.x || b.x + (int32_t)b.width <= a.x ||
+             a.y + (int32_t)a.height <= b.y || b.y + (int32_t)b.height <= a.y);
+}
+
+/**
+ * Calcule l'union de deux rectangles.
+ */
+static inline rect_t rect_union(rect_t a, rect_t b) {
+    rect_t result;
+    int32_t x1 = (a.x < b.x) ? a.x : b.x;
+    int32_t y1 = (a.y < b.y) ? a.y : b.y;
+    int32_t x2_a = a.x + (int32_t)a.width;
+    int32_t x2_b = b.x + (int32_t)b.width;
+    int32_t y2_a = a.y + (int32_t)a.height;
+    int32_t y2_b = b.y + (int32_t)b.height;
+    int32_t x2 = (x2_a > x2_b) ? x2_a : x2_b;
+    int32_t y2 = (y2_a > y2_b) ? y2_a : y2_b;
+
+    result.x = x1;
+    result.y = y1;
+    result.width = (uint32_t)(x2 - x1);
+    result.height = (uint32_t)(y2 - y1);
+    return result;
+}
+
+/**
  * Calcule l'intersection de deux rectangles.
  */
 static inline rect_t rect_intersect(rect_t a, rect_t b) {
@@ -352,7 +381,7 @@ static inline rect_t rect_intersect(rect_t a, rect_t b) {
     int32_t y2_b = b.y + (int32_t)b.height;
     int32_t x2 = (x2_a < x2_b) ? x2_a : x2_b;
     int32_t y2 = (y2_a < y2_b) ? y2_a : y2_b;
-    
+
     if (x2 > x1 && y2 > y1) {
         result.x = x1;
         result.y = y1;

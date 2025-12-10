@@ -33,6 +33,12 @@ static int g_clip_stack_top = -1;
 static rect_t g_clip_rect = {0, 0, 0, 0};
 static bool g_clip_enabled = false;
 
+/* Dirty Rectangles - Optimisation pour ne redessiner que les zones modifiées */
+#define MAX_DIRTY_RECTS 64
+static rect_t g_dirty_rects[MAX_DIRTY_RECTS];
+static int g_dirty_rect_count = 0;
+static bool g_dirty_tracking_enabled = true;
+
 /* ============================================================================
  * FAST MEMORY OPERATIONS (x86-64 optimized)
  * ============================================================================
@@ -214,6 +220,71 @@ void render_flip_region(rect_t region) {
       }
     }
   }
+}
+
+/* ============================================================================
+ * DIRTY RECTANGLES - Optimisation pour ne redessiner que les zones modifiées
+ * ============================================================================
+ */
+
+void render_enable_dirty_tracking(bool enabled) {
+  g_dirty_tracking_enabled = enabled;
+  if (!enabled) {
+    g_dirty_rect_count = 0;
+  }
+}
+
+void render_add_dirty_rect(rect_t rect) {
+  if (!g_dirty_tracking_enabled || g_dirty_rect_count >= MAX_DIRTY_RECTS)
+    return;
+
+  /* Fusionner avec les rectangles existants si possible */
+  for (int i = 0; i < g_dirty_rect_count; i++) {
+    if (rect_intersects(g_dirty_rects[i], rect)) {
+      /* Fusionner les rectangles */
+      g_dirty_rects[i] = rect_union(g_dirty_rects[i], rect);
+      return;
+    }
+  }
+
+  /* Ajouter un nouveau rectangle */
+  g_dirty_rects[g_dirty_rect_count++] = rect;
+}
+
+void render_clear_dirty_rects(void) {
+  g_dirty_rect_count = 0;
+}
+
+int render_get_dirty_rect_count(void) {
+  return g_dirty_rect_count;
+}
+
+rect_t render_get_dirty_rect(int index) {
+  if (index < 0 || index >= g_dirty_rect_count) {
+    return rect_make(0, 0, 0, 0);
+  }
+  return g_dirty_rects[index];
+}
+
+void render_flip_dirty_regions(void) {
+  if (!g_double_buffer_enabled || !g_dirty_tracking_enabled)
+    return;
+
+  /* Si aucun rectangle sale, ne rien faire */
+  if (g_dirty_rect_count == 0)
+    return;
+
+  /* Fusionner tous les rectangles sales en un seul pour optimiser le flip */
+  rect_t combined_rect = g_dirty_rects[0];
+  for (int i = 1; i < g_dirty_rect_count; i++) {
+    combined_rect = rect_union(combined_rect, g_dirty_rects[i]);
+  }
+
+  /* Appliquer le flip uniquement sur la zone combinée */
+  render_flip_region(combined_rect);
+
+  /* Réinitialiser les rectangles sales */
+  g_dirty_rect_count = 0;
 }
 
 framebuffer_t *render_get_active_buffer(void) {

@@ -6,6 +6,8 @@
 #include "components/component.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 /* Liste des fenêtres */
 static window_t* g_windows_head = NULL;
@@ -21,11 +23,40 @@ static window_t* g_dragging_window = NULL;
 static window_t* g_resizing_window = NULL;
 static point_t g_last_mouse_pos = {0, 0};
 
+/* Optimisations de redimensionnement sans scintillement */
+#define RESIZE_FLICKER_TIMEOUT_MS (40)
+#define RESIZE_SLOW_THRESHOLD (RESIZE_FLICKER_TIMEOUT_MS * 3 / 4)
+
+static window_t* g_resize_window = NULL;
+static bool g_resize_received_bits_from_container = false;
+static bool g_resize_received_bits_from_embed = true; // Initialisé à true car pas de fenêtre intégrée par défaut
+static uint64_t g_resize_start_time_ms = 0;
+static rect_t g_resize_queued_rect = {0, 0, 0, 0};
+static bool g_resize_queued = false;
+static bool g_resize_slow = false; // Indique si le redimensionnement précédent a dépassé RESIZE_SLOW_THRESHOLD
+
+/* Fonction pour obtenir le timestamp actuel en millisecondes */
+static uint64_t wm_get_current_time_ms(void) {
+    /* Implémentation simple - à remplacer par une implémentation réelle */
+    /* Pour l'instant, on utilise un compteur simple qui s'incrémente */
+    static uint64_t counter = 0;
+    return counter += 10; // Simule 10ms par appel
+}
+
 int wm_init(void) {
     g_windows_head = NULL;
     g_focused_window = NULL;
     g_next_window_id = 1;
     render_get_screen_size(&g_screen_width, &g_screen_height);
+
+    /* Initialisation des variables d'optimisation */
+    g_resize_window = NULL;
+    g_resize_received_bits_from_container = false;
+    g_resize_received_bits_from_embed = true;
+    g_resize_start_time_ms = 0;
+    g_resize_queued = false;
+    g_resize_slow = false;
+
     return 0;
 }
 
@@ -178,25 +209,58 @@ void wm_move_window(window_t* win, int32_t x, int32_t y) {
 
 void wm_resize_window(window_t* win, uint32_t width, uint32_t height) {
     if (!win) return;
-    
+
+    // Vérifier si le redimensionnement est en cours et si le timeout n'est pas dépassé
+    if (g_resize_window == win &&
+        g_resize_start_time_ms + RESIZE_FLICKER_TIMEOUT_MS > wm_get_current_time_ms()) {
+        // Mettre en file d'attente le redimensionnement
+        g_resize_queued = true;
+        g_resize_queued_rect = rect_make(win->bounds.x, win->bounds.y, width, height);
+        return;
+    }
+
+    // Réinitialiser l'état de redimensionnement
+    g_resize_queued = false;
+
     compositor_invalidate_rect(win->bounds);
-    
+
+    // Mettre à jour les dimensions de la fenêtre
+    rect_t old_bounds = win->bounds;
     win->bounds.width = width;
     win->bounds.height = height;
-    
+
     uint32_t titlebar_h = (win->flags & WINDOW_FLAG_TITLEBAR) ? TITLEBAR_HEIGHT : 0;
     win->content_bounds.width = width;
     win->content_bounds.height = height - titlebar_h;
-    
+
     if (win->layer) {
         win->layer->bounds = win->bounds;
     }
-    
+
+    // Appeler le callback de redimensionnement si présent
     if (win->on_resize) {
         win->on_resize(win, width, height);
     }
-    
-    wm_invalidate_window(win);
+
+    // Si le redimensionnement est dynamique (sans scintillement)
+    bool dynamic_resize = false; // À déterminer en fonction des flags ou de la configuration
+    if (dynamic_resize) {
+        // Ne pas redessiner tout de suite
+        g_resize_window = win;
+        g_resize_received_bits_from_container = false;
+        g_resize_received_bits_from_embed = true; // Pas de fenêtre intégrée pour l'instant
+        g_resize_start_time_ms = wm_get_current_time_ms();
+    } else {
+        // Redessiner immédiatement
+        wm_invalidate_window(win);
+    }
+
+    // Vérifier si le redimensionnement précédent était lent
+    if (g_resize_slow) {
+        // Copier les anciens bits de surface pour éviter les artefacts visuels
+        // en cas de timeout du redimensionnement
+        // (à implémenter lorsque le système de surface sera disponible)
+    }
 }
 
 void wm_minimize_window(window_t* win) {
@@ -548,6 +612,58 @@ window_t* wm_get_first_window(void) {
 
 /* === Gestion des composants === */
 
+/* Vérifier et appliquer les redimensionnements en file d'attente */
+static void wm_check_queued_resize(void) {
+    if (g_resize_queued && g_resize_window) {
+        // Vérifier si le timeout est dépassé
+        if (g_resize_start_time_ms + RESIZE_FLICKER_TIMEOUT_MS <= wm_get_current_time_ms()) {
+            // Appliquer le redimensionnement en file d'attente
+            rect_t queued_rect = g_resize_queued_rect;
+            g_resize_queued = false;
+
+            // Appliquer les nouvelles dimensions
+            window_t* win = g_resize_window;
+            wm_resize_window(win, queued_rect.width, queued_rect.height);
+
+            // Réinitialiser l'état de redimensionnement
+            g_resize_window = NULL;
+            g_resize_received_bits_from_container = false;
+            g_resize_received_bits_from_embed = true;
+        }
+    }
+}
+
+/* Mettre à jour l'état du redimensionnement */
+static void wm_update_resize_state(void) {
+    if (g_resize_window) {
+        // Vérifier si le timeout est dépassé
+        if (g_resize_start_time_ms + RESIZE_FLICKER_TIMEOUT_MS <= wm_get_current_time_ms()) {
+            // Le redimensionnement a pris trop de temps, marquer comme lent
+            g_resize_slow = true;
+
+            // Forcer le redessinement
+            wm_invalidate_window(g_resize_window);
+
+            // Réinitialiser l'état de redimensionnement
+            g_resize_window = NULL;
+            g_resize_received_bits_from_container = false;
+            g_resize_received_bits_from_embed = true;
+        } else {
+            // Vérifier si les bits ont été reçus des deux côtés
+            if (g_resize_received_bits_from_container && g_resize_received_bits_from_embed) {
+                // Les deux côtés ont terminé le rendu, afficher le résultat
+                wm_invalidate_window(g_resize_window);
+
+                // Réinitialiser l'état de redimensionnement
+                g_resize_window = NULL;
+                g_resize_received_bits_from_container = false;
+                g_resize_received_bits_from_embed = true;
+                g_resize_slow = false;
+            }
+        }
+    }
+}
+
 /* Helper pour propager owner_window récursivement */
 static void propagate_owner_window(gui_component_t* comp, window_t* win) {
     if (!comp) return;
@@ -579,4 +695,25 @@ void wm_set_root_component(window_t* win, gui_component_t* root) {
     }
 
     wm_invalidate_window(win);
+}
+
+/* Marquer la réception des bits de rendu du conteneur */
+void wm_mark_container_bits_received(window_t* win) {
+    if (g_resize_window == win) {
+        g_resize_received_bits_from_container = true;
+        wm_update_resize_state();
+    }
+}
+
+/* Marquer la réception des bits de rendu de la fenêtre intégrée */
+void wm_mark_embed_bits_received(window_t* win) {
+    if (g_resize_window == win) {
+        g_resize_received_bits_from_embed = true;
+        wm_update_resize_state();
+    }
+}
+
+/* Vérifier et appliquer les redimensionnements en file d'attente */
+void wm_check_queued_resizes(void) {
+    wm_check_queued_resize();
 }

@@ -1,6 +1,9 @@
 /* src/gui/gui.c - Implémentation du point d'entrée GUI */
 
 #include "gui.h"
+#include "batch_render.h"
+#include "hw_accel.h"
+#include "vsync.h"
 /* SSFN remplacé par FreeType */
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +79,19 @@ int main(int argc, char **argv) {
   /* Initialise les polices */
   font_init();
 
+  /* Initialise le système de batch rendering */
+  batch_render_init();
+
+  /* Initialise l'accélération matérielle */
+  hw_accel_init();
+
+  /* Initialise la synchronisation VSYNC */
+  vsync_init();
+  vsync_set_enabled(true);
+
+  /* Active le suivi des dirty rectangles */
+  render_enable_dirty_tracking(true);
+
   /* Initialise le compositeur AVANT de l'utiliser */
   framebuffer_t *active_fb = render_get_active_buffer();
   if (active_fb == NULL) {
@@ -131,7 +147,7 @@ int main(int argc, char **argv) {
           uint32_t *pixels = render_get_framebuffer()->pixels;
           pixels[0] = (loop_heartbeat % 120 < 60) ? 0xFFFF0000 : 0xFF00FF00;
       }
-  
+
     /* Drain event queue (batch processing) */
     bool events_processed = false;
     for (int i = 0; i < 50; i++) {
@@ -148,6 +164,9 @@ int main(int argc, char **argv) {
         gui_process_event(&event);
         events_processed = true;
     }
+
+    /* Vérifier les redimensionnements en file d'attente même sans événements */
+    wm_check_queued_resizes();
 
     /* Render only if we processed events or if redraw is requested */
     if (events_processed || g_needs_redraw) {
@@ -316,14 +335,28 @@ void gui_render(void) {
 
   events_process();
 
+  // Vérifier les redimensionnements en file d'attente avant le rendu
+  wm_check_queued_resizes();
+
+  // Attendre le VSYNC pour un rendu fluide
+  vsync_wait();
+
   framebuffer_t *front = render_get_framebuffer();
   bool cursor_moved = (g_mouse_x != g_last_cursor_x || g_mouse_y != g_last_cursor_y);
 
   /* 1. Update UI - compositor fait les partial flips automatiquement */
   bool ui_dirty = compositor_render();
 
+  // Marquer que le conteneur a terminé son rendu
+  window_t *focused_win = wm_get_focused_window();
+  if (focused_win) {
+      wm_mark_container_bits_received(focused_win);
+  }
+
   if (ui_dirty || g_needs_redraw) {
-      /* UI a changé - le curseur peut avoir été écrasé par le flip partiel */
+      /* UI a changé - utiliser le flip des régions sales pour optimiser */
+      render_flip_dirty_regions();
+
       /* Redessiner le curseur sur le front buffer */
       draw_cursor(front, g_mouse_x, g_mouse_y);
 

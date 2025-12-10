@@ -68,6 +68,53 @@ void render_flip_region(rect_t region);
 framebuffer_t *render_get_active_buffer(void);
 
 /* ============================================================================
+ * DIRTY RECTANGLES - Optimisation pour ne redessiner que les zones modifiées
+ * ============================================================================
+ */
+
+/**
+ * Active ou désactive le suivi des zones modifiées.
+ * Quand activé, le système suit les régions qui ont été modifiées
+ * pour optimiser le rendu.
+ *
+ * @param enabled Activer ou désactiver le suivi
+ */
+void render_enable_dirty_tracking(bool enabled);
+
+/**
+ * Ajoute une zone modifiée (dirty rectangle).
+ * Le système fusionnera automatiquement les zones qui se chevauchent.
+ *
+ * @param rect Rectangle à marquer comme modifié
+ */
+void render_add_dirty_rect(rect_t rect);
+
+/**
+ * Efface tous les rectangles modifiés.
+ */
+void render_clear_dirty_rects(void);
+
+/**
+ * Retourne le nombre de rectangles modifiés.
+ */
+int render_get_dirty_rect_count(void);
+
+/**
+ * Retourne un rectangle modifié par son index.
+ *
+ * @param index Index du rectangle
+ * @return Rectangle modifié (ou rectangle vide si index invalide)
+ */
+rect_t render_get_dirty_rect(int index);
+
+/**
+ * Effectue le flip uniquement des régions modifiées.
+ * Beaucoup plus rapide que render_flip() quand seules certaines zones
+ * de l'écran ont changé.
+ */
+void render_flip_dirty_regions(void);
+
+/* ============================================================================
  * CLIPPING
  * ============================================================================
  */

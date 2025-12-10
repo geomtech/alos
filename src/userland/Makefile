@@ -10,7 +10,7 @@ LIBC = $(LIBC_DIR)/libc.a
 CRT0 = $(LIBC_DIR)/crt0.o
 
 # Sources GUI de base
-GUI_SRC = gui/render.c gui/font.c gui/fonts/roboto.c gui/freetype_wrapper.c gui/fonts/system_font.c gui/compositor.c gui/wm.c gui/menubar.c gui/dock.c gui/events.c gui/gui.c
+GUI_SRC = gui/render.c gui/font.c gui/fonts/roboto.c gui/freetype_wrapper.c gui/fonts/system_font.c gui/compositor.c gui/wm.c gui/menubar.c gui/dock.c gui/events.c gui/gui.c gui/batch_render.c gui/hw_accel.c gui/vsync.c
 
 # Sources des composants UI
 COMPONENTS_SRC = gui/components/component.c gui/components/label.c gui/components/button.c gui/components/panel.c
