@@ -450,7 +450,6 @@ void ft_render_text(ft_font_t* font, const char* text, int32_t x, int32_t y,
     int32_t pen_x = x;
     int32_t pen_y = y;
     const char* s = text;
-    uint32_t opaque_color = rgba_to_u32(color);
 
     while (*s) {
         uint32_t unicode = ft_decode_utf8(&s);
@@ -463,50 +462,12 @@ void ft_render_text(ft_font_t* font, const char* text, int32_t x, int32_t y,
             continue;
         }
 
-        int32_t glyph_x = pen_x + glyph->bitmap_left;
-        int32_t glyph_y = pen_y - glyph->bitmap_top;
+        if (glyph->alpha && glyph->width != 0 && glyph->height != 0) {
+            int32_t glyph_x = pen_x + glyph->bitmap_left;
+            int32_t glyph_y = pen_y - glyph->bitmap_top;
 
-        /* Rejeter le bitmap entier avant d'entrer dans ses pixels. */
-        if (glyph->alpha &&
-            glyph_x < (int32_t)fb->width &&
-            glyph_y < (int32_t)fb->height &&
-            glyph_x + (int32_t)glyph->width > 0 &&
-            glyph_y + (int32_t)glyph->height > 0) {
-
-            uint32_t row_start =
-                glyph_y < 0 ? (uint32_t)(-glyph_y) : 0;
-            uint32_t row_end = glyph->height;
-            if (glyph_y + (int32_t)row_end > (int32_t)fb->height)
-                row_end = (uint32_t)((int32_t)fb->height - glyph_y);
-
-            uint32_t col_start =
-                glyph_x < 0 ? (uint32_t)(-glyph_x) : 0;
-            uint32_t col_end = glyph->width;
-            if (glyph_x + (int32_t)col_end > (int32_t)fb->width)
-                col_end = (uint32_t)((int32_t)fb->width - glyph_x);
-
-            for (uint32_t row = row_start; row < row_end; row++) {
-                const uint8_t* alpha_row =
-                    glyph->alpha + (size_t)row * glyph->width;
-
-                for (uint32_t col = col_start; col < col_end; col++) {
-                    uint8_t coverage = alpha_row[col];
-                    if (coverage == 0)
-                        continue;
-
-                    int32_t px = glyph_x + (int32_t)col;
-                    int32_t py = glyph_y + (int32_t)row;
-
-                    if (coverage == 255 && color.a == 255) {
-                        draw_pixel(px, py, opaque_color);
-                    } else {
-                        rgba_t final_color = color;
-                        final_color.a =
-                            (uint8_t)(((uint32_t)color.a * coverage) / 255U);
-                        draw_pixel_alpha(px, py, final_color);
-                    }
-                }
-            }
+            draw_alpha_mask(fb, glyph_x, glyph_y, glyph->alpha,
+                            glyph->width, glyph->height, glyph->width, color);
         }
 
         pen_x += glyph->advance;

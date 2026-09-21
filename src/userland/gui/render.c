@@ -388,6 +388,68 @@ void draw_pixel_alpha(int32_t x, int32_t y, rgba_t color) {
       blend_pixel_fast(fb->pixels[offset], color.r, color.g, color.b, color.a);
 }
 
+void draw_alpha_mask(framebuffer_t *fb, int32_t x, int32_t y,
+                     const uint8_t *mask, uint32_t width, uint32_t height,
+                     uint32_t mask_pitch, rgba_t color) {
+  if (!fb || !fb->pixels || !mask || width == 0 || height == 0 ||
+      color.a == 0)
+    return;
+
+  int32_t x1 = x;
+  int32_t y1 = y;
+  int32_t x2 = x + (int32_t)width;
+  int32_t y2 = y + (int32_t)height;
+
+  if (x1 < 0) x1 = 0;
+  if (y1 < 0) y1 = 0;
+  if (x2 > (int32_t)fb->width) x2 = (int32_t)fb->width;
+  if (y2 > (int32_t)fb->height) y2 = (int32_t)fb->height;
+
+  if (g_clip_enabled) {
+    if (x1 < g_clip_rect.x) x1 = g_clip_rect.x;
+    if (y1 < g_clip_rect.y) y1 = g_clip_rect.y;
+    int32_t clip_x2 = g_clip_rect.x + (int32_t)g_clip_rect.width;
+    int32_t clip_y2 = g_clip_rect.y + (int32_t)g_clip_rect.height;
+    if (x2 > clip_x2) x2 = clip_x2;
+    if (y2 > clip_y2) y2 = clip_y2;
+  }
+
+  if (x1 >= x2 || y1 >= y2)
+    return;
+
+  uint32_t src_x = (uint32_t)(x1 - x);
+  uint32_t src_y = (uint32_t)(y1 - y);
+  uint32_t pitch_pixels = fb->pitch / 4;
+  uint32_t opaque = rgba_to_u32(color);
+
+  for (int32_t py = y1; py < y2; py++, src_y++) {
+    const uint8_t *src =
+        mask + (size_t)src_y * mask_pitch + src_x;
+    uint32_t *dst = fb->pixels + (uint32_t)py * pitch_pixels + (uint32_t)x1;
+
+    for (int32_t px = x1; px < x2; px++, src++, dst++) {
+      uint32_t coverage = *src;
+      if (coverage == 0)
+        continue;
+
+      if (coverage == 255 && color.a == 255) {
+        *dst = opaque;
+        continue;
+      }
+
+      uint32_t alpha = ((uint32_t)color.a * coverage + 127U) / 255U;
+      if (alpha == 0)
+        continue;
+      if (alpha == 255) {
+        *dst = opaque;
+        continue;
+      }
+
+      *dst = blend_pixel_fast(*dst, color.r, color.g, color.b, alpha);
+    }
+  }
+}
+
 uint32_t read_pixel(int32_t x, int32_t y) {
   if (x < 0 || y < 0 || x >= (int32_t)g_main_buffer.width ||
       y >= (int32_t)g_main_buffer.height) {

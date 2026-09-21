@@ -166,6 +166,23 @@ void draw_pixel(int32_t x, int32_t y, uint32_t color);
 void draw_pixel_alpha(int32_t x, int32_t y, rgba_t color);
 
 /**
+ * Composite un masque alpha 8-bit teinté dans un framebuffer.
+ * Le clipping est calculé une seule fois pour tout le masque.
+ *
+ * @param fb Framebuffer destination
+ * @param x Position X
+ * @param y Position Y
+ * @param mask Masque alpha (0..255)
+ * @param width Largeur du masque
+ * @param height Hauteur du masque
+ * @param mask_pitch Octets entre deux lignes du masque
+ * @param color Couleur de teinte
+ */
+void draw_alpha_mask(framebuffer_t *fb, int32_t x, int32_t y,
+                     const uint8_t *mask, uint32_t width, uint32_t height,
+                     uint32_t mask_pitch, rgba_t color);
+
+/**
  * Lit la couleur d'un pixel.
  *
  * @param x Coordonnée X
