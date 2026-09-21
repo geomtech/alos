@@ -110,6 +110,22 @@ static void uint_to_hex(uint32_t value, char* buffer)
 }
 
 /**
+ * Convertit un entier 64 bits en chaîne hexadécimale sans division 64 bits.
+ */
+static void uint64_to_hex(uint64_t value, char* buffer)
+{
+    static const char hex_chars[] = "0123456789ABCDEF";
+
+    buffer[0] = '0';
+    buffer[1] = 'x';
+
+    for (int i = 15; i >= 0; i--) {
+        buffer[2 + (15 - i)] = hex_chars[(value >> (i * 4)) & 0xF];
+    }
+    buffer[18] = '\0';
+}
+
+/**
  * Retourne le préfixe de niveau de log.
  */
 static const char* level_to_string(klog_level_t level)
@@ -152,9 +168,6 @@ static void write_to_file(const char* str)
     size_t len = klog_strlen(str);
     int written = vfs_write(log_file, log_file_offset, len, (const uint8_t*)str);
     
-    if (written > 0) {
-        log_file_offset += written;
-    }
     if (written > 0) {
         log_file_offset += written;
     }
@@ -384,6 +397,13 @@ void klog_hex(klog_level_t level, const char* module, const char* msg, uint32_t 
 {
     char suffix[16];
     uint_to_hex(value, suffix);
+    do_log(level, module, msg, suffix);
+}
+
+void klog_hex64(klog_level_t level, const char* module, const char* msg, uint64_t value)
+{
+    char suffix[24];
+    uint64_to_hex(value, suffix);
     do_log(level, module, msg, suffix);
 }
 
