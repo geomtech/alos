@@ -32,6 +32,18 @@ void cpu_init(void) {
   KLOG_INFO_HEX("CPU", "EFER: ", efer);
   KLOG_INFO_HEX("CPU", "CR0: ", cr0);
   KLOG_INFO_HEX("CPU", "CR4: ", cr4);
+
+  /* PAT est requis pour un futur framebuffer Write-Combining.
+   * Pour l'instant on inspecte seulement le layout laissé par le firmware/
+   * bootloader afin de ne pas modifier un index PAT déjà utilisé. */
+  uint32_t eax, ebx, ecx, edx;
+  cpuid(1, &eax, &ebx, &ecx, &edx);
+  if (edx & (1u << 16)) {
+    KLOG_INFO("CPU", "PAT supported");
+    KLOG_INFO_HEX64("CPU", "IA32_PAT: ", rdmsr(MSR_IA32_PAT));
+  } else {
+    KLOG_WARN("CPU", "PAT not supported");
+  }
 }
 
 /**

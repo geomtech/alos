@@ -247,38 +247,84 @@ page_directory_t* vmm_get_directory(void)
     return current_directory;
 }
 
-uint64_t vmm_get_physical(uint64_t virt)
+int vmm_query_mapping(page_directory_t* dir, uint64_t virt,
+                      vmm_mapping_info_t* info)
 {
-    virt = PAGE_ALIGN_DOWN(virt);
-    
-    /* Extraire les index */
+    if (dir == NULL || dir->pml4 == NULL || info == NULL) {
+        return -1;
+    }
+
+    info->physical_address = 0;
+    info->raw_entry = 0;
+    info->page_size = 0;
+    info->level = 0;
+
     uint64_t pml4_idx = PML4_INDEX(virt);
     uint64_t pdpt_idx = PDPT_INDEX(virt);
     uint64_t pd_idx = PD_INDEX(virt);
     uint64_t pt_idx = PT_INDEX(virt);
-    
-    /* Traverser les tables */
-    page_entry_t* pml4 = current_directory->pml4;
-    
-    page_entry_t* pdpt = get_table(pml4, pml4_idx);
-    if (pdpt == NULL) return 0;
-    
-    page_entry_t* pd = get_table(pdpt, pdpt_idx);
-    if (pd == NULL) return 0;
-    
-    /* Vérifier si c'est une huge page (2MB) */
-    if (pd[pd_idx] & PAGE_HUGE) {
-        return (pd[pd_idx] & PAGE_FRAME_MASK) + (virt & 0x1FFFFF);
+
+    if (!(dir->pml4[pml4_idx] & PAGE_PRESENT)) {
+        return -1;
     }
-    
-    page_entry_t* pt = get_table(pd, pd_idx);
-    if (pt == NULL) return 0;
-    
-    if (!(pt[pt_idx] & PAGE_PRESENT)) {
+
+    page_entry_t* pdpt = get_table(dir->pml4, pml4_idx);
+    if (pdpt == NULL || !(pdpt[pdpt_idx] & PAGE_PRESENT)) {
+        return -1;
+    }
+
+    page_entry_t pdpte = pdpt[pdpt_idx];
+    if (pdpte & PAGE_HUGE) {
+        /* 1 GiB page: physical base bits 30..51. */
+        uint64_t base = pdpte & 0x000FFFFFC0000000ULL;
+        info->physical_address = base + (virt & 0x3FFFFFFFULL);
+        info->raw_entry = pdpte;
+        info->page_size = 1ULL << 30;
+        info->level = 3;
         return 0;
     }
-    
-    return (pt[pt_idx] & PAGE_FRAME_MASK) + PAGE_OFFSET(virt);
+
+    page_entry_t* pd = get_table(pdpt, pdpt_idx);
+    if (pd == NULL || !(pd[pd_idx] & PAGE_PRESENT)) {
+        return -1;
+    }
+
+    page_entry_t pde = pd[pd_idx];
+    if (pde & PAGE_HUGE) {
+        /* 2 MiB page: physical base bits 21..51. */
+        uint64_t base = pde & 0x000FFFFFFFE00000ULL;
+        info->physical_address = base + (virt & 0x1FFFFFULL);
+        info->raw_entry = pde;
+        info->page_size = 1ULL << 21;
+        info->level = 2;
+        return 0;
+    }
+
+    page_entry_t* pt = get_table(pd, pd_idx);
+    if (pt == NULL || !(pt[pt_idx] & PAGE_PRESENT)) {
+        return -1;
+    }
+
+    page_entry_t pte = pt[pt_idx];
+    info->physical_address =
+        (pte & PAGE_FRAME_MASK) + (virt & (PAGE_SIZE - 1));
+    info->raw_entry = pte;
+    info->page_size = PAGE_SIZE;
+    info->level = 1;
+    return 0;
+}
+
+uint64_t vmm_get_physical(uint64_t virt)
+{
+    if (current_directory == NULL) {
+        return 0;
+    }
+
+    vmm_mapping_info_t info;
+    if (vmm_query_mapping(current_directory, virt, &info) != 0) {
+        return 0;
+    }
+    return info.physical_address;
 }
 
 bool vmm_is_mapped(uint64_t virt)
@@ -438,35 +484,11 @@ void vmm_free_directory(page_directory_t* dir)
 
 uint64_t vmm_get_phys_addr(page_directory_t* dir, uint64_t virt_addr)
 {
-    if (dir == NULL) {
+    vmm_mapping_info_t info;
+    if (vmm_query_mapping(dir, virt_addr, &info) != 0) {
         return 0;
     }
-    
-    virt_addr = PAGE_ALIGN_DOWN(virt_addr);
-    
-    uint64_t pml4_idx = PML4_INDEX(virt_addr);
-    uint64_t pdpt_idx = PDPT_INDEX(virt_addr);
-    uint64_t pd_idx = PD_INDEX(virt_addr);
-    uint64_t pt_idx = PT_INDEX(virt_addr);
-    
-    page_entry_t* pdpt = get_table(dir->pml4, pml4_idx);
-    if (pdpt == NULL) return 0;
-    
-    page_entry_t* pd = get_table(pdpt, pdpt_idx);
-    if (pd == NULL) return 0;
-    
-    if (pd[pd_idx] & PAGE_HUGE) {
-        return (pd[pd_idx] & PAGE_FRAME_MASK) + (virt_addr & 0x1FFFFF);
-    }
-    
-    page_entry_t* pt = get_table(pd, pd_idx);
-    if (pt == NULL) return 0;
-    
-    if (!(pt[pt_idx] & PAGE_PRESENT)) {
-        return 0;
-    }
-    
-    return pt[pt_idx] & PAGE_FRAME_MASK;
+    return info.physical_address;
 }
 
 int vmm_map_page_in_dir(page_directory_t* dir, uint64_t phys, uint64_t virt, uint64_t flags)

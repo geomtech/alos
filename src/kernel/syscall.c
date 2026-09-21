@@ -615,31 +615,35 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
     return -1;
   }
 
-  /* Calculer la taille alignée sur les pages */
   uint64_t size = (uint64_t)fb->pitch * fb->height;
-  uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-  /* Adresse virtuelle cible pour le framebuffer en userland */
-  /* On choisit une adresse fixe (1.5GB) qui rentre dans 32 bits pour éviter
-   * les problèmes de troncature */
+  /*
+   * Ne pas supposer que l'adresse framebuffer fournie par Limine est un simple
+   * alias HHDM. Lire le mapping kernel réellement installé par le bootloader.
+   */
+  vmm_mapping_info_t fb_mapping;
+  if (vmm_query_mapping(vmm_get_kernel_directory(), (uint64_t)fb->address,
+                        &fb_mapping) != 0) {
+    KLOG_ERROR("SYSCALL", "Unable to resolve Limine framebuffer mapping");
+    return -1;
+  }
+
+  uint64_t phys_base = fb_mapping.physical_address;
+  uint64_t phys_page = PAGE_ALIGN_DOWN(phys_base);
+  uint64_t page_offset = phys_base - phys_page;
+  uint64_t pages = (page_offset + size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+  /* Adresse virtuelle cible pour le framebuffer en userland. */
   uint64_t vaddr_base = 0x60000000ULL;
 
-  /* Mapper les pages */
-  /* Limine donne l'adresse physique dans address (si mapped en hhdm, on peut
-   * convertir) */
-  /* Mais fb->address est l'adresse virtuelle HHDM ou physique ? */
-  /* Limine spec: address is the virtual address of the framebuffer in the HHDM.
-   */
-  /* On doit convertir en physique pour vmm_map_page */
-
-  uint64_t phys_base = vmm_virt_to_phys((void *)fb->address);
-  /* Fallback: si vmm_virt_to_phys échoue ou si l'adresse n'est pas dans HHDM */
-  /* (Ce qui ne devrait pas arriver avec Limine) */
-
-  /* Debug log */
-  KLOG_INFO_HEX("SYSCALL", "Mapping FB Phys: ", phys_base);
-  KLOG_INFO_HEX("SYSCALL", "Mapping FB Virt: ", vaddr_base);
-  KLOG_INFO_DEC("SYSCALL", "Pages: ", pages);
+  KLOG_INFO_HEX64("SYSCALL", "Framebuffer Limine virt: ",
+                  (uint64_t)fb->address);
+  KLOG_INFO_HEX64("SYSCALL", "Framebuffer phys: ", phys_base);
+  KLOG_INFO_HEX64("SYSCALL", "Framebuffer mapping entry: ",
+                  fb_mapping.raw_entry);
+  KLOG_INFO_DEC("SYSCALL", "Framebuffer kernel page size (KiB): ",
+                (uint32_t)(fb_mapping.page_size / 1024));
+  KLOG_INFO_DEC("SYSCALL", "Framebuffer user pages: ", (uint32_t)pages);
 
   /* Get the current process's page directory */
   process_t *proc = process_current();
@@ -654,12 +658,12 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   for (uint64_t i = 0; i < pages; i++) {
     uint64_t offset = i * PAGE_SIZE;
     /* PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH (bit 3) */
-    vmm_map_page_in_dir(user_dir, phys_base + offset, vaddr_base + offset,
+    vmm_map_page_in_dir(user_dir, phys_page + offset, vaddr_base + offset,
                         PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH);
   }
 
   /* Remplir la structure */
-  info->addr = vaddr_base;
+  info->addr = vaddr_base + page_offset;
   info->width = (uint32_t)fb->width;
   info->height = (uint32_t)fb->height;
   info->pitch = (uint32_t)fb->pitch;

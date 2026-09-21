@@ -78,6 +78,14 @@ typedef struct {
     page_entry_t *pml4;     /* Adresse virtuelle du PML4 (via HHDM) */
 } page_directory_t;
 
+/* Description d'un mapping virtuel existant. */
+typedef struct {
+    uint64_t physical_address; /* Adresse physique exacte, offset inclus */
+    uint64_t raw_entry;        /* Entrée terminale PTE/PDE/PDPTE */
+    uint64_t page_size;        /* 4 KiB, 2 MiB ou 1 GiB */
+    uint8_t level;             /* 1=PT, 2=PD, 3=PDPT */
+} vmm_mapping_info_t;
+
 /* ========================================
  * Fonctions publiques
  * ======================================== */
@@ -124,6 +132,13 @@ page_directory_t* vmm_get_directory(void);
  * @return Adresse physique, ou 0 si non mappée
  */
 uint64_t vmm_get_physical(uint64_t virt);
+
+/**
+ * Inspecte le mapping d'une adresse virtuelle dans un espace donné.
+ * Supporte les pages 4 KiB, 2 MiB et 1 GiB.
+ */
+int vmm_query_mapping(page_directory_t* dir, uint64_t virt,
+                      vmm_mapping_info_t* info);
 
 /**
  * Vérifie si une page est mappée.

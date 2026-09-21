@@ -43,6 +43,7 @@
 
 /* APIC MSRs */
 #define MSR_APIC_BASE 0x0000001B
+#define MSR_IA32_PAT  0x00000277 /* Page Attribute Table */
 
 /* ========================================
  * Control Registers
