@@ -174,6 +174,11 @@ void kmain(void) {
     console_set_hhdm_offset(g_hhdm_offset);
   }
 
+  /* Initialiser les logs série le plus tôt possible.
+   * Plusieurs sous-systèmes (GDT/IDT/CPU) utilisent déjà KLOG pendant leur init. */
+  klog_early_init();
+  KLOG_INFO("KERNEL", "Early serial logging active");
+
   /* Initialize GDT (64-bit) */
   gdt_init();
 
@@ -198,9 +203,6 @@ void kmain(void) {
   /* Initialiser le driver clavier (buffer + semaphore) */
   extern void keyboard_init(void);
   keyboard_init();
-
-  /* Initialiser le système de logs précoce (buffer mémoire) */
-  klog_early_init();
 
   /* Log bootloader info */
   if (bootloader_info_request.response != NULL) {
