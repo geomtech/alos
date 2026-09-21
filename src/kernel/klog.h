@@ -90,6 +90,11 @@ void klog_dec(klog_level_t level, const char* module, const char* msg, uint32_t 
 void klog_hex(klog_level_t level, const char* module, const char* msg, uint32_t value);
 
 /**
+ * Log un message avec une valeur hexadécimale 64 bits.
+ */
+void klog_hex64(klog_level_t level, const char* module, const char* msg, uint64_t value);
+
+/**
  * Force l'écriture des logs bufferisés sur le disque.
  */
 void klog_flush(void);
@@ -111,5 +116,10 @@ void klog_flush(void);
 #define KLOG_INFO_HEX(module, msg, v)   klog_hex(LOG_INFO, module, msg, v)
 #define KLOG_WARN_HEX(module, msg, v)   klog_hex(LOG_WARN, module, msg, v)
 #define KLOG_ERROR_HEX(module, msg, v)  klog_hex(LOG_ERROR, module, msg, v)
+
+#define KLOG_DEBUG_HEX64(module, msg, v) klog_hex64(LOG_DEBUG, module, msg, (uint64_t)(v))
+#define KLOG_INFO_HEX64(module, msg, v)  klog_hex64(LOG_INFO, module, msg, (uint64_t)(v))
+#define KLOG_WARN_HEX64(module, msg, v)  klog_hex64(LOG_WARN, module, msg, (uint64_t)(v))
+#define KLOG_ERROR_HEX64(module, msg, v) klog_hex64(LOG_ERROR, module, msg, (uint64_t)(v))
 
 #endif /* KLOG_H */
