@@ -17,6 +17,33 @@ static uint32_t g_next_layer_id = 1;
 static rect_t g_dirty_rects[MAX_DIRTY_RECTS];
 static uint32_t g_dirty_count = 0;
 
+static uint64_t dirty_rect_area(rect_t rect) {
+  return (uint64_t)rect.width * (uint64_t)rect.height;
+}
+
+static bool dirty_rects_should_merge(rect_t a, rect_t b) {
+  if (rects_intersect(a, b))
+    return true;
+
+  int32_t a_right = a.x + (int32_t)a.width;
+  int32_t a_bottom = a.y + (int32_t)a.height;
+  int32_t b_right = b.x + (int32_t)b.width;
+  int32_t b_bottom = b.y + (int32_t)b.height;
+  int32_t gap_x = 0, gap_y = 0;
+
+  if (a_right < b.x) gap_x = b.x - a_right;
+  else if (b_right < a.x) gap_x = a.x - b_right;
+  if (a_bottom < b.y) gap_y = b.y - a_bottom;
+  else if (b_bottom < a.y) gap_y = a.y - b_bottom;
+
+  if (gap_x > 2 || gap_y > 2)
+    return false;
+
+  rect_t merged = rect_union(a, b);
+  uint64_t separate_area = dirty_rect_area(a) + dirty_rect_area(b);
+  return dirty_rect_area(merged) <= separate_area + (separate_area >> 2);
+}
+
 /* Fond d'écran */
 static uint32_t g_bg_color = 0xFF1E3A5F; /* Bleu foncé par défaut */
 static bool g_bg_gradient = false;
@@ -178,39 +205,48 @@ void compositor_lower_layer(layer_t *layer) {
 }
 
 void compositor_invalidate_rect(rect_t rect) {
-  /* Safety check: don't crash if compositor not initialized */
-  if (!g_main_fb) {
+  if (!g_main_fb)
     return;
+
+  int64_t x1 = rect.x;
+  int64_t y1 = rect.y;
+  int64_t x2 = x1 + (int64_t)rect.width;
+  int64_t y2 = y1 + (int64_t)rect.height;
+
+  if (x1 < 0) x1 = 0;
+  if (y1 < 0) y1 = 0;
+  if (x2 > (int64_t)g_main_fb->width) x2 = g_main_fb->width;
+  if (y2 > (int64_t)g_main_fb->height) y2 = g_main_fb->height;
+  if (x1 >= x2 || y1 >= y2)
+    return;
+
+  rect.x = (int32_t)x1;
+  rect.y = (int32_t)y1;
+  rect.width = (uint32_t)(x2 - x1);
+  rect.height = (uint32_t)(y2 - y1);
+
+  for (uint32_t i = 0; i < g_dirty_count;) {
+    if (dirty_rects_should_merge(rect, g_dirty_rects[i])) {
+      rect = rect_union(rect, g_dirty_rects[i]);
+      g_dirty_rects[i] = g_dirty_rects[g_dirty_count - 1];
+      g_dirty_count--;
+      i = 0;
+      continue;
+    }
+    i++;
   }
 
   if (g_dirty_count >= MAX_DIRTY_RECTS) {
-    /* Fusionne tout en un seul rectangle */
-    g_dirty_rects[0].x = 0;
-    g_dirty_rects[0].y = 0;
-    g_dirty_rects[0].width = g_main_fb->width;
-    g_dirty_rects[0].height = g_main_fb->height;
+    g_dirty_rects[0] = (rect_t){0, 0, g_main_fb->width, g_main_fb->height};
     g_dirty_count = 1;
     return;
   }
 
-  /* Clipping au framebuffer */
-  if (rect.x < 0) {
-    rect.width += (uint32_t)rect.x;
-    rect.x = 0;
-  }
-  if (rect.y < 0) {
-    rect.height += (uint32_t)rect.y;
-    rect.y = 0;
-  }
-  if (rect.x + (int32_t)rect.width > (int32_t)g_main_fb->width)
-    rect.width = g_main_fb->width - (uint32_t)rect.x;
-  if (rect.y + (int32_t)rect.height > (int32_t)g_main_fb->height)
-    rect.height = g_main_fb->height - (uint32_t)rect.y;
-
-  if (rect.width == 0 || rect.height == 0)
-    return;
-
   g_dirty_rects[g_dirty_count++] = rect;
+}
+
+bool compositor_has_damage(void) {
+  return g_dirty_count != 0;
 }
 
 void compositor_invalidate_layer(layer_t *layer) {

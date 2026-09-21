@@ -48,6 +48,7 @@
 #define SYS_MEMINFO 102         /* Obtenir les infos mémoire */
 #define SYS_GET_FRAMEBUFFER 110 /* Obtenir les infos framebuffer */
 #define SYS_GET_EVENT 111       /* Obtenir un événement input */
+#define SYS_WAIT_EVENT 112      /* Attendre un événement input (bloquant) */
 #define SYS_BRK 120 /* Modifier la taille du segment de données du processus  \
                      */
 #define SYS_NANOSLEEP 162 /* Dormir pendant un temps spécifié */

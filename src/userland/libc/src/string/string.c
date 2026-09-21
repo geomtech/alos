@@ -105,19 +105,90 @@ char *strtok(char *str, const char *delim) {
   return strtok_r(str, delim, &saveptr);
 }
 
+/* Cache CPU feature detection: ERMS = Enhanced REP MOVSB/STOSB. */
+static int cpu_has_erms(void) {
+  static int cached = -1;
+  if (cached >= 0)
+    return cached;
+
+  uint32_t eax, ebx, ecx, edx;
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(0), "c"(0));
+
+  if (eax < 7) {
+    cached = 0;
+    return cached;
+  }
+
+  __asm__ volatile("cpuid"
+                   : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                   : "a"(7), "c"(0));
+  cached = (ebx & (1u << 9)) ? 1 : 0;
+  return cached;
+}
+
 void *memset(void *ptr, int value, size_t n) {
-  uint8_t *p = (uint8_t *)ptr;
+  void *ret = ptr;
+  uint8_t *dst = (uint8_t *)ptr;
+
+  if (n >= 64 && cpu_has_erms()) {
+    size_t count = n;
+    __asm__ volatile("cld; rep stosb"
+                     : "+D"(dst), "+c"(count)
+                     : "a"((uint8_t)value)
+                     : "memory", "cc");
+    return ret;
+  }
+
+  if (n >= 16) {
+    uint64_t byte = (uint8_t)value;
+    uint64_t pattern = byte * 0x0101010101010101ULL;
+    uint64_t *dst64 = (uint64_t *)dst;
+    size_t qwords = n / 8;
+    __asm__ volatile("cld; rep stosq"
+                     : "+D"(dst64), "+c"(qwords)
+                     : "a"(pattern)
+                     : "memory", "cc");
+    dst = (uint8_t *)dst64;
+    n &= 7;
+  }
+
   while (n--)
-    *p++ = (uint8_t)value;
-  return ptr;
+    *dst++ = (uint8_t)value;
+  return ret;
 }
 
 void *memcpy(void *dest, const void *src, size_t n) {
-  uint8_t *d = (uint8_t *)dest;
-  const uint8_t *s = (const uint8_t *)src;
+  void *ret = dest;
+  uint8_t *dst = (uint8_t *)dest;
+  const uint8_t *source = (const uint8_t *)src;
+
+  if (n >= 64 && cpu_has_erms()) {
+    size_t count = n;
+    __asm__ volatile("cld; rep movsb"
+                     : "+D"(dst), "+S"(source), "+c"(count)
+                     :
+                     : "memory", "cc");
+    return ret;
+  }
+
+  if (n >= 16) {
+    uint64_t *dst64 = (uint64_t *)dst;
+    const uint64_t *src64 = (const uint64_t *)source;
+    size_t qwords = n / 8;
+    __asm__ volatile("cld; rep movsq"
+                     : "+D"(dst64), "+S"(src64), "+c"(qwords)
+                     :
+                     : "memory", "cc");
+    dst = (uint8_t *)dst64;
+    source = (const uint8_t *)src64;
+    n &= 7;
+  }
+
   while (n--)
-    *d++ = *s++;
-  return dest;
+    *dst++ = *source++;
+  return ret;
 }
 
 void *memmove(void *dest, const void *src, size_t n) {

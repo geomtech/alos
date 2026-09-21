@@ -78,20 +78,14 @@ void events_dispatch(event_t* event) {
         case EVENT_MOUSE_MOVE:
             g_mouse_pos = event->mouse.position;
             
-            /* Dispatch à la menubar d'abord */
+            /* Dispatch principal: menubar ou window manager. */
             if (event->mouse.position.y < MENUBAR_HEIGHT) {
                 menubar_handle_mouse_move(event->mouse.position);
-            }
-            /* Puis au dock */
-            else if (point_in_rect(event->mouse.position, dock_get_bounds())) {
-                dock_handle_mouse_move(event->mouse.position);
-            }
-            /* Puis au window manager */
-            else {
+            } else if (!point_in_rect(event->mouse.position, dock_get_bounds())) {
                 wm_handle_mouse_move(event->mouse.position);
             }
-            
-            /* Toujours mettre à jour le dock pour l'effet de grossissement */
+
+            /* Le dock reçoit exactement un move, même hors de ses bounds. */
             dock_handle_mouse_move(event->mouse.position);
             break;
             

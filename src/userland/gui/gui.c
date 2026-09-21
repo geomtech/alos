@@ -135,39 +135,35 @@ int main(int argc, char **argv) {
   /* Initial render */
   gui_render_full();
   
-  /* 4. Event Loop */
+  /* 4. Event Loop
+   * Block for the first event instead of polling. Input IRQs wake us
+   * immediately; the timeout keeps timer-driven UI work possible. */
   input_event_t event;
-  uint32_t idle_frames = 0;
 
   while (g_gui_running && !g_quit_requested) {
-    /* Drain event queue (batch processing) */
     bool events_processed = false;
-    for (int i = 0; i < 50; i++) {
-        int res = syscall1(SYS_GET_EVENT, (long)&event);
-        if (res != 1) break; /* No more events */
 
+    int res = syscall2(SYS_WAIT_EVENT, (long)&event, 16);
+    if (res == 1) {
+      gui_process_event(&event);
+      events_processed = true;
+
+      /* Drain the rest of this burst without blocking again. */
+      for (int i = 0; i < 49; i++) {
+        res = syscall1(SYS_GET_EVENT, (long)&event);
+        if (res != 1)
+          break;
         gui_process_event(&event);
-        events_processed = true;
+      }
+    } else if (res < 0) {
+      /* Defensive fallback if the blocking path fails. */
+      syscall1(SYS_SLEEP, 1);
     }
 
-    /* Vérifier les redimensionnements en file d'attente même sans événements */
     wm_check_queued_resizes();
 
-    /* Render only if we processed events or if redraw is requested */
-    if (events_processed || g_needs_redraw) {
-        gui_render();
-        idle_frames = 0; // Reset idle counter
-    } else {
-        /* Adaptive sleep based on idle time */
-        idle_frames++;
-        if (idle_frames < 10) {
-            syscall1(SYS_SLEEP, 5);   // 5ms for responsive UI
-        } else if (idle_frames < 50) {
-            syscall1(SYS_SLEEP, 10);  // 10ms after some idle time
-        } else {
-            syscall1(SYS_SLEEP, 16);  // ~60Hz when fully idle
-        }
-    }
+    if (events_processed || g_needs_redraw || compositor_has_damage())
+      gui_render();
   }
 
   gui_shutdown();
@@ -333,9 +329,6 @@ void gui_render(void) {
     return;
 
   events_process();
-
-  // Vérifier les redimensionnements en file d'attente avant le rendu
-  wm_check_queued_resizes();
 
   // Attendre le VSYNC pour un rendu fluide
   vsync_wait();

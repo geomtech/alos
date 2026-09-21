@@ -686,6 +686,16 @@ static int sys_get_event(input_event_t *event) {
   return input_pop_event(event);
 }
 
+/**
+ * SYS_WAIT_EVENT (112) - Attend un événement sans polling.
+ * timeout_ms == 0 signifie attente infinie.
+ */
+static int sys_wait_event(input_event_t *event, uint32_t timeout_ms) {
+  if (event == NULL)
+    return -1;
+  return input_wait_event(event, timeout_ms);
+}
+
 /* ========================================
  * Socket Syscalls
  * ======================================== */
@@ -1333,6 +1343,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_GET_EVENT:
     result = sys_get_event((input_event_t *)regs->rdi);
+    break;
+
+  case SYS_WAIT_EVENT:
+    result = sys_wait_event((input_event_t *)regs->rdi, (uint32_t)regs->rsi);
     break;
 
   /* Process syscalls - forward declarations */

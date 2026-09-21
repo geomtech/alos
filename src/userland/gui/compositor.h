@@ -53,6 +53,7 @@ void compositor_lower_layer(layer_t* layer);
 /* Dirty rectangles */
 void compositor_invalidate_rect(rect_t rect);
 void compositor_invalidate_layer(layer_t* layer);
+bool compositor_has_damage(void);
 
 /* Rendu - retourne true si le rendu a eu lieu (flip) */
 bool compositor_render(void);
