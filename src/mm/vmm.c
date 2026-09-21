@@ -25,7 +25,7 @@ static page_directory_t *current_directory = NULL;
 /**
  * Convertit une adresse physique en virtuelle via HHDM.
  */
-static inline void* phys_to_virt(uint64_t phys)
+static inline void* hhdm_phys_to_virt(uint64_t phys)
 {
     return (void*)(phys + hhdm_offset);
 }
@@ -33,7 +33,7 @@ static inline void* phys_to_virt(uint64_t phys)
 /**
  * Convertit une adresse virtuelle en physique.
  */
-static inline uint64_t virt_to_phys(void* virt)
+static inline uint64_t hhdm_virt_to_phys(void* virt)
 {
     return (uint64_t)virt - hhdm_offset;
 }
@@ -78,7 +78,7 @@ static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, ui
             table[index] |= PAGE_USER;
         }
         uint64_t phys = table[index] & PAGE_FRAME_MASK;
-        return (page_entry_t*)phys_to_virt(phys);
+        return (page_entry_t*)hhdm_phys_to_virt(phys);
     }
     
     /* Créer une nouvelle table */
@@ -95,7 +95,7 @@ static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, ui
     }
     
     /* Ajouter l'entrée */
-    uint64_t phys = virt_to_phys(new_table);
+    uint64_t phys = hhdm_virt_to_phys(new_table);
     table[index] = phys | PAGE_PRESENT | PAGE_RW | (flags & PAGE_USER);
     
     KLOG_DEBUG_HEX("VMM", "  Created table at phys=", (uint32_t)phys);
@@ -112,7 +112,7 @@ static page_entry_t* get_table(page_entry_t* table, uint64_t index)
         return NULL;
     }
     uint64_t phys = table[index] & PAGE_FRAME_MASK;
-    return (page_entry_t*)phys_to_virt(phys);
+    return (page_entry_t*)hhdm_phys_to_virt(phys);
 }
 
 /* ========================================
@@ -133,7 +133,7 @@ void vmm_init(void)
     /* Lire le PML4 actuel (configuré par Limine) */
     uint64_t cr3 = read_cr3();
     kernel_directory.pml4_phys = cr3 & PAGE_FRAME_MASK;
-    kernel_directory.pml4 = (page_entry_t*)phys_to_virt(kernel_directory.pml4_phys);
+    kernel_directory.pml4 = (page_entry_t*)hhdm_phys_to_virt(kernel_directory.pml4_phys);
     
     current_directory = &kernel_directory;
     
@@ -378,7 +378,7 @@ page_directory_t* vmm_create_directory(void)
     }
     
     dir->pml4 = pml4;
-    dir->pml4_phys = virt_to_phys(pml4);
+    dir->pml4_phys = hhdm_virt_to_phys(pml4);
     
     /* Copier les entrées kernel (higher half: indices 256-511) */
     for (int i = 256; i < 512; i++) {
@@ -538,7 +538,7 @@ int vmm_copy_to_dir(page_directory_t* dir, uint64_t dst_virt, const void* src, u
         uint64_t bytes_in_page = PAGE_SIZE - offset;
         uint64_t to_copy = (remaining < bytes_in_page) ? remaining : bytes_in_page;
         
-        uint8_t* dst_ptr = (uint8_t*)phys_to_virt(phys) + offset;
+        uint8_t* dst_ptr = (uint8_t*)hhdm_phys_to_virt(phys) + offset;
         for (uint64_t i = 0; i < to_copy; i++) {
             dst_ptr[i] = src_ptr[i];
         }
@@ -579,7 +579,7 @@ int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, u
         uint64_t bytes_in_page = PAGE_SIZE - offset;
         uint64_t to_write = (remaining < bytes_in_page) ? remaining : bytes_in_page;
         
-        void* virt_ptr = phys_to_virt(phys);
+        void* virt_ptr = hhdm_phys_to_virt(phys);
         KLOG_DEBUG_HEX("VMM", "  virt_ptr (high)=", (uint32_t)((uint64_t)virt_ptr >> 32));
         KLOG_DEBUG_HEX("VMM", "  virt_ptr (low)=", (uint32_t)(uint64_t)virt_ptr);
         
@@ -601,10 +601,10 @@ int vmm_memset_in_dir(page_directory_t* dir, uint64_t dst_virt, uint8_t value, u
 
 void* vmm_phys_to_virt(uint64_t phys)
 {
-    return phys_to_virt(phys);
+    return hhdm_phys_to_virt(phys);
 }
 
 uint64_t vmm_virt_to_phys(void* virt)
 {
-    return virt_to_phys(virt);
+    return hhdm_virt_to_phys(virt);
 }
