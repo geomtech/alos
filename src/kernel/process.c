@@ -613,7 +613,7 @@ int process_execute(const char *filename) {
     }
   }
 
-  KLOG_INFO_HEX("EXEC", "User stack top: ", USER_STACK_TOP);
+  KLOG_INFO_HEX64("EXEC", "User stack top: ", USER_STACK_TOP);
 
   /* ========================================
    * Préparer la stack utilisateur
@@ -847,7 +847,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     }
   }
 
-  KLOG_INFO_HEX("EXEC", "User stack top: ", USER_STACK_TOP);
+  KLOG_INFO_HEX64("EXEC", "User stack top: ", USER_STACK_TOP);
 
   /* ========================================
    * Préparer la stack utilisateur avec argc/argv
