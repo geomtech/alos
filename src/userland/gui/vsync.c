@@ -56,21 +56,24 @@ void vsync_wait(void) {
     uint32_t current_time = syscall1(SYS_GET_MICROSECONDS, 0);
     uint32_t elapsed = current_time - g_last_frame_time;
 
-    /* Si le temps écoulé est inférieur à l'intervalle VSYNC, attendre */
+    /* Si le temps écoulé est inférieur à l'intervalle VSYNC, attendre.
+     * Évite un deuxième syscall de lecture de l'horloge par frame. */
+    uint32_t frame_time = elapsed;
     if (elapsed < g_vsync_interval_us) {
         uint32_t sleep_time = g_vsync_interval_us - elapsed;
         syscall1(SYS_SLEEP_MICROS, sleep_time);
+        frame_time = g_vsync_interval_us;
+        g_last_frame_time = current_time + sleep_time;
+    } else {
+        g_last_frame_time = current_time;
     }
-
-    /* Mettre à jour le temps du dernier frame */
-    g_last_frame_time = syscall1(SYS_GET_MICROSECONDS, 0);
 
     /* Mettre à jour les statistiques */
     g_frame_count++;
-    g_total_frame_time += elapsed;
+    g_total_frame_time += frame_time;
 
     /* Mettre à jour l'historique des temps de frame */
-    g_frame_times[g_frame_time_index++] = elapsed;
+    g_frame_times[g_frame_time_index++] = frame_time;
     if (g_frame_time_index >= 60) {
         g_frame_time_index = 0;
     }

@@ -39,6 +39,17 @@ static rect_t g_dirty_rects[MAX_DIRTY_RECTS];
 static int g_dirty_rect_count = 0;
 static bool g_dirty_tracking_enabled = true;
 
+/* Lightweight renderer profiling (reported periodically). */
+static uint64_t g_perf_flip_calls = 0;
+static uint64_t g_perf_flip_bytes = 0;
+static uint64_t g_perf_flip_cycles = 0;
+
+static inline uint64_t render_read_tsc(void) {
+  uint32_t lo, hi;
+  __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+  return ((uint64_t)hi << 32) | lo;
+}
+
 /* ============================================================================
  * FAST MEMORY OPERATIONS (x86-64 optimized)
  * ============================================================================
@@ -177,7 +188,6 @@ void render_flip_region(rect_t region) {
   if (!g_double_buffer_enabled)
     return;
 
-  /* Clipping au framebuffer */
   int32_t x1 = region.x;
   int32_t y1 = region.y;
   int32_t x2 = region.x + (int32_t)region.width;
@@ -187,38 +197,28 @@ void render_flip_region(rect_t region) {
   if (y1 < 0) y1 = 0;
   if (x2 > (int32_t)g_main_buffer.width) x2 = (int32_t)g_main_buffer.width;
   if (y2 > (int32_t)g_main_buffer.height) y2 = (int32_t)g_main_buffer.height;
-
   if (x1 >= x2 || y1 >= y2)
     return;
 
-  /* Copie ligne par ligne avec optimisation 64-bit */
   uint32_t pitch_pixels = g_main_buffer.pitch / 4;
-  uint32_t copy_width = (uint32_t)(x2 - x1);
-  size_t bytes_per_line = copy_width * sizeof(uint32_t);
+  size_t bytes_per_line = (size_t)(x2 - x1) * sizeof(uint32_t);
+  uint64_t start = render_read_tsc();
 
   for (int32_t y = y1; y < y2; y++) {
     uint32_t *src = g_back_buffer.pixels + y * pitch_pixels + x1;
     uint32_t *dst = g_main_buffer.pixels + y * pitch_pixels + x1;
+    memcpy(dst, src, bytes_per_line);
+  }
 
-    /* Utiliser rep movsq pour copie 64-bit ultra-rapide */
-    size_t qwords = bytes_per_line / 8;
-    if (qwords > 0) {
-      __asm__ volatile (
-        "rep movsq"
-        : "+S" (src), "+D" (dst), "+c" (qwords)
-        :
-        : "memory"
-      );
-    }
-    /* Copier les octets restants (0-7) */
-    size_t remaining = bytes_per_line % 8;
-    if (remaining) {
-      uint8_t *src8 = (uint8_t *)src;
-      uint8_t *dst8 = (uint8_t *)dst;
-      while (remaining--) {
-        *dst8++ = *src8++;
-      }
-    }
+  g_perf_flip_calls++;
+  g_perf_flip_bytes += bytes_per_line * (uint64_t)(y2 - y1);
+  g_perf_flip_cycles += render_read_tsc() - start;
+
+  if ((g_perf_flip_calls % 240) == 0) {
+    printf("GUI PERF: flips=%lu avg_bytes=%lu avg_cycles=%lu\n",
+           g_perf_flip_calls,
+           g_perf_flip_bytes / g_perf_flip_calls,
+           g_perf_flip_cycles / g_perf_flip_calls);
   }
 }
 
@@ -348,6 +348,16 @@ static inline bool is_clipped(int32_t x, int32_t y) {
           y >= g_clip_rect.y + (int32_t)g_clip_rect.height);
 }
 
+static inline uint32_t blend_pixel_fast(uint32_t bg, uint32_t fg_r,
+                                        uint32_t fg_g, uint32_t fg_b,
+                                        uint32_t alpha) {
+  uint32_t inv_alpha = 255 - alpha;
+  uint32_t r = (fg_r * alpha + ((bg >> 16) & 0xFF) * inv_alpha) / 255;
+  uint32_t g = (fg_g * alpha + ((bg >> 8) & 0xFF) * inv_alpha) / 255;
+  uint32_t b = (fg_b * alpha + (bg & 0xFF) * inv_alpha) / 255;
+  return 0xFF000000U | (r << 16) | (g << 8) | b;
+}
+
 /* ============================================================================
  * PRIMITIVES DE BASE
  * ============================================================================
@@ -369,13 +379,13 @@ void draw_pixel_alpha(int32_t x, int32_t y, rgba_t color) {
     draw_pixel(x, y, rgba_to_u32(color));
     return;
   }
-
   if (is_clipped(x, y))
     return;
 
   framebuffer_t *fb = render_get_active_buffer();
   uint32_t offset = y * (fb->pitch / 4) + x;
-  fb->pixels[offset] = blend_colors(fb->pixels[offset], color);
+  fb->pixels[offset] =
+      blend_pixel_fast(fb->pixels[offset], color.r, color.g, color.b, color.a);
 }
 
 uint32_t read_pixel(int32_t x, int32_t y) {
@@ -614,41 +624,42 @@ void draw_rect_alpha(rect_t rect, rgba_t color) {
   }
 
   framebuffer_t *fb = render_get_active_buffer();
-
   int32_t x1 = rect.x;
   int32_t y1 = rect.y;
   int32_t x2 = rect.x + (int32_t)rect.width;
   int32_t y2 = rect.y + (int32_t)rect.height;
 
-  /* Clipping */
   if (g_clip_enabled) {
-    if (x1 < g_clip_rect.x)
-      x1 = g_clip_rect.x;
-    if (y1 < g_clip_rect.y)
-      y1 = g_clip_rect.y;
+    if (x1 < g_clip_rect.x) x1 = g_clip_rect.x;
+    if (y1 < g_clip_rect.y) y1 = g_clip_rect.y;
     if (x2 > g_clip_rect.x + (int32_t)g_clip_rect.width)
       x2 = g_clip_rect.x + (int32_t)g_clip_rect.width;
     if (y2 > g_clip_rect.y + (int32_t)g_clip_rect.height)
       y2 = g_clip_rect.y + (int32_t)g_clip_rect.height;
   } else {
-    if (x1 < 0)
-      x1 = 0;
-    if (y1 < 0)
-      y1 = 0;
-    if (x2 > (int32_t)fb->width)
-      x2 = (int32_t)fb->width;
-    if (y2 > (int32_t)fb->height)
-      y2 = (int32_t)fb->height;
+    if (x1 < 0) x1 = 0;
+    if (y1 < 0) y1 = 0;
+    if (x2 > (int32_t)fb->width) x2 = (int32_t)fb->width;
+    if (y2 > (int32_t)fb->height) y2 = (int32_t)fb->height;
   }
-
   if (x1 >= x2 || y1 >= y2)
     return;
 
+  uint32_t alpha = color.a;
+  uint32_t inv_alpha = 255 - alpha;
+  uint32_t pre_r = (uint32_t)color.r * alpha;
+  uint32_t pre_g = (uint32_t)color.g * alpha;
+  uint32_t pre_b = (uint32_t)color.b * alpha;
   uint32_t pitch_pixels = fb->pitch / 4;
+
   for (int32_t y = y1; y < y2; y++) {
-    uint32_t *row = fb->pixels + y * pitch_pixels;
-    for (int32_t x = x1; x < x2; x++) {
-      row[x] = blend_colors(row[x], color);
+    uint32_t *pixel = fb->pixels + y * pitch_pixels + x1;
+    for (int32_t x = x1; x < x2; x++, pixel++) {
+      uint32_t bg = *pixel;
+      uint32_t r = (pre_r + ((bg >> 16) & 0xFF) * inv_alpha) / 255;
+      uint32_t g = (pre_g + ((bg >> 8) & 0xFF) * inv_alpha) / 255;
+      uint32_t b = (pre_b + (bg & 0xFF) * inv_alpha) / 255;
+      *pixel = 0xFF000000U | (r << 16) | (g << 8) | b;
     }
   }
 }
@@ -735,62 +746,37 @@ void draw_rounded_rect(rect_t rect, uint32_t radius, uint32_t color) {
     return;
   }
 
-  /* Limite le rayon à la moitié de la plus petite dimension */
   uint32_t max_radius =
       (rect.width < rect.height ? rect.width : rect.height) / 2;
   if (radius > max_radius)
     radius = max_radius;
+  if (radius == 0) {
+    draw_rect(rect, color);
+    return;
+  }
 
   int32_t r = (int32_t)radius;
+  int32_t r2 = r * r;
 
-  /* Rectangle central (sans les coins) */
   draw_rect(rect_make(rect.x + r, rect.y, rect.width - 2 * radius, rect.height),
             color);
-
-  /* Rectangles latéraux (sans les coins) */
   draw_rect(rect_make(rect.x, rect.y + r, radius, rect.height - 2 * radius),
             color);
   draw_rect(rect_make(rect.x + (int32_t)rect.width - r, rect.y + r, radius,
-                      rect.height - 2 * radius),
-            color);
+                      rect.height - 2 * radius), color);
 
-  /* Coins arrondis */
-  int32_t r2 = r * r;
-
-  /* Coin haut-gauche */
   for (int32_t dy = 0; dy < r; dy++) {
+    int32_t cy = r - 1 - dy;
     for (int32_t dx = 0; dx < r; dx++) {
-      if ((r - 1 - dx) * (r - 1 - dx) + (r - 1 - dy) * (r - 1 - dy) <= r2) {
-        draw_pixel(rect.x + dx, rect.y + dy, color);
-      }
-    }
-  }
+      int32_t cx = r - 1 - dx;
+      if (cx * cx + cy * cy > r2)
+        continue;
 
-  /* Coin haut-droit */
-  for (int32_t dy = 0; dy < r; dy++) {
-    for (int32_t dx = 0; dx < r; dx++) {
-      if (dx * dx + (r - 1 - dy) * (r - 1 - dy) <= r2) {
-        draw_pixel(rect.x + (int32_t)rect.width - r + dx, rect.y + dy, color);
-      }
-    }
-  }
-
-  /* Coin bas-gauche */
-  for (int32_t dy = 0; dy < r; dy++) {
-    for (int32_t dx = 0; dx < r; dx++) {
-      if ((r - 1 - dx) * (r - 1 - dx) + dy * dy <= r2) {
-        draw_pixel(rect.x + dx, rect.y + (int32_t)rect.height - r + dy, color);
-      }
-    }
-  }
-
-  /* Coin bas-droit */
-  for (int32_t dy = 0; dy < r; dy++) {
-    for (int32_t dx = 0; dx < r; dx++) {
-      if (dx * dx + dy * dy <= r2) {
-        draw_pixel(rect.x + (int32_t)rect.width - r + dx,
-                   rect.y + (int32_t)rect.height - r + dy, color);
-      }
+      draw_pixel(rect.x + dx, rect.y + dy, color);
+      draw_pixel(rect.x + (int32_t)rect.width - 1 - dx, rect.y + dy, color);
+      draw_pixel(rect.x + dx, rect.y + (int32_t)rect.height - 1 - dy, color);
+      draw_pixel(rect.x + (int32_t)rect.width - 1 - dx,
+                 rect.y + (int32_t)rect.height - 1 - dy, color);
     }
   }
 }
@@ -802,7 +788,6 @@ void draw_rounded_rect_alpha(rect_t rect, uint32_t radius, rgba_t color) {
     draw_rounded_rect(rect, radius, rgba_to_u32(color));
     return;
   }
-
   if (radius == 0) {
     draw_rect_alpha(rect, color);
     return;
@@ -812,76 +797,43 @@ void draw_rounded_rect_alpha(rect_t rect, uint32_t radius, rgba_t color) {
       (rect.width < rect.height ? rect.width : rect.height) / 2;
   if (radius > max_radius)
     radius = max_radius;
+  if (radius == 0) {
+    draw_rect_alpha(rect, color);
+    return;
+  }
 
   int32_t r = (int32_t)radius;
+  int32_t r2 = r * r;
+  uint32_t edge_width = (uint32_t)(2 * r);
 
-  /* Rectangle central */
   draw_rect_alpha(
       rect_make(rect.x + r, rect.y, rect.width - 2 * radius, rect.height),
       color);
-
-  /* Rectangles latéraux */
   draw_rect_alpha(
       rect_make(rect.x, rect.y + r, radius, rect.height - 2 * radius), color);
   draw_rect_alpha(rect_make(rect.x + (int32_t)rect.width - r, rect.y + r,
-                            radius, rect.height - 2 * radius),
-                  color);
-
-  /* Coins avec anti-aliasing */
-  int32_t r2 = r * r;
-  float r_f = (float)r;
+                            radius, rect.height - 2 * radius), color);
 
   for (int32_t dy = 0; dy < r; dy++) {
+    int32_t cy = r - 1 - dy;
     for (int32_t dx = 0; dx < r; dx++) {
-      /* Distance au centre du coin */
-      float dist_tl =
-          (float)((r - 1 - dx) * (r - 1 - dx) + (r - 1 - dy) * (r - 1 - dy));
-      float dist_tr = (float)(dx * dx + (r - 1 - dy) * (r - 1 - dy));
-      float dist_bl = (float)((r - 1 - dx) * (r - 1 - dx) + dy * dy);
-      float dist_br = (float)(dx * dx + dy * dy);
+      int32_t cx = r - 1 - dx;
+      int32_t dist2 = cx * cx + cy * cy;
+      if (dist2 > r2)
+        continue;
 
-      /* Coin haut-gauche */
-      if (dist_tl <= (float)r2) {
-        rgba_t aa_color = color;
-        float edge = r_f * r_f - dist_tl;
-        if (edge < r_f * 2.0f) {
-          aa_color.a = (uint8_t)((edge / (r_f * 2.0f)) * (float)color.a);
-        }
-        draw_pixel_alpha(rect.x + dx, rect.y + dy, aa_color);
-      }
+      rgba_t pixel = color;
+      uint32_t edge = (uint32_t)(r2 - dist2);
+      if (edge < edge_width)
+        pixel.a = (uint8_t)(((uint32_t)color.a * edge) / edge_width);
 
-      /* Coin haut-droit */
-      if (dist_tr <= (float)r2) {
-        rgba_t aa_color = color;
-        float edge = r_f * r_f - dist_tr;
-        if (edge < r_f * 2.0f) {
-          aa_color.a = (uint8_t)((edge / (r_f * 2.0f)) * (float)color.a);
-        }
-        draw_pixel_alpha(rect.x + (int32_t)rect.width - r + dx, rect.y + dy,
-                         aa_color);
-      }
-
-      /* Coin bas-gauche */
-      if (dist_bl <= (float)r2) {
-        rgba_t aa_color = color;
-        float edge = r_f * r_f - dist_bl;
-        if (edge < r_f * 2.0f) {
-          aa_color.a = (uint8_t)((edge / (r_f * 2.0f)) * (float)color.a);
-        }
-        draw_pixel_alpha(rect.x + dx, rect.y + (int32_t)rect.height - r + dy,
-                         aa_color);
-      }
-
-      /* Coin bas-droit */
-      if (dist_br <= (float)r2) {
-        rgba_t aa_color = color;
-        float edge = r_f * r_f - dist_br;
-        if (edge < r_f * 2.0f) {
-          aa_color.a = (uint8_t)((edge / (r_f * 2.0f)) * (float)color.a);
-        }
-        draw_pixel_alpha(rect.x + (int32_t)rect.width - r + dx,
-                         rect.y + (int32_t)rect.height - r + dy, aa_color);
-      }
+      draw_pixel_alpha(rect.x + dx, rect.y + dy, pixel);
+      draw_pixel_alpha(rect.x + (int32_t)rect.width - 1 - dx, rect.y + dy,
+                       pixel);
+      draw_pixel_alpha(rect.x + dx, rect.y + (int32_t)rect.height - 1 - dy,
+                       pixel);
+      draw_pixel_alpha(rect.x + (int32_t)rect.width - 1 - dx,
+                       rect.y + (int32_t)rect.height - 1 - dy, pixel);
     }
   }
 }
@@ -1089,51 +1041,83 @@ void draw_rounded_gradient(rect_t rect, uint32_t radius, rgba_t color1,
  */
 
 void draw_shadow(rect_t rect, uint32_t radius, shadow_params_t params) {
-  (void)radius; /* TODO: utiliser pour les coins arrondis */
+  (void)radius;
 
-  /* Calcule le rectangle de l'ombre (décalé et étendu) */
-  rect_t shadow_rect;
-  shadow_rect.x = rect.x + params.offset_x - (int32_t)params.blur_radius -
-                  (int32_t)params.spread;
-  shadow_rect.y = rect.y + params.offset_y - (int32_t)params.blur_radius -
-                  (int32_t)params.spread;
-  shadow_rect.width = rect.width + 2 * params.blur_radius + 2 * params.spread;
-  shadow_rect.height = rect.height + 2 * params.blur_radius + 2 * params.spread;
-
-  /* Dessine l'ombre avec dégradé d'opacité */
   int32_t blur = (int32_t)params.blur_radius;
+  int32_t spread = (int32_t)params.spread;
+  if (blur <= 0 || params.color.a == 0)
+    return;
 
-  for (int32_t y = 0; y < (int32_t)shadow_rect.height; y++) {
-    for (int32_t x = 0; x < (int32_t)shadow_rect.width; x++) {
-      /* Distance au bord du rectangle original */
-      int32_t dx = 0, dy = 0;
+  int32_t pad = blur + spread;
+  rect_t shadow_rect = {
+      rect.x + params.offset_x - pad,
+      rect.y + params.offset_y - pad,
+      rect.width + (uint32_t)(2 * pad),
+      rect.height + (uint32_t)(2 * pad)};
 
-      int32_t inner_x = x - blur - (int32_t)params.spread;
-      int32_t inner_y = y - blur - (int32_t)params.spread;
+  framebuffer_t *fb = render_get_active_buffer();
+  int32_t vx1 = max_i32(shadow_rect.x, 0);
+  int32_t vy1 = max_i32(shadow_rect.y, 0);
+  int32_t vx2 = min_i32(shadow_rect.x + (int32_t)shadow_rect.width,
+                        (int32_t)fb->width);
+  int32_t vy2 = min_i32(shadow_rect.y + (int32_t)shadow_rect.height,
+                        (int32_t)fb->height);
 
+  if (g_clip_enabled) {
+    vx1 = max_i32(vx1, g_clip_rect.x);
+    vy1 = max_i32(vy1, g_clip_rect.y);
+    vx2 = min_i32(vx2, g_clip_rect.x + (int32_t)g_clip_rect.width);
+    vy2 = min_i32(vy2, g_clip_rect.y + (int32_t)g_clip_rect.height);
+  }
+  if (vx1 >= vx2 || vy1 >= vy2)
+    return;
+
+  uint32_t max_dist = (uint32_t)(blur * blur);
+  uint64_t denom = (uint64_t)max_dist * (uint64_t)max_dist;
+  if (denom == 0)
+    return;
+
+  int32_t local_x1 = vx1 - shadow_rect.x;
+  int32_t local_y1 = vy1 - shadow_rect.y;
+  int32_t local_x2 = vx2 - shadow_rect.x;
+  int32_t local_y2 = vy2 - shadow_rect.y;
+
+  for (int32_t y = local_y1; y < local_y2; y++) {
+    int32_t inner_y = y - pad;
+    bool inside_y = inner_y >= 0 && inner_y < (int32_t)rect.height;
+
+    for (int32_t x = local_x1; x < local_x2; x++) {
+      int32_t inner_x = x - pad;
+
+      /* The window/card paints over this area immediately afterwards. */
+      if (inside_y && inner_x >= 0 && inner_x < (int32_t)rect.width)
+        continue;
+
+      int32_t dx = 0;
+      int32_t dy = 0;
       if (inner_x < 0)
         dx = -inner_x;
       else if (inner_x >= (int32_t)rect.width)
         dx = inner_x - (int32_t)rect.width + 1;
-
       if (inner_y < 0)
         dy = -inner_y;
       else if (inner_y >= (int32_t)rect.height)
         dy = inner_y - (int32_t)rect.height + 1;
 
-      float dist = (float)(dx * dx + dy * dy);
-      float max_dist = (float)(blur * blur);
+      uint32_t dist2 = (uint32_t)(dx * dx + dy * dy);
+      if (dist2 >= max_dist)
+        continue;
 
-      if (dist < max_dist) {
-        float alpha_factor = 1.0f - (dist / max_dist);
-        rgba_t shadow_color = params.color;
-        shadow_color.a =
-            (uint8_t)((float)shadow_color.a * alpha_factor * alpha_factor);
+      uint32_t remaining = max_dist - dist2;
+      uint32_t alpha = (uint32_t)(((uint64_t)params.color.a * remaining *
+                                   (uint64_t)remaining) /
+                                  denom);
+      if (alpha == 0)
+        continue;
 
-        if (shadow_color.a > 0) {
-          draw_pixel_alpha(shadow_rect.x + x, shadow_rect.y + y, shadow_color);
-        }
-      }
+      rgba_t pixel = params.color;
+      pixel.a = (uint8_t)alpha;
+      draw_pixel_alpha(shadow_rect.x + x, shadow_rect.y + y, pixel);
     }
   }
 }
@@ -1244,24 +1228,33 @@ void draw_glass_rect(rect_t rect, uint32_t radius, rgba_t tint,
 
 void draw_bitmap(point_t dest, const uint32_t *src, uint32_t src_width,
                  uint32_t src_height) {
-  if (!src)
+  if (!src || src_width == 0 || src_height == 0)
     return;
 
   framebuffer_t *fb = render_get_active_buffer();
+  int32_t x1 = max_i32(dest.x, 0);
+  int32_t y1 = max_i32(dest.y, 0);
+  int32_t x2 = min_i32(dest.x + (int32_t)src_width, (int32_t)fb->width);
+  int32_t y2 = min_i32(dest.y + (int32_t)src_height, (int32_t)fb->height);
+
+  if (g_clip_enabled) {
+    x1 = max_i32(x1, g_clip_rect.x);
+    y1 = max_i32(y1, g_clip_rect.y);
+    x2 = min_i32(x2, g_clip_rect.x + (int32_t)g_clip_rect.width);
+    y2 = min_i32(y2, g_clip_rect.y + (int32_t)g_clip_rect.height);
+  }
+  if (x1 >= x2 || y1 >= y2)
+    return;
+
   uint32_t pitch_pixels = fb->pitch / 4;
+  uint32_t src_x = (uint32_t)(x1 - dest.x);
+  uint32_t src_y = (uint32_t)(y1 - dest.y);
+  size_t row_bytes = (size_t)(x2 - x1) * sizeof(uint32_t);
 
-  for (uint32_t y = 0; y < src_height; y++) {
-    int32_t dy = dest.y + (int32_t)y;
-    if (dy < 0 || dy >= (int32_t)fb->height)
-      continue;
-
-    for (uint32_t x = 0; x < src_width; x++) {
-      int32_t dx = dest.x + (int32_t)x;
-      if (dx < 0 || dx >= (int32_t)fb->width)
-        continue;
-
-      fb->pixels[dy * pitch_pixels + dx] = src[y * src_width + x];
-    }
+  for (int32_t y = y1; y < y2; y++, src_y++) {
+    uint32_t *dst_row = fb->pixels + (uint32_t)y * pitch_pixels + (uint32_t)x1;
+    const uint32_t *src_row = src + src_y * src_width + src_x;
+    memcpy(dst_row, src_row, row_bytes);
   }
 }
 
@@ -1311,18 +1304,50 @@ void draw_bitmap_region(point_t dest, const uint32_t *src, uint32_t src_width,
 
 void draw_bitmap_scaled(rect_t dest_rect, const uint32_t *src,
                         uint32_t src_width, uint32_t src_height) {
-  if (!src || dest_rect.width == 0 || dest_rect.height == 0)
+  if (!src || src_width == 0 || src_height == 0 ||
+      dest_rect.width == 0 || dest_rect.height == 0)
     return;
 
-  for (uint32_t y = 0; y < dest_rect.height; y++) {
-    uint32_t sy = (y * src_height) / dest_rect.height;
+  framebuffer_t *fb = render_get_active_buffer();
+  int32_t x1 = max_i32(dest_rect.x, 0);
+  int32_t y1 = max_i32(dest_rect.y, 0);
+  int32_t x2 = min_i32(dest_rect.x + (int32_t)dest_rect.width,
+                       (int32_t)fb->width);
+  int32_t y2 = min_i32(dest_rect.y + (int32_t)dest_rect.height,
+                       (int32_t)fb->height);
 
-    for (uint32_t x = 0; x < dest_rect.width; x++) {
-      uint32_t sx = (x * src_width) / dest_rect.width;
+  if (g_clip_enabled) {
+    x1 = max_i32(x1, g_clip_rect.x);
+    y1 = max_i32(y1, g_clip_rect.y);
+    x2 = min_i32(x2, g_clip_rect.x + (int32_t)g_clip_rect.width);
+    y2 = min_i32(y2, g_clip_rect.y + (int32_t)g_clip_rect.height);
+  }
+  if (x1 >= x2 || y1 >= y2)
+    return;
 
-      rgba_t color = u32_to_rgba(src[sy * src_width + sx]);
-      draw_pixel_alpha(dest_rect.x + (int32_t)x, dest_rect.y + (int32_t)y,
-                       color);
+  uint64_t step_x = ((uint64_t)src_width << 32) / dest_rect.width;
+  uint64_t step_y = ((uint64_t)src_height << 32) / dest_rect.height;
+  uint64_t start_x = (uint64_t)(x1 - dest_rect.x) * step_x;
+  uint64_t source_y = (uint64_t)(y1 - dest_rect.y) * step_y;
+  uint32_t pitch_pixels = fb->pitch / 4;
+
+  for (int32_t y = y1; y < y2; y++, source_y += step_y) {
+    uint32_t sy = (uint32_t)(source_y >> 32);
+    if (sy >= src_height) sy = src_height - 1;
+    uint64_t source_x = start_x;
+    uint32_t *dst = fb->pixels + (uint32_t)y * pitch_pixels + (uint32_t)x1;
+
+    for (int32_t x = x1; x < x2; x++, source_x += step_x, dst++) {
+      uint32_t sx = (uint32_t)(source_x >> 32);
+      if (sx >= src_width) sx = src_width - 1;
+      uint32_t pixel = src[sy * src_width + sx];
+      uint8_t alpha = (uint8_t)(pixel >> 24);
+
+      if (alpha == 255) {
+        *dst = pixel;
+      } else if (alpha != 0) {
+        *dst = blend_colors(*dst, u32_to_rgba(pixel));
+      }
     }
   }
 }
@@ -1334,14 +1359,9 @@ void draw_bitmap_scaled(rect_t dest_rect, const uint32_t *src,
 
 void render_clear(uint32_t color) {
   framebuffer_t *fb = render_get_active_buffer();
-
   uint32_t pitch_pixels = fb->pitch / 4;
-  for (uint32_t y = 0; y < fb->height; y++) {
-    uint32_t *row = fb->pixels + y * pitch_pixels;
-    for (uint32_t x = 0; x < fb->width; x++) {
-      row[x] = color;
-    }
-  }
+  for (uint32_t y = 0; y < fb->height; y++)
+    memset32(fb->pixels + y * pitch_pixels, color, fb->width);
 }
 
 uint32_t blend_colors(uint32_t bg, rgba_t fg) {
@@ -1349,19 +1369,7 @@ uint32_t blend_colors(uint32_t bg, rgba_t fg) {
     return bg;
   if (fg.a == 255)
     return rgba_to_u32(fg);
-
-  uint32_t bg_r = (bg >> 16) & 0xFF;
-  uint32_t bg_g = (bg >> 8) & 0xFF;
-  uint32_t bg_b = bg & 0xFF;
-
-  uint32_t alpha = fg.a;
-  uint32_t inv_alpha = 255 - alpha;
-
-  uint32_t r = (fg.r * alpha + bg_r * inv_alpha) / 255;
-  uint32_t g = (fg.g * alpha + bg_g * inv_alpha) / 255;
-  uint32_t b = (fg.b * alpha + bg_b * inv_alpha) / 255;
-
-  return 0xFF000000 | (r << 16) | (g << 8) | b;
+  return blend_pixel_fast(bg, fg.r, fg.g, fg.b, fg.a);
 }
 
 rgba_t lerp_color(rgba_t c1, rgba_t c2, float t) {

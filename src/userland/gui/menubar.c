@@ -31,8 +31,6 @@ static void menubar_draw_layer(layer_t* layer) {
 
 int menubar_init(void) {
     render_get_screen_size(&g_screen_width, NULL);
-    
-    render_get_screen_size(&g_screen_width, NULL);
 
     /* Crée la couche de la menubar */
     rect_t bounds = {0, 0, g_screen_width, MENUBAR_HEIGHT};

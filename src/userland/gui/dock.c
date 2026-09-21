@@ -53,8 +53,6 @@ int dock_init(void) {
     }
     
     calculate_dock_bounds();
-    
-    calculate_dock_bounds();
 
     /* Crée la couche du dock */
     g_dock_layer = compositor_create_layer(LAYER_DOCK, g_dock_bounds);

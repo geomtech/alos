@@ -89,9 +89,6 @@ int main(int argc, char **argv) {
   vsync_init();
   vsync_set_enabled(true);
 
-  /* Active le suivi des dirty rectangles */
-  render_enable_dirty_tracking(true);
-
   /* Initialise le compositeur AVANT de l'utiliser */
   framebuffer_t *active_fb = render_get_active_buffer();
   if (active_fb == NULL) {
@@ -346,9 +343,7 @@ void gui_render(void) {
   }
 
   if (ui_dirty || g_needs_redraw) {
-      /* UI a changé - utiliser le flip des régions sales pour optimiser */
-      render_flip_dirty_regions();
-
+      /* compositor_render() a déjà copié uniquement les régions sales. */
       /* Redessiner le curseur sur le front buffer */
       draw_cursor(front, g_mouse_x, g_mouse_y);
 
