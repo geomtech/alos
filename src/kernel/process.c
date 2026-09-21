@@ -20,15 +20,7 @@
 
 /* Use KERNEL_STACK_SIZE from process.h (32 KiB) */
 
-/* Utiliser la définition de usermode.h si disponible, sinon définir ici */
-#ifndef USER_STACK_SIZE
-#define USER_STACK_SIZE (16 * PAGE_SIZE) /* 64 KiB */
-#endif
-#ifdef USER_STACK_SIZE
-#undef USER_STACK_SIZE
-#define USER_STACK_SIZE (16 * PAGE_SIZE) /* 64 KiB - Override pour le kernel   \
-                                          */
-#endif
+/* User stack layout comes from process.h -> memlayout.h. */
 
 /* ========================================
  * Variables globales
@@ -495,9 +487,7 @@ void kill_all_user_tasks(void) {
  * Exécution de programmes ELF (User Mode)
  * ======================================== */
 
-/* Adresse de base pour les programmes utilisateur */
-#define USER_STACK_TOP 0xBFFFF000        /* Sommet de la stack utilisateur */
-#define USER_STACK_SIZE (16 * PAGE_SIZE) /* 64 KiB */
+/* User stack address/size are defined centrally in memlayout.h. */
 
 /**
  * Exécute un programme ELF en créant un nouveau processus User Mode.
