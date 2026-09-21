@@ -314,6 +314,49 @@ int vmm_query_mapping(page_directory_t* dir, uint64_t virt,
     return 0;
 }
 
+uint8_t vmm_mapping_pat_index(const vmm_mapping_info_t* info)
+{
+    if (info == NULL || info->page_size == 0) {
+        return 0;
+    }
+
+    uint8_t index = 0;
+
+    /* PAT index = PAT:PCD:PWT. */
+    if (info->raw_entry & PAGE_WRITETHROUGH) {
+        index |= 0x1;
+    }
+    if (info->raw_entry & PAGE_NOCACHE) {
+        index |= 0x2;
+    }
+
+    uint64_t pat_bit =
+        (info->page_size == PAGE_SIZE) ? PAGE_PAT_4K : PAGE_PAT_HUGE;
+    if (info->raw_entry & pat_bit) {
+        index |= 0x4;
+    }
+
+    return index;
+}
+
+uint64_t vmm_pat_index_to_4k_flags(uint8_t pat_index)
+{
+    uint64_t flags = 0;
+    pat_index &= 0x7;
+
+    if (pat_index & 0x1) {
+        flags |= PAGE_WRITETHROUGH;
+    }
+    if (pat_index & 0x2) {
+        flags |= PAGE_NOCACHE;
+    }
+    if (pat_index & 0x4) {
+        flags |= PAGE_PAT_4K;
+    }
+
+    return flags;
+}
+
 uint64_t vmm_get_physical(uint64_t virt)
 {
     if (current_directory == NULL) {

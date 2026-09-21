@@ -33,14 +33,25 @@ void cpu_init(void) {
   KLOG_INFO_HEX("CPU", "CR0: ", cr0);
   KLOG_INFO_HEX("CPU", "CR4: ", cr4);
 
-  /* PAT est requis pour un futur framebuffer Write-Combining.
-   * Pour l'instant on inspecte seulement le layout laissé par le firmware/
-   * bootloader afin de ne pas modifier un index PAT déjà utilisé. */
+  /*
+   * Limine defines the x86-64 PAT layout and uses PAT[5] for framebuffer
+   * Write-Combining. Keep the MSR untouched and verify what the bootloader
+   * installed so framebuffer aliases can mirror the same index.
+   */
   uint32_t eax, ebx, ecx, edx;
   cpuid(1, &eax, &ebx, &ecx, &edx);
   if (edx & (1u << 16)) {
+    uint64_t pat = rdmsr(MSR_IA32_PAT);
+    uint8_t pat5_type = (uint8_t)((pat >> (5 * 8)) & 0xFF);
+
     KLOG_INFO("CPU", "PAT supported");
-    KLOG_INFO_HEX64("CPU", "IA32_PAT: ", rdmsr(MSR_IA32_PAT));
+    KLOG_INFO_HEX64("CPU", "IA32_PAT: ", pat);
+    KLOG_INFO_DEC("CPU", "PAT[5] memory type: ", pat5_type);
+    if (pat5_type == 0x01) {
+      KLOG_INFO("CPU", "PAT[5] = Write-Combining");
+    } else {
+      KLOG_WARN("CPU", "PAT[5] is not Write-Combining");
+    }
   } else {
     KLOG_WARN("CPU", "PAT not supported");
   }

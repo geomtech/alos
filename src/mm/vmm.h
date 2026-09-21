@@ -35,8 +35,10 @@
 #define PAGE_NOCACHE        (1ULL << 4)   /* Désactive le cache */
 #define PAGE_ACCESSED       (1ULL << 5)   /* Page accédée (mis par CPU) */
 #define PAGE_DIRTY          (1ULL << 6)   /* Page modifiée (mis par CPU) */
-#define PAGE_HUGE           (1ULL << 7)   /* Page 2MB (PD) ou 1GB (PDPT) */
+#define PAGE_HUGE           (1ULL << 7)   /* PS: page 2MB (PD) ou 1GB (PDPT) */
+#define PAGE_PAT_4K         (1ULL << 7)   /* PAT bit dans une PTE 4 KiB */
 #define PAGE_GLOBAL         (1ULL << 8)   /* Page globale */
+#define PAGE_PAT_HUGE       (1ULL << 12)  /* PAT bit dans PDE/PDPTE huge */
 #define PAGE_NX             (1ULL << 63)  /* No-Execute */
 
 /* Masque pour l'adresse physique (bits 12-51) */
@@ -139,6 +141,18 @@ uint64_t vmm_get_physical(uint64_t virt);
  */
 int vmm_query_mapping(page_directory_t* dir, uint64_t virt,
                       vmm_mapping_info_t* info);
+
+/**
+ * Retourne l'index PAT (0..7) sélectionné par un mapping existant.
+ * Le bit PAT se trouve à une position différente pour les pages 4 KiB
+ * et les huge pages.
+ */
+uint8_t vmm_mapping_pat_index(const vmm_mapping_info_t* info);
+
+/**
+ * Convertit un index PAT (0..7) en bits PWT/PCD/PAT pour une PTE 4 KiB.
+ */
+uint64_t vmm_pat_index_to_4k_flags(uint8_t pat_index);
 
 /**
  * Vérifie si une page est mappée.

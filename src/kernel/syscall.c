@@ -628,21 +628,31 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
     return -1;
   }
 
-  uint64_t phys_base = fb_mapping.physical_address;
-  uint64_t phys_page = PAGE_ALIGN_DOWN(phys_base);
-  uint64_t page_offset = phys_base - phys_page;
+  uint64_t kernel_fb_addr = (uint64_t)fb->address;
+  uint64_t kernel_fb_page = PAGE_ALIGN_DOWN(kernel_fb_addr);
+  uint64_t page_offset = kernel_fb_addr - kernel_fb_page;
   uint64_t pages = (page_offset + size + PAGE_SIZE - 1) / PAGE_SIZE;
 
   /* Adresse virtuelle cible pour le framebuffer en userland. */
   uint64_t vaddr_base = 0x60000000ULL;
 
-  KLOG_INFO_HEX64("SYSCALL", "Framebuffer Limine virt: ",
-                  (uint64_t)fb->address);
-  KLOG_INFO_HEX64("SYSCALL", "Framebuffer phys: ", phys_base);
+  uint8_t base_pat_index = vmm_mapping_pat_index(&fb_mapping);
+
+  KLOG_INFO_HEX64("SYSCALL", "Framebuffer Limine virt: ", kernel_fb_addr);
+  KLOG_INFO_HEX64("SYSCALL", "Framebuffer phys: ",
+                  fb_mapping.physical_address);
   KLOG_INFO_HEX64("SYSCALL", "Framebuffer mapping entry: ",
                   fb_mapping.raw_entry);
   KLOG_INFO_DEC("SYSCALL", "Framebuffer kernel page size (KiB): ",
                 (uint32_t)(fb_mapping.page_size / 1024));
+  KLOG_INFO_DEC("SYSCALL", "Framebuffer PAT index: ",
+                (uint32_t)base_pat_index);
+  if (base_pat_index == 5) {
+    KLOG_INFO("SYSCALL", "Framebuffer cache mode: Write-Combining (PAT[5])");
+  } else {
+    KLOG_WARN("SYSCALL",
+              "Framebuffer is not PAT[5]; mirroring bootloader cache mode");
+  }
   KLOG_INFO_DEC("SYSCALL", "Framebuffer user pages: ", (uint32_t)pages);
 
   /* Get the current process's page directory */
@@ -654,12 +664,40 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
 
   /* proc->pml4 is actually a page_directory_t* cast to uint64_t* */
   page_directory_t *user_dir = (page_directory_t *)proc->pml4;
+  page_directory_t *kernel_dir = vmm_get_kernel_directory();
 
+  /*
+   * Mirror the bootloader's cache type page by page.
+   * Limine maps framebuffer regions with a framebuffer-safe memory type
+   * (PAT[5]/WC on x86-64 when PAT is available). Reusing the exact PAT index
+   * avoids conflicting cache aliases for the same physical VRAM.
+   */
   for (uint64_t i = 0; i < pages; i++) {
     uint64_t offset = i * PAGE_SIZE;
-    /* PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH (bit 3) */
-    vmm_map_page_in_dir(user_dir, phys_page + offset, vaddr_base + offset,
-                        PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_WRITETHROUGH);
+    vmm_mapping_info_t page_mapping;
+
+    if (vmm_query_mapping(kernel_dir, kernel_fb_page + offset,
+                          &page_mapping) != 0) {
+      KLOG_ERROR("SYSCALL",
+                 "Framebuffer page missing from Limine kernel mapping");
+      return -1;
+    }
+
+    uint64_t phys_page = PAGE_ALIGN_DOWN(page_mapping.physical_address);
+    uint8_t pat_index = vmm_mapping_pat_index(&page_mapping);
+    uint64_t cache_flags = vmm_pat_index_to_4k_flags(pat_index);
+
+    if (pat_index != base_pat_index) {
+      KLOG_WARN("SYSCALL",
+                "Framebuffer PAT index changes across pages; mirroring it");
+    }
+
+    if (vmm_map_page_in_dir(user_dir, phys_page, vaddr_base + offset,
+                            PAGE_USER | PAGE_RW | PAGE_PRESENT |
+                                cache_flags) != 0) {
+      KLOG_ERROR("SYSCALL", "Failed to map framebuffer page into userland");
+      return -1;
+    }
   }
 
   /* Remplir la structure */
