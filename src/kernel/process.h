@@ -3,6 +3,7 @@
 #define PROCESS_H
 
 #include "thread.h" /* Include du nouveau système de threads */
+#include "../include/memlayout.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -16,9 +17,7 @@
 #define MAX_PROCESSES 64    /* Nombre max de processus */
 #define PROCESS_NAME_MAX 32 /* Longueur max du nom de processus */
 
-/* User stack definitions */
-#define USER_STACK_TOP 0x00007FFFFFFFF000ULL /* Top of user stack */
-#define USER_STACK_SIZE (16 * 4096)          /* 64 KiB stack size */
+/* User stack layout is centralized in ../include/memlayout.h */
 
 /* États des processus */
 typedef enum {
