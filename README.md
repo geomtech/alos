@@ -1,8 +1,19 @@
 # ALOS - Alexy Operating System
 
-ALOS is a minimalist operating system kernel written in C and x86 Assembly, designed for learning purposes and running on QEMU. It implements core OS concepts including memory management, interrupt handling, storage, filesystem support, and a TCP/IP networking stack.
+ALOS is a minimalist x86-64 operating system kernel written in C and x86-64 Assembly, designed for learning and active experimentation. It boots through Limine and runs on QEMU or VirtualBox. It implements core OS concepts including memory management, privilege separation, multitasking, storage, filesystem support, a TCP/IP networking stack, and a graphical user interface.
 
 > **Note:** Code comments in this project are written in **French**. The codebase serves as both a learning resource and a functional kernel.
+
+## Current development focus
+
+The current priority is to keep the x86-64 scheduler, Ring 0/Ring 3 transitions, TSS handling, and `iretq` context restoration regression-free before expanding process semantics.
+
+Next major milestones:
+1. Automated QEMU smoke/regression tests
+2. `fork()` / `exec()` / `wait()`
+3. Pipes and POSIX-like signals
+4. Demand paging, Copy-on-Write, and `mmap()`
+5. AHCI/SATA, then NVMe
 
 ## Features implemented and future plans
 
@@ -30,8 +41,9 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 
 ### Process & Scheduling
 - [x] Multitasking (Round Robin scheduler)
-- [x] Context Switching (kernel threads)
+- [x] x86-64 Context Switching (kernel and user threads)
 - [x] User Space (Ring 3) with TSS
+- [x] Ring 0/Ring 3 `iretq` context restoration
 - [x] System Calls (POSIX/BSD-like interface)
 - [x] Priority-based scheduler
 - [ ] Process groups and sessions
@@ -97,11 +109,13 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 - [x] Interactive Shell with history
 - [x] Persistent history (`/config/history`)
 - [x] GUI + Mouse
-- [ ] Window manager/compositor
+- [x] Window manager/compositor
 - [ ] OpenGL support
 - [x] Framebuffer console (VESA/GOP)
 - [ ] UTF-8 string and console
 - [x] Font rendering (TrueType/FreeType)
+- [x] Damage-based compositor rendering and GUI event-loop optimizations
+- [x] Basic GUI component/widget framework
 - [ ] Desktop environment
 - [ ] Widget toolkit
 - [ ] Multi-monitor support
@@ -142,7 +156,8 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 - [ ] SELinux/AppArmor-like MAC
 
 ### Development & Debugging
-- [ ] GDB stub (remote debugging)
+- [x] QEMU remote GDB workflow (`make debug`)
+- [x] Serial logging and live log viewer (`serial.log`, `logs.ps1`, `run-debug.ps1`)
 - [ ] Kernel debugger (kdb)
 - [ ] System call tracing (strace-like)
 - [ ] Performance profiling tools
@@ -170,14 +185,15 @@ ALOS is a minimalist operating system kernel written in C and x86 Assembly, desi
 
 ```
 src/
-├── arch/x86/          # x86-specific code (boot, GDT, IDT, TSS, usermode)
+├── arch/x86_64/       # x86-64 code (GDT, IDT, TSS, interrupts, context switching, usermode)
 ├── config/            # Kernel configuration
 ├── kernel/            # Kernel core (main, console, keyboard, syscalls, elf)
 ├── mm/                # Memory Management (PMM, heap, VMM)
 ├── drivers/           # Hardware drivers
 │   ├── ata.c/h        # ATA/IDE disk driver
 │   ├── pci.c/h        # PCI bus driver
-│   └── net/           # Network drivers (PCnet)
+│   ├── virtio/        # VirtIO transport/device support
+│   └── net/           # PCnet, VirtIO-net and Intel E1000E drivers
 ├── fs/                # Filesystems
 │   ├── vfs.c/h        # Virtual File System layer
 │   └── ext2.c/h       # Ext2 filesystem driver
@@ -215,7 +231,7 @@ src/
 ├──────────────────────────┴──────────────────────────────┤
 │                    PCI Bus                              │
 ├─────────────────────────────────────────────────────────┤
-│              Hardware (x86)                             │
+│             Hardware / VM (x86-64)                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -223,10 +239,12 @@ src/
 
 ### Prerequisites
 
-- Cross-compiler: `i686-elf-gcc` (in `~/opt/cross/bin/`)
+- Compiler: `x86_64-elf-gcc` / `x86_64-elf-ld` when available (the Makefile can fall back to the native GCC toolchain)
 - Assembler: `nasm`
-- Emulator: `qemu-system-i386`
-- Disk utilities: `e2fsprogs` (for creating Ext2 disk images)
+- ISO tooling: `xorriso`
+- Disk utilities: `e2fsprogs` / `mkfs.ext2`
+- Emulator: `qemu-system-x86_64` and/or VirtualBox
+- Bootloader: Limine v10.x (downloaded/built automatically by the Makefile)
 
 ### Compilation
 
@@ -241,35 +259,48 @@ make clean
 make clean && make
 ```
 
-### Creating a Disk Image
+### Creating the Ext2 Disk Image
+
+The disk image is generated from `disk_structure/` plus the built userland binaries:
 
 ```bash
-# Create a 32MB Ext2 disk image
-dd if=/dev/zero of=disk.img bs=1M count=32
-mkfs.ext2 disk.img
-
-# Add files to the disk (using debugfs on macOS)
-echo "Hello from ALOS!" > /tmp/hello.txt
-debugfs -w disk.img -R "write /tmp/hello.txt hello.txt"
-
-# Verify contents
-debugfs disk.img -R "ls"
+make disk.img
 ```
+
+The current Makefile creates a 64 MiB Ext2 image and stages user applications under `/bin`.
 
 ### Running
 
 ```bash
-make          # Compile le kernel
-make iso      # Crée l'ISO bootable (télécharge Limine si nécessaire)
-make run      # Lance QEMU avec l'ISO
-make clean    # Nettoie les fichiers compilés
-make distclean # Nettoie tout, y compris Limine
+make                     # Build the x86-64 kernel (alos.elf)
+make iso                 # Build the bootable Limine ISO
+make run                 # Run in VirtualBox (default target)
+make run-qemu            # Run in QEMU with UEFI
+make run-qemu-fast       # QEMU + KVM + accelerated VirtIO VGA/OpenGL
+make run-qemu-fast-no-kvm # Accelerated display without KVM
+make debug               # Start QEMU paused with a GDB server on :1234
+make clean               # Remove build artifacts
+make distclean           # Also remove Limine
 ```
+
+On Windows, `run-debug.ps1` starts the runtime and follows `serial.log` using `logs.ps1`.
 
 ## QEMU Configuration
 
 ### Storage
-- Primary Master IDE disk: `disk.img` (Ext2 formatted)
+- Ext2 disk image: `disk.img`
+- Current storage driver: ATA/IDE PIO
+- Planned next-generation storage: AHCI/SATA DMA, then NVMe
+
+### Networking
+- QEMU targets use VirtIO-net with user-mode networking
+- The default QEMU configuration forwards host TCP port `8080` to guest port `80`
+- PCnet and Intel E1000E drivers are also present in the tree
+
+### Debugging
+- Kernel serial output is available through `serial.log` or QEMU stdio depending on the target
+- `make debug` exposes the QEMU GDB server on TCP port `1234`
+- `run-debug.ps1` + `logs.ps1` provide a convenient live-debug workflow on Windows
 
 ## License
 
