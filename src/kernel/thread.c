@@ -384,7 +384,9 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    * Le stub IRQ fait: POP_ALL, add rsp 16, iretq
    *
    * Layout de la stack (du bas vers le haut, RSP pointe vers R15):
-   *   === IRETQ Frame Ring 0 -> Ring 0 (3 éléments) ===
+   *   === IRETQ Frame x86-64 (5 éléments) ===
+   *   SS          <- Kernel Data (0x10)
+   *   RSP         <- Stack top du thread
    *   RFLAGS      <- 0x202 (IF=1)
    *   CS          <- Kernel Code (0x08)
    *   RIP         <- task_entry_point
@@ -400,13 +402,15 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    */
   uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
 
-  /* === IRETQ Frame Ring 0 -> Ring 0 (3 éléments) ===
-   * Pour un IRETQ sans changement de privilège, le CPU ne dépile PAS RSP/SS.
-   * Ajouter ces deux qwords décale la stack de 16 octets et corrompt le retour.
+  /* === IRETQ Frame x86-64 (5 éléments) ===
+   * En mode 64 bits, IRETQ restaure également RSP/SS. Le frame doit donc
+   * conserver les 5 qwords, même pour un retour Ring 0 -> Ring 0.
    */
-  *(--stack_top) = 0x202;                      /* RFLAGS: IF=1 */
-  *(--stack_top) = 0x08;                       /* CS: Kernel Code */
-  *(--stack_top) = (uint64_t)task_entry_point; /* RIP */
+  *(--stack_top) = 0x10;                         /* SS: Kernel Data */
+  *(--stack_top) = (uint64_t)stack + stack_size; /* RSP */
+  *(--stack_top) = 0x202;                        /* RFLAGS: IF=1 */
+  *(--stack_top) = 0x08;                         /* CS: Kernel Code */
+  *(--stack_top) = (uint64_t)task_entry_point;   /* RIP */
 
   /* === Error code / Int number (2 éléments) === */
   *(--stack_top) = 0;  /* error_code (dummy) */
@@ -1595,12 +1599,11 @@ void scheduler_schedule(void) {
     next->first_switch = false;
   }
 
-  /* Context switch coopératif.
+  /* Context switch coopératif x86-64.
    *
-   * switch_task sauvegarde un frame IRETQ Ring 0 -> Ring 0 :
-   * [RFLAGS, CS, RIP, error_code, int_no, RAX...R15].
-   * Les frames qui entrent réellement depuis Ring 3 gardent, eux,
-   * les deux qwords supplémentaires RSP/SS poussés par le CPU.
+   * switch_task sauvegarde le frame IRETQ complet :
+   * [SS, RSP, RFLAGS, CS, RIP, error_code, int_no, RAX...R15].
+   * Ce format est également celui utilisé par les threads user.
    */
   if (current) {
     switch_task(&current->rsp, next->rsp, new_cr3);
