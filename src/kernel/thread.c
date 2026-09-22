@@ -384,9 +384,7 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    * Le stub IRQ fait: POP_ALL, add rsp 16, iretq
    *
    * Layout de la stack (du bas vers le haut, RSP pointe vers R15):
-   *   === IRETQ Frame (5 éléments, poussés par le CPU normalement) ===
-   *   SS          <- Kernel Data (0x10)
-   *   RSP         <- Stack pointer (ignoré pour Ring0->Ring0)
+   *   === IRETQ Frame Ring 0 -> Ring 0 (3 éléments) ===
    *   RFLAGS      <- 0x202 (IF=1)
    *   CS          <- Kernel Code (0x08)
    *   RIP         <- task_entry_point
@@ -402,12 +400,13 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    */
   uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
 
-  /* === IRETQ Frame (5 éléments) === */
-  *(--stack_top) = 0x10;                         /* SS: Kernel Data */
-  *(--stack_top) = (uint64_t)stack + stack_size; /* RSP (ignoré Ring0->Ring0) */
-  *(--stack_top) = 0x202;                        /* RFLAGS: IF=1 */
-  *(--stack_top) = 0x08;                         /* CS: Kernel Code */
-  *(--stack_top) = (uint64_t)task_entry_point;   /* RIP */
+  /* === IRETQ Frame Ring 0 -> Ring 0 (3 éléments) ===
+   * Pour un IRETQ sans changement de privilège, le CPU ne dépile PAS RSP/SS.
+   * Ajouter ces deux qwords décale la stack de 16 octets et corrompt le retour.
+   */
+  *(--stack_top) = 0x202;                      /* RFLAGS: IF=1 */
+  *(--stack_top) = 0x08;                       /* CS: Kernel Code */
+  *(--stack_top) = (uint64_t)task_entry_point; /* RIP */
 
   /* === Error code / Int number (2 éléments) === */
   *(--stack_top) = 0;  /* error_code (dummy) */
@@ -1504,6 +1503,10 @@ void scheduler_schedule(void) {
   if (!g_scheduler_active)
     return;
 
+  /* Conserver l'état IF du contexte appelant.
+   * Un syscall INT 0x80 arrive avec IF=0, alors qu'un thread kernel normal
+   * appelle généralement le scheduler avec IF=1. */
+  uint64_t irq_flags = cpu_save_flags();
   cpu_cli();
 
   thread_t *current = g_current_thread;
@@ -1515,7 +1518,7 @@ void scheduler_schedule(void) {
 
   /* Si pas de next ou même thread, rien à faire */
   if (!next || next == current) {
-    cpu_sti();
+    cpu_restore_flags(irq_flags);
     return;
   }
 
@@ -1558,19 +1561,14 @@ void scheduler_schedule(void) {
    * idle_process.
    */
   extern process_t *current_process;
-  if (next->owner) {
-    current_process = next->owner;
-  }
+  current_process = next->owner ? next->owner : idle_process;
 
-  /* Mettre à jour le TSS.RSP0 seulement pour :
-   * - Les threads kernel (owner == NULL)
-   * - Les threads user à leur premier switch (first_switch == true)
-   *
-   * Ne JAMAIS mettre à jour TSS.RSP0 quand on switch vers un thread user
-   * qui est déjà dans le kernel (au milieu d'un syscall).
-   */
-  bool should_update_tss = (next->owner == NULL) || next->first_switch;
-  if (should_update_tss && next->rsp0 != 0) {
+  /* TSS.RSP0 doit toujours correspondre au thread cible.
+   * C'est la stack à utiliser lors de la PROCHAINE transition Ring3 -> Ring0 ;
+   * cela ne modifie pas le RSP courant, même si un thread user reprend
+   * au milieu d'un syscall. Sans cette mise à jour, le prochain IRQ/syscall
+   * user peut entrer sur la stack kernel d'un autre thread. */
+  if (next->rsp0 != 0) {
     tss_set_rsp0(next->rsp0);
   }
 
@@ -1614,11 +1612,9 @@ void scheduler_schedule(void) {
   }
 
   /* On revient ici quand ce thread est reschedulé.
-   *
-   * Note: Avec le format IRQ unifié, le retour se fait via IRETQ
-   * qui restaure automatiquement RFLAGS (incluant IF).
-   * Donc pas besoin de cpu_sti() ici.
-   */
+   * switch_task revient en Ring 0 avec IF désactivé ; restaurer exactement
+   * l'état du contexte qui avait appelé scheduler_schedule(). */
+  cpu_restore_flags(irq_flags);
 }
 
 /* ========================================
