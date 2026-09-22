@@ -62,11 +62,11 @@ switch_context:
 ;   RSI = new_rsp     : New RSP to load
 ;   RDX = new_cr3     : New page table (0 = no change)
 ;
-; Stack layout sauvegardé pour un switch coopératif Ring 0 -> Ring 0:
-;   [RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
+; Stack layout sauvegardé (x86-64):
+;   [SS, RSP, RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
 ;
-; IMPORTANT: IRETQ ne dépile RSP/SS que lors d'un changement de privilège.
-; Les ajouter à un frame Ring 0 décale la pile de 16 octets au retour.
+; En long mode, IRETQ restaure le frame complet SS:RSP:RFLAGS:CS:RIP.
+; Le switch coopératif doit donc conserver les 5 qwords.
 ;
 global switch_task
 switch_task:
@@ -91,11 +91,13 @@ switch_task:
     
     pop rax                 ; rax = return address (RIP)
     
-    ; Construire un frame IRETQ Ring 0 -> Ring 0.
-    ; Le CPU ne dépile que RIP, CS et RFLAGS lorsqu'il reste au même CPL.
-    ; Après "pop rax", RSP pointe déjà sur la stack appelante d'origine :
-    ; les 3 pushes ci-dessous seront donc exactement consommés par IRETQ.
+    ; Construire le frame IRETQ x86-64 complet.
+    ; Après "pop rax", RSP pointe sur la stack appelante d'origine.
+    ; Sauvegarder cette valeur comme RSP de reprise.
     
+    push qword 0x10         ; SS (kernel data)
+    lea rcx, [rsp + 8]      ; RSP avant le push SS
+    push rcx                ; RSP de reprise
     push r11                ; RFLAGS
     push qword 0x08         ; CS (kernel code)
     push rax                ; RIP (adresse de retour)
