@@ -3,6 +3,8 @@
 #include "pmm.h"
 #include "../kernel/console.h"
 #include "../kernel/klog.h"
+#include "../kernel/process.h"
+#include "../include/memlayout.h"
 #include "../arch/x86_64/cpu.h"
 
 /* ========================================

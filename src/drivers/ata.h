@@ -78,12 +78,13 @@ int ata_init(void);
 /**
  * Attend que le contrôleur ne soit plus occupé (BSY = 0).
  */
-void ata_wait_busy(void);
+int ata_wait_busy(void);
 
 /**
  * Attend que le bit DRQ soit set (données prêtes).
+ * @return 0 si succès, -1 si timeout/erreur
  */
-void ata_wait_drq(void);
+int ata_wait_drq(void);
 
 /**
  * Lit des secteurs depuis le disque en mode PIO.

@@ -589,11 +589,17 @@ int config_run_script(const char *path) {
     return -1;
   }
 
+  KLOG_INFO("CONFIG", "Checking script:");
+  KLOG_INFO("CONFIG", path);
+
   /* Ouvrir le fichier script */
   vfs_node_t *file = vfs_open(path, VFS_O_RDONLY);
   if (file == NULL) {
+    KLOG_INFO("CONFIG", "Script file not present");
     return -1;
   }
+
+  KLOG_INFO("CONFIG", "Script file opened, reading content...");
 
   /* Lire le contenu */
   uint8_t *buffer = (uint8_t *)kmalloc(4096);

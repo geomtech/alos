@@ -442,6 +442,8 @@ void shell_run(void)
     char line[SHELL_LINE_MAX];
     char* argv[SHELL_ARGS_MAX];
     
+    KLOG_INFO("SHELL", "shell_run started");
+    
     while (1) {
         /* Afficher le prompt avec le cwd */
         console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);

@@ -454,28 +454,24 @@ void kmain(void) {
   /* ============================================ */
   init_multitasking();
 
-  /* Activer la préemption timer maintenant que le scheduler est prêt */
-  timer_enable_scheduling();
-  KLOG_INFO("KERNEL", "Preemption enabled");
-
-  /* Petite pause pour laisser les worker threads se stabiliser */
-  /* Cela évite les race conditions pendant le démarrage du shell */
-  for (volatile int i = 0; i < 5000000; i++)
-    ;
-
   /* Lancer le shell interactif */
   KLOG_INFO("KERNEL", "Initializing shell...");
   shell_init();
   KLOG_INFO("KERNEL", "Shell initialized");
 
-  /* Exécuter le script de démarrage si présent */
-  if (config_run_startup_script() == 0) {
+  /* Activer la préemption timer une fois le shell initialisé */
+  timer_enable_scheduling();
+  KLOG_INFO("KERNEL", "Preemption enabled");
+
+  KLOG_INFO("KERNEL", "Checking startup script...");
+  int script_res = config_run_startup_script();
+  if (script_res == 0) {
     KLOG_INFO("STARTUP", "Startup script executed successfully");
-  }
-  if (config_run_startup_script() == 0) {
-    KLOG_INFO("STARTUP", "Startup script executed successfully");
+  } else {
+    KLOG_INFO_DEC("STARTUP", "Startup script not found or returned: ", (uint32_t)script_res);
   }
 
+  KLOG_INFO("KERNEL", "Starting shell_run...");
   shell_run();
 
   /* Ne devrait jamais arriver */

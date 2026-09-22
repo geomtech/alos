@@ -2,9 +2,13 @@
 #include "ata.h"
 #include "../arch/x86_64/io.h"
 #include "../kernel/klog.h"
+#include "../kernel/thread.h"
 
 /* Flag indiquant si un disque a été détecté */
 static int ata_disk_present = 0;
+
+/* Lock pour protéger les accès concurrents au bus ATA */
+static spinlock_t g_ata_lock;
 
 /* Flag pour les interruptions (non utilisé en mode polling) */
 static volatile int ata_irq_received = 0;
@@ -22,25 +26,42 @@ void ata_irq_handler(void)
 
 /**
  * Attend que le contrôleur ATA ne soit plus occupé.
- * Boucle tant que le bit BSY est set dans le Status Register.
+ * Boucle tant que le bit BSY est set dans le Status Register avec timeout.
+ * @return 0 si succès, -1 si timeout
  */
-void ata_wait_busy(void)
+int ata_wait_busy(void)
 {
     /* On lit le status depuis le port Control pour ne pas clear l'IRQ */
-    while (inb(ATA_PRIMARY_STATUS) & ATA_SR_BSY) {
-        /* Busy loop - le contrôleur traite une commande */
+    for (uint32_t i = 0; i < 500000; i++) {
+        if (!(inb(ATA_PRIMARY_CONTROL) & ATA_SR_BSY)) {
+            return 0;
+        }
+        io_wait();
     }
+    KLOG_ERROR("ATA", "Timeout waiting for BSY to clear");
+    return -1;
 }
 
 /**
  * Attend que le bit DRQ soit set (données prêtes à être lues/écrites).
  * Appelé après une commande READ/WRITE pour attendre les données.
+ * @return 0 si succès, -1 si timeout ou erreur
  */
-void ata_wait_drq(void)
+int ata_wait_drq(void)
 {
-    while (!(inb(ATA_PRIMARY_STATUS) & ATA_SR_DRQ)) {
-        /* Attente des données */
+    for (uint32_t i = 0; i < 500000; i++) {
+        uint8_t status = inb(ATA_PRIMARY_STATUS);
+        if (status & ATA_SR_ERR) {
+            KLOG_ERROR("ATA", "Controller error while waiting for DRQ");
+            return -1;
+        }
+        if (status & ATA_SR_DRQ) {
+            return 0;
+        }
+        io_wait();
     }
+    KLOG_ERROR("ATA", "Timeout waiting for DRQ");
+    return -1;
 }
 
 /**
@@ -87,6 +108,8 @@ int ata_init(void)
 {
     KLOG_INFO("ATA", "Initializing ATA/IDE driver...");
     
+    spinlock_init(&g_ata_lock);
+    
     /* Sélectionner le Master drive */
     outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER);
     ata_400ns_delay();
@@ -98,7 +121,11 @@ int ata_init(void)
     ata_400ns_delay();
     
     /* Attendre que le contrôleur soit prêt */
-    ata_wait_busy();
+    if (ata_wait_busy() != 0) {
+        KLOG_WARN("ATA", "Timeout after reset on Primary Master");
+        ata_disk_present = 0;
+        return -1;
+    }
     
     /* Vérifier si un disque est présent en lisant le status */
     uint8_t status = inb(ATA_PRIMARY_STATUS);
@@ -129,7 +156,11 @@ int ata_init(void)
     }
     
     /* Attendre que BSY soit clear */
-    ata_wait_busy();
+    if (ata_wait_busy() != 0) {
+        KLOG_WARN("ATA", "Timeout waiting for BSY after IDENTIFY");
+        ata_disk_present = 0;
+        return -1;
+    }
     
     /* Vérifier si c'est bien un disque ATA (LBA Mid et High doivent être 0) */
     uint8_t lba_mid = inb(ATA_PRIMARY_LBA_MID);
@@ -141,16 +172,10 @@ int ata_init(void)
     }
     
     /* Attendre DRQ ou ERR */
-    while (1) {
-        status = inb(ATA_PRIMARY_STATUS);
-        if (status & ATA_SR_ERR) {
-            KLOG_ERROR("ATA", "IDENTIFY command failed");
-            ata_disk_present = 0;
-            return -1;
-        }
-        if (status & ATA_SR_DRQ) {
-            break;  /* Données prêtes */
-        }
+    if (ata_wait_drq() != 0) {
+        KLOG_ERROR("ATA", "IDENTIFY command failed or timed out");
+        ata_disk_present = 0;
+        return -1;
     }
     
     /* Lire les 256 mots de données IDENTIFY (on les ignore pour l'instant) */
@@ -177,6 +202,7 @@ int ata_init(void)
 
 /**
  * Lit des secteurs depuis le disque en mode PIO (LBA28).
+ * Protégé par spinlock contre la concurrence multithread.
  * 
  * @param lba     Adresse LBA du premier secteur (0-based)
  * @param count   Nombre de secteurs à lire (1-255, 0 signifie 256)
@@ -185,20 +211,19 @@ int ata_init(void)
  */
 int ata_read_sectors(uint32_t lba, uint8_t count, uint8_t* buffer)
 {
-    if (!ata_disk_present) {
+    if (!ata_disk_present || buffer == NULL) {
         return -1;
     }
     
-    if (buffer == NULL) {
-        return -1;
-    }
+    uint64_t flags = spinlock_irqsave(&g_ata_lock);
     
     /* Attendre que le contrôleur soit prêt */
-    ata_wait_busy();
+    if (ata_wait_busy() != 0) {
+        spinlock_irqrestore(&g_ata_lock, flags);
+        return -1;
+    }
     
     /* Sélectionner le drive Master et envoyer les 4 bits hauts du LBA */
-    /* Format: 1110 XXXX où XXXX = bits 24-27 du LBA */
-    /* Le bit 6 (0x40) active le mode LBA */
     outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER | ((lba >> 24) & 0x0F));
     
     /* Envoyer le nombre de secteurs à lire */
@@ -221,28 +246,36 @@ int ata_read_sectors(uint32_t lba, uint8_t count, uint8_t* buffer)
         ata_400ns_delay();
         
         /* Attendre que BSY soit clear */
-        ata_wait_busy();
+        if (ata_wait_busy() != 0) {
+            spinlock_irqrestore(&g_ata_lock, flags);
+            return -1;
+        }
         
         /* Vérifier les erreurs */
         if (ata_check_error()) {
+            spinlock_irqrestore(&g_ata_lock, flags);
             return -1;
         }
         
         /* Attendre que DRQ soit set (données prêtes) */
-        ata_wait_drq();
+        if (ata_wait_drq() != 0) {
+            spinlock_irqrestore(&g_ata_lock, flags);
+            return -1;
+        }
         
         /* Lire 256 mots (512 octets) depuis le port Data */
-        /* Note: On lit des mots de 16 bits (inw) car l'ATA fonctionne en 16-bit */
         for (int i = 0; i < 256; i++) {
             buf16[sector * 256 + i] = inw(ATA_PRIMARY_DATA);
         }
     }
     
+    spinlock_irqrestore(&g_ata_lock, flags);
     return 0;
 }
 
 /**
  * Écrit des secteurs sur le disque en mode PIO (LBA28).
+ * Protégé par spinlock contre la concurrence multithread.
  * 
  * @param lba     Adresse LBA du premier secteur
  * @param count   Nombre de secteurs à écrire (1-255, 0 signifie 256)
@@ -251,16 +284,17 @@ int ata_read_sectors(uint32_t lba, uint8_t count, uint8_t* buffer)
  */
 int ata_write_sectors(uint32_t lba, uint8_t count, const uint8_t* buffer)
 {
-    if (!ata_disk_present) {
+    if (!ata_disk_present || buffer == NULL) {
         return -1;
     }
     
-    if (buffer == NULL) {
-        return -1;
-    }
+    uint64_t flags = spinlock_irqsave(&g_ata_lock);
     
     /* Attendre que le contrôleur soit prêt */
-    ata_wait_busy();
+    if (ata_wait_busy() != 0) {
+        spinlock_irqrestore(&g_ata_lock, flags);
+        return -1;
+    }
     
     /* Sélectionner le drive Master et envoyer les 4 bits hauts du LBA */
     outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER | ((lba >> 24) & 0x0F));
@@ -285,15 +319,22 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const uint8_t* buffer)
         ata_400ns_delay();
         
         /* Attendre que BSY soit clear */
-        ata_wait_busy();
+        if (ata_wait_busy() != 0) {
+            spinlock_irqrestore(&g_ata_lock, flags);
+            return -1;
+        }
         
         /* Vérifier les erreurs */
         if (ata_check_error()) {
+            spinlock_irqrestore(&g_ata_lock, flags);
             return -1;
         }
         
         /* Attendre que DRQ soit set */
-        ata_wait_drq();
+        if (ata_wait_drq() != 0) {
+            spinlock_irqrestore(&g_ata_lock, flags);
+            return -1;
+        }
         
         /* Écrire 256 mots (512 octets) sur le port Data */
         for (int i = 0; i < 256; i++) {
@@ -305,11 +346,13 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const uint8_t* buffer)
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_CACHE_FLUSH);
     ata_wait_busy();
     
+    spinlock_irqrestore(&g_ata_lock, flags);
     return 0;
 }
 
 /**
  * Force l'écriture du cache disque sur le média.
+ * Protégé par spinlock contre la concurrence multithread.
  * 
  * @return 0 si succès, -1 si erreur
  */
@@ -319,8 +362,13 @@ int ata_flush(void)
         return -1;
     }
     
+    uint64_t flags = spinlock_irqsave(&g_ata_lock);
+    
     /* Attendre que le contrôleur soit prêt */
-    ata_wait_busy();
+    if (ata_wait_busy() != 0) {
+        spinlock_irqrestore(&g_ata_lock, flags);
+        return -1;
+    }
     
     /* Sélectionner le drive Master */
     outb(ATA_PRIMARY_DRIVE_HEAD, ATA_DRIVE_MASTER);
@@ -329,12 +377,17 @@ int ata_flush(void)
     outb(ATA_PRIMARY_COMMAND, ATA_CMD_CACHE_FLUSH);
     
     /* Attendre la fin du flush */
-    ata_wait_busy();
-    
-    /* Vérifier les erreurs */
-    if (ata_check_error()) {
+    if (ata_wait_busy() != 0) {
+        spinlock_irqrestore(&g_ata_lock, flags);
         return -1;
     }
     
+    /* Vérifier les erreurs */
+    if (ata_check_error()) {
+        spinlock_irqrestore(&g_ata_lock, flags);
+        return -1;
+    }
+    
+    spinlock_irqrestore(&g_ata_lock, flags);
     return 0;
 }

@@ -381,30 +381,40 @@ bool sem_timedwait(semaphore_t *sem, uint32_t timeout_ms)
             return false;
         }
         
-        /* Add to wait queue */
-        current->state = THREAD_STATE_BLOCKED;
-        current->waiting_queue = &sem->waiters;
-        
+        /* Retirer des waiters pour ce tour */
         thread_t **tail = &sem->waiters.head;
-        while (*tail) {
+        thread_t *prev = NULL;
+        while (*tail && *tail != current) {
+            prev = *tail;
             tail = &((*tail)->wait_queue_next);
         }
-        *tail = current;
-        current->wait_queue_next = NULL;
-        if (!sem->waiters.tail) {
-            sem->waiters.tail = current;
+        if (*tail == current) {
+            if (prev) {
+                prev->wait_queue_next = current->wait_queue_next;
+            } else {
+                sem->waiters.head = current->wait_queue_next;
+            }
+            if (sem->waiters.tail == current) {
+                sem->waiters.tail = prev;
+            }
+            current->wait_queue_next = NULL;
         }
-        
-        /* Set wake time for timeout */
-        current->wake_tick = start_tick + timeout_ticks;
-        current->state = THREAD_STATE_SLEEPING;
-        
+
         spinlock_unlock(&sem->lock);
-        scheduler_schedule();
+        cpu_restore_flags(flags);
+
+        /* Dormir un court moment (10ms ou le temps restant) via le vrai sleep queue */
+        uint64_t elapsed = timer_get_ticks() - start_tick;
+        if (elapsed >= timeout_ticks) {
+            return false;
+        }
+        uint64_t remaining = timeout_ticks - elapsed;
+        uint32_t sleep_time = (remaining > 10) ? 10 : (uint32_t)remaining;
+        thread_sleep_ms(sleep_time);
+
+        flags = cpu_save_flags();
+        cpu_cli();
         spinlock_lock(&sem->lock);
-        
-        current->waiting_queue = NULL;
-        current->wake_tick = 0;
     }
     
     /* Decrement count */

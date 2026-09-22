@@ -158,12 +158,23 @@ static void write_to_early_buffer(const char* str)
     early_buffer[early_buffer_pos] = '\0';
 }
 
+static volatile int g_klog_file_busy = 0;
+
 /**
  * Écrit dans le fichier de log.
  */
 static void write_to_file(const char* str)
 {
-    if (log_file == NULL) return;
+    if (log_file == NULL || g_klog_file_busy) return;
+    
+    /* Ne pas écrire sur disque si interrupts disabled (contexte IRQ / spinlock) */
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0" : "=r"(flags));
+    if (!(flags & 0x200)) {
+        return; /* IF=0, ne pas bloquer sur le disque */
+    }
+
+    g_klog_file_busy = 1;
     
     size_t len = klog_strlen(str);
     int written = vfs_write(log_file, log_file_offset, len, (const uint8_t*)str);
@@ -171,6 +182,8 @@ static void write_to_file(const char* str)
     if (written > 0) {
         log_file_offset += written;
     }
+
+    g_klog_file_busy = 0;
 }
 
 /* ===========================================
@@ -272,15 +285,11 @@ static void do_log(klog_level_t level, const char* module, const char* msg,
     
     klog_strcat(formatted, "\n");
     
-    /* Écrire selon le mode */
-    if (early_mode) {
-        write_to_early_buffer(formatted);
-    } else {
-        write_to_file(formatted);
-    }
-    
     /* Toujours écrire sur le port série pour le debug */
     serial_write_str(formatted);
+
+    /* Écrire dans le buffer mémoire */
+    write_to_early_buffer(formatted);
 }
 
 /* ===========================================
@@ -339,21 +348,8 @@ int klog_init(void)
     /* Se positionner à la fin du fichier pour append */
     log_file_offset = log_file->size;
     
-    /* Ajouter un séparateur pour la nouvelle session */
-    const char* separator = "\n========== NEW BOOT SESSION ==========\n";
-    vfs_write(log_file, log_file_offset, klog_strlen(separator), (const uint8_t*)separator);
-    log_file_offset += klog_strlen(separator);
-    
-    /* Basculer en mode fichier */
-    early_mode = 0;
     initialized = 1;
-    
-    /* Vider le buffer précoce dans le fichier */
-    if (early_buffer_pos > 0) {
-        write_to_file(early_buffer);
-    }
-    
-    klog(LOG_INFO, "KLOG", "File-based logging active");
+    klog(LOG_INFO, "KLOG", "File-based logging active (buffered)");
     
     return 0;
 }
@@ -409,7 +405,9 @@ void klog_hex64(klog_level_t level, const char* module, const char* msg, uint64_
 
 void klog_flush(void)
 {
-    /* Pour l'instant, les écritures sont synchrones */
-    /* Dans une future version, on pourrait bufferiser et flush ici */
-    (void)0;
+    if (log_file != NULL && early_buffer_pos > 0) {
+        write_to_file(early_buffer);
+        early_buffer_pos = 0;
+        early_buffer[0] = '\0';
+    }
 }

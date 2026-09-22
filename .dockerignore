@@ -1,0 +1,23 @@
+# Artefacts de build
+*.o
+*.elf
+*.iso
+*.img
+*.log
+*.pcap
+
+# Répertoires générés
+iso_root/
+fs_root/
+limine/
+
+# Environnement
+.git/
+.gitignore
+.windsurf/
+.vscode/
+
+# Documentation (pas nécessaire pour le build)
+docs/
+*.md
+MULTIPROCESSING-OSDEV.org

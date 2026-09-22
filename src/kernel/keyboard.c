@@ -140,23 +140,21 @@ char keyboard_getchar(void) {
   }
 
   /* Attendre qu'une touche soit disponible.
-   * Utilise sem_timedwait avec un court timeout pour éviter les blocages.
-   * Si timeout, on vérifie le buffer et on réessaie. */
+   * On essaie le sémaphore, mais si pas dispo on yield et revérifie le buffer. */
   while (1) {
-    /* Essayer d'attendre avec timeout de 100ms */
-    if (sem_timedwait(&keyboard_sem, 100)) {
-      /* Sémaphore signalé, une touche est disponible */
+    /* Essayer d'attendre avec timeout de 50ms */
+    if (sem_timedwait(&keyboard_sem, 50)) {
       char c = keyboard_buffer_get();
       if (c != 0)
         return c;
     }
 
-    /* Timeout ou pas de caractère, vérifier le buffer directement */
+    /* Vérifier directement le buffer */
     if (keyboard_has_char()) {
       return keyboard_buffer_get();
     }
 
-    /* Céder le CPU aux autres threads */
+    /* Céder le CPU */
     thread_yield();
   }
 }
