@@ -62,8 +62,12 @@ switch_context:
 ;   RSI = new_rsp     : New RSP to load
 ;   RDX = new_cr3     : New page table (0 = no change)
 ;
-; Stack layout sauvegardé (identique à IRQ):
-;   [SS, RSP, RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
+; Stack layout sauvegardé pour un contexte Ring 0:
+;   [RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
+;
+; IMPORTANT: pour un retour IRETQ Ring0->Ring0, le CPU ne dépile PAS RSP/SS.
+; Les frames utilisateur initiaux conservent bien [RSP, SS], car IRETQ les
+; dépile lors d'un changement de privilège Ring0->Ring3.
 ;
 global switch_task
 switch_task:
@@ -75,25 +79,20 @@ switch_task:
     mov r9, rsi             ; r9 = new_rsp
     mov r10, rdx            ; r10 = new_cr3
     
-    ; === Construire un fake IRETQ frame ===
-    ; On simule ce que le CPU aurait poussé lors d'une interruption
+    ; === Construire un fake IRETQ frame Ring 0 ===
+    ; On simule un contexte interrompu en Ring 0.
+    ; Pour un IRETQ Ring0->Ring0, seules RIP, CS et RFLAGS sont dépilées.
+    ; Ajouter RSP/SS ici décale la pile de 16 octets à la reprise et finit
+    ; par corrompre l'adresse de retour du code C.
     
     ; Lire RFLAGS actuel
     pushfq
     pop r11                 ; r11 = RFLAGS
     
-    ; Calculer l'adresse de retour (après le call qui nous a appelé)
-    ; Le RIP de retour est déjà sur la stack (poussé par CALL)
-    ; On va le récupérer et construire le frame complet
-    
+    ; Le RIP de retour est déjà sur la stack (poussé par CALL).
     pop rax                 ; rax = return address (RIP)
     
-    ; Maintenant construire le frame IRQ complet
-    ; Ordre: SS, RSP, RFLAGS, CS, RIP, error_code, int_no, puis PUSH_ALL
-    
-    push qword 0x10         ; SS (kernel data)
-    lea rcx, [rsp + 8]      ; RSP avant le push SS
-    push rcx                ; RSP (valeur avant nos push)
+    ; Frame IRETQ Ring 0: RFLAGS, CS, RIP
     push r11                ; RFLAGS
     push qword 0x08         ; CS (kernel code)
     push rax                ; RIP (adresse de retour)
@@ -151,7 +150,19 @@ switch_task:
     ; Skip int_no et error_code
     add rsp, 16
     
-    ; IRETQ pour retourner au nouveau thread
+    ; Si la frame cible retourne en Ring 3, charger les segments utilisateur.
+    ; Après POP_ALL + skip, [rsp+8] contient CS.
+    test qword [rsp + 8], 0x03
+    jz .iret_target
+    push rax
+    mov ax, 0x1B            ; User Data
+    mov ds, ax
+    mov es, ax
+    pop rax
+
+.iret_target:
+    ; IRETQ dépile RIP/CS/RFLAGS et, seulement lors d'un changement de
+    ; privilège, RSP/SS.
     iretq
 
 ; ============================================
