@@ -1595,14 +1595,12 @@ void scheduler_schedule(void) {
     next->first_switch = false;
   }
 
-  /* Context switch avec FORMAT IRQ UNIFIÉ.
+  /* Context switch coopératif.
    *
-   * switch_task sauvegarde maintenant au format IRQ complet:
-   * [SS, RSP, RFLAGS, CS, RIP, error_code, int_no, RAX...R15]
-   *
-   * Cela permet la préemption transparente : un thread peut être
-   * interrompu par une IRQ timer et reprendre plus tard via switch_task,
-   * ou vice versa.
+   * switch_task sauvegarde un frame IRETQ Ring 0 -> Ring 0 :
+   * [RFLAGS, CS, RIP, error_code, int_no, RAX...R15].
+   * Les frames qui entrent réellement depuis Ring 3 gardent, eux,
+   * les deux qwords supplémentaires RSP/SS poussés par le CPU.
    */
   if (current) {
     switch_task(&current->rsp, next->rsp, new_cr3);
