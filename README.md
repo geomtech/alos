@@ -117,7 +117,7 @@ Next major milestones:
 - [x] Damage-based compositor rendering and GUI event-loop optimizations
 - [x] Basic GUI component/widget framework
 - [ ] Desktop environment
-- [ ] Widget toolkit
+- [ ] Advanced widget toolkit (layout, theming, richer controls)
 - [ ] Multi-monitor support
 
 ### User Space & Applications
