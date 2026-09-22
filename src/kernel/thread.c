@@ -384,9 +384,7 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    * Le stub IRQ fait: POP_ALL, add rsp 16, iretq
    *
    * Layout de la stack (du bas vers le haut, RSP pointe vers R15):
-   *   === IRETQ Frame (5 éléments, poussés par le CPU normalement) ===
-   *   SS          <- Kernel Data (0x10)
-   *   RSP         <- Stack pointer (ignoré pour Ring0->Ring0)
+   *   === IRETQ Frame Ring 0 (3 éléments) ===
    *   RFLAGS      <- 0x202 (IF=1)
    *   CS          <- Kernel Code (0x08)
    *   RIP         <- task_entry_point
@@ -396,18 +394,19 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
    *   === PUSH_ALL (15 registres) ===
    *   RAX, RCX, RDX, RBX, RBP, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15
    *
+   * En Ring0->Ring0, IRETQ ne dépile pas RSP/SS. Les ajouter ici laisserait
+   * 16 octets parasites sur la pile à la reprise.
+   *
    * task_entry_point attend:
    *   R12 = entry function pointer
    *   R13 = argument (void*)
    */
   uint64_t *stack_top = (uint64_t *)((uint64_t)stack + stack_size);
 
-  /* === IRETQ Frame (5 éléments) === */
-  *(--stack_top) = 0x10;                         /* SS: Kernel Data */
-  *(--stack_top) = (uint64_t)stack + stack_size; /* RSP (ignoré Ring0->Ring0) */
-  *(--stack_top) = 0x202;                        /* RFLAGS: IF=1 */
-  *(--stack_top) = 0x08;                         /* CS: Kernel Code */
-  *(--stack_top) = (uint64_t)task_entry_point;   /* RIP */
+  /* === IRETQ Frame Ring 0 (3 éléments) === */
+  *(--stack_top) = 0x202;                      /* RFLAGS: IF=1 */
+  *(--stack_top) = 0x08;                       /* CS: Kernel Code */
+  *(--stack_top) = (uint64_t)task_entry_point; /* RIP */
 
   /* === Error code / Int number (2 éléments) === */
   *(--stack_top) = 0;  /* error_code (dummy) */
