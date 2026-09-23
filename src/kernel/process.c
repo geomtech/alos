@@ -913,13 +913,13 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
     *stack_ptr = (uint64_t)argv_ptrs[i];
   }
 
-  uint64_t argv_addr = (uint64_t)stack_ptr; /* Adresse de argv[0] */
-
-  /* Pousser argv (pointeur vers argv[0]) */
-  stack_ptr--;
-  *stack_ptr = argv_addr;
-
-  /* Pousser argc */
+  /* Pousser argc. NOTE: on ne pousse PAS de mot supplémentaire pour "argv"
+   * ici : crt0.s (_start) fait `pop rdi` (argc) puis `mov rsi, rsp`, donc il
+   * attend que le mot suivant argc soit DIRECTEMENT argv[0], pas un pointeur
+   * indirect vers le tableau. Pousser un mot "argv_addr" supplémentaire ici
+   * décalerait tous les argv[] d'une case pour le programme userland (bug
+   * découvert en ajoutant le mode script de /bin/sh, qui est le premier
+   * programme à réellement lire argv[1]). */
   stack_ptr--;
   *stack_ptr = (uint64_t)argc;
 
@@ -932,6 +932,19 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   user_rsp = USER_STACK_TOP - data_size;
   /* Aligner sur 16 octets (requis par x86-64 ABI) */
   user_rsp &= ~0xFULL;
+
+  /* Les pointeurs argv[i] construits plus haut pointent actuellement vers
+   * des adresses du buffer temporaire côté noyau (stack_buffer), pas vers
+   * leur adresse finale dans l'espace utilisateur. Il faut les reloger
+   * avant la copie, sinon le programme userland déréférence une adresse
+   * noyau depuis le ring 3 (page fault "User mode" garanti dès qu'il lit
+   * réellement le contenu de argv[], ce que /bin/sh fait désormais en mode
+   * script). Le tableau argv[] est situé juste après argc dans le buffer. */
+  int64_t reloc_offset = (int64_t)user_rsp - (int64_t)(uintptr_t)stack_ptr;
+  uint64_t *argv_array = stack_ptr + 1;
+  for (int i = 0; i < argc; i++) {
+    argv_array[i] = (uint64_t)((int64_t)argv_array[i] + reloc_offset);
+  }
 
   /* Copier les données de la stack dans le Page Directory du processus */
   if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, stack_ptr,

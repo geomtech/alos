@@ -1,7 +1,19 @@
 /* src/userland/libc/src/unistd/unistd.c - Standard Unix functions */
 #include "internal/syscall.h"
+#include <fcntl.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+/**
+ * open() - Ouvre un fichier via SYS_OPEN.
+ *
+ * Le troisième argument (mode) n'est utilisé que pour O_CREAT et n'est pas
+ * supporté par le kernel pour l'instant : il est accepté pour compatibilité
+ * avec la signature standard mais ignoré.
+ */
+int open(const char *pathname, int flags, ...) {
+  return (int)syscall3(SYS_OPEN, (long)pathname, (long)flags, 0);
+}
 
 ssize_t read(int fd, void *buf, size_t count) {
   return syscall3(SYS_READ, fd, (long)buf, (long)count);
