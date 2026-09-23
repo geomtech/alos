@@ -709,7 +709,7 @@ int process_execute(const char *filename) {
  * Lance immédiatement un programme ELF (bloquant).
  * Charge et exécute le programme, puis retourne au shell.
  */
-int process_exec_and_wait(const char *filename, int argc, char **argv) {
+process_t *process_spawn(const char *filename, int argc, char **argv) {
   KLOG_INFO("EXEC", "=== Execute and Wait ===");
   KLOG_INFO("EXEC", filename);
 
@@ -721,7 +721,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_puts(filename);
     console_puts(" is not a valid ELF executable\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return -1;
+    return NULL;
   }
 
   /* Allouer la structure du processus */
@@ -731,7 +731,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     console_puts("Error: Failed to allocate process structure\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return -1;
+    return NULL;
   }
 
   /* Allouer une stack kernel pour ce processus (pour les syscalls) */
@@ -742,7 +742,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_puts("Error: Failed to allocate kernel stack\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   /* Initialiser la kernel stack à 0 pour éviter les problèmes de mémoire non
@@ -774,7 +774,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
   proc->pml4 = (uint64_t *)dir; /* Stocker le pointeur vers la structure */
   proc->cr3 = dir->pml4_phys;   /* CR3 = adresse PHYSIQUE du PML4 */
@@ -799,7 +799,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
@@ -826,7 +826,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
         vmm_free_directory((page_directory_t *)proc->pml4);
         kfree(kernel_stack);
         kfree(proc);
-        return -1;
+        return NULL;
       }
       /* Convertir en adresse physique pour le mapping */
       uint64_t page_phys = pmm_virt_to_phys(page_virt);
@@ -840,7 +840,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
         vmm_free_directory((page_directory_t *)proc->pml4);
         kfree(kernel_stack);
         kfree(proc);
-        return -1;
+        return NULL;
       }
       /* Mettre la page à zéro */
       memset(page_virt, 0, PAGE_SIZE);
@@ -865,7 +865,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   /* Construire la stack utilisateur dans le buffer */
@@ -892,7 +892,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
       vmm_free_directory((page_directory_t *)proc->pml4);
       kfree(kernel_stack);
       kfree(proc);
-      return -1;
+      return NULL;
     }
     for (int j = 0; j < len; j++) {
       string_ptr[j] = argv[i][j];
@@ -949,7 +949,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   /* Libérer le buffer temporaire */
@@ -994,7 +994,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   proc->main_thread = main_thread;
@@ -1015,15 +1015,27 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
   console_puts(")\n");
   console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
-  /* EXEC NON-BLOQUANT: On retourne immédiatement */
-  /* Le scheduler se chargera d'exécuter le nouveau thread */
-  /* Pas de wait loop ici ! */
+  /* Note: On ne libere PAS le Page Directory ni la structure process */
+  /* Ils seront liberes par le reaper thread quand le processus se terminera */
 
-  /* Note: On ne libère PAS le Page Directory ni la structure process */
-  /* Ils seront libérés par le reaper thread quand le processus se terminera */
+  return proc;
+}
 
-  /* Céder le CPU pour donner une chance au nouveau thread de s'exécuter.
-   * C'est nécessaire car scheduler_preempt (IRQ timer) ne peut pas switcher
+/**
+ * Lance immediatement un programme ELF (non-bloquant).
+ * Charge et execute le programme, puis retourne au shell.
+ *
+ * Conserve pour compatibilite avec les appelants existants (shell kernel).
+ * Utilise process_spawn() en interne.
+ */
+int process_exec_and_wait(const char *filename, int argc, char **argv) {
+  process_t *proc = process_spawn(filename, argc, argv);
+  if (proc == NULL) {
+    return -1;
+  }
+
+  /* Ceder le CPU pour donner une chance au nouveau thread de s'executer.
+   * C'est necessaire car scheduler_preempt (IRQ timer) ne peut pas switcher
    * vers un thread user - seul scheduler_schedule peut le faire.
    */
   thread_yield();

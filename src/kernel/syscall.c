@@ -351,10 +351,24 @@ static int sys_read(int fd, void *buf, uint64_t count) {
     return bytes_read;
   }
 
-  /* Lecture depuis la console (stdin) - non implémenté */
+  /* Lecture depuis la console (stdin) - bloquant via clavier */
   if (fd_table[fd].type == FILE_TYPE_CONSOLE) {
-    /* TODO: keyboard input */
-    return 0;
+    if (count == 0) {
+      return 0;
+    }
+
+    uint64_t total = 0;
+    uint8_t *out = (uint8_t *)buf;
+    while (total < count) {
+      char c = keyboard_getchar(); /* Bloquant (sémaphore) */
+      out[total++] = (uint8_t)c;
+      /* On s'arrête après un seul caractère : le shell userland lit
+       * caractère par caractère (comme un terminal en mode canonique
+       * simplifié). */
+      break;
+    }
+
+    return (int)total;
   }
 
   return -1;
@@ -1127,6 +1141,7 @@ static int sys_fork(void);
 static int sys_execve(const char *filename, char **argv, char **envp);
 static int sys_waitpid(int pid, int *status, int options);
 static int sys_create_thread(void *entry, void *stack, void *arg);
+static int sys_spawn_wait(const char *path, int argc, char **argv);
 
 /* ========================================
  * Memory Management Syscalls
@@ -1422,6 +1437,11 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_sleep_micros((uint32_t)regs->rdi);
     break;
 
+  case SYS_SPAWN_WAIT:
+    result = sys_spawn_wait((const char *)regs->rdi, (int)regs->rsi,
+                            (char **)regs->rdx);
+    break;
+
   default:
     KLOG_ERROR("SYSCALL", "Unknown syscall number!");
     KLOG_ERROR_DEC("SYSCALL", "  syscall_num: ", syscall_num);
@@ -1634,6 +1654,43 @@ static int sys_waitpid(int pid, int *status, int options) {
   /* Processus fils non trouvé */
   KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
   return -1;
+}
+
+/**
+ * SYS_SPAWN_WAIT (201) - Lancer un programme ELF et attendre sa terminaison
+ *
+ * Syscall "tout-en-un" utilisé par le shell userland (/bin/sh) pour lancer
+ * une commande externe et bloquer jusqu'à ce qu'elle se termine, sans avoir
+ * à gérer fork()/execve() séparément.
+ *
+ * @param path  Chemin du fichier ELF à exécuter
+ * @param argc  Nombre d'arguments
+ * @param argv  Tableau d'arguments (pointeurs user space)
+ * @return Code de sortie du programme, ou -1 si erreur
+ */
+static int sys_spawn_wait(const char *path, int argc, char **argv) {
+  if (path == NULL) {
+    return -1;
+  }
+
+  KLOG_INFO("SYSCALL", "sys_spawn_wait called");
+  KLOG_INFO("SYSCALL", path);
+
+  process_t *child = process_spawn(path, argc, argv);
+  if (child == NULL) {
+    KLOG_ERROR("SYSCALL", "sys_spawn_wait: failed to spawn process");
+    return -1;
+  }
+
+  /* Bloque (via wait_queue) jusqu'à la terminaison du processus fils */
+  int exit_status = process_join(child);
+
+  /* Reap: la structure process_t n'est plus libérée par le reaper (voir
+   * thread.c) une fois que le dernier thread se termine ; c'est à
+   * l'attendant (nous) de la libérer une fois l'exit_status récupéré. */
+  kfree(child);
+
+  return exit_status;
 }
 
 /**

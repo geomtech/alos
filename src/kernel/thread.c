@@ -1727,8 +1727,10 @@ static void reaper_thread_func(void *arg) {
         KLOG_INFO("REAPER", "Last thread of process, cleaning up process:");
         KLOG_INFO("REAPER", proc->name);
 
-        /* Réveiller les threads en attente sur ce processus (waitpid) */
-        wait_queue_wake_all(&proc->wait_queue);
+        /* Marquer le processus comme zombie AVANT de réveiller les threads en
+         * attente (process_join/waitpid), pour qu'ils voient un état cohérent
+         * dès leur réveil. */
+        proc->state = PROCESS_STATE_ZOMBIE;
 
         /* Libérer le Page Directory si ce n'est pas le kernel directory */
         if (proc->pml4 &&
@@ -1744,8 +1746,12 @@ static void reaper_thread_func(void *arg) {
           proc->stack_base = NULL;
         }
 
-        /* Libérer la structure du processus */
-        kfree(proc);
+        /* Réveiller les threads en attente sur ce processus (waitpid /
+         * process_join). La structure process_t elle-même N'EST PAS libérée
+         * ici : celui qui l'attend (process_join) est responsable de la
+         * "reap" finale (kfree) une fois qu'il a lu l'exit_status, afin
+         * d'éviter tout use-after-free côté attendant. */
+        wait_queue_wake_all(&proc->wait_queue);
       }
 
       zombie->owner = NULL;

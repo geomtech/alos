@@ -31,6 +31,18 @@ unsigned int sleep(unsigned int seconds) {
 
 int chdir(const char *path) { return syscall3(SYS_CHDIR, (long)path, 0, 0); }
 
+char *getcwd(char *buf, size_t size) {
+  if (buf == NULL || size == 0)
+    return (char *)0;
+  if (syscall3(SYS_GETCWD, (long)buf, (long)size, 0) != 0)
+    return (char *)0;
+  return buf;
+}
+
+int spawn_wait(const char *path, int argc, char **argv) {
+  return syscall3(SYS_SPAWN_WAIT, (long)path, (long)argc, (long)argv);
+}
+
 int rmdir(const char *pathname) {
   return syscall3(SYS_RMDIR, (long)pathname, 0, 0);
 }

@@ -17,6 +17,8 @@ int getpid(void);
 int getuid(void);
 unsigned int sleep(unsigned int seconds);
 int chdir(const char *path);
+char *getcwd(char *buf, size_t size);
+int spawn_wait(const char *path, int argc, char **argv);
 int rmdir(const char *pathname);
 void _exit(int status);
 

@@ -201,6 +201,18 @@ int process_execute(const char *filename);
  */
 int process_exec_and_wait(const char *filename, int argc, char **argv);
 
+/**
+ * Charge et démarre un programme ELF comme processus User Mode, sans
+ * attendre sa terminaison. Utilisé par process_exec_and_wait() et par
+ * sys_spawn_wait() (qui attend ensuite via process_join()).
+ *
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @param argc      Nombre d'arguments
+ * @param argv      Tableau d'arguments
+ * @return          Pointeur vers le processus créé, ou NULL si erreur
+ */
+process_t *process_spawn(const char *filename, int argc, char **argv);
+
 /* ========================================
  * Nouvelles fonctions Multithreading
  * ======================================== */

@@ -471,6 +471,32 @@ void kmain(void) {
     KLOG_INFO_DEC("STARTUP", "Startup script not found or returned: ", (uint32_t)script_res);
   }
 
+  /* ============================================ */
+  /* Shell : essayer /bin/sh (userland) en priorité */
+  /* ============================================ */
+  vfs_node_t *sh_node = vfs_resolve_path("/bin/sh");
+  if (sh_node != NULL && (sh_node->type & VFS_FILE)) {
+    KLOG_INFO("KERNEL", "Launching /bin/sh (userland shell)...");
+    for (;;) {
+      char *sh_argv[] = {"/bin/sh"};
+      process_t *sh_proc = process_spawn("/bin/sh", 1, sh_argv);
+      if (sh_proc == NULL) {
+        KLOG_ERROR("KERNEL",
+                   "Failed to spawn /bin/sh, falling back to kernel shell");
+        break;
+      }
+
+      /* Bloque jusqu'à la terminaison du shell userland */
+      process_join(sh_proc);
+      kfree(sh_proc);
+
+      KLOG_INFO("KERNEL", "/bin/sh exited, restarting...");
+    }
+  } else {
+    KLOG_INFO("KERNEL",
+             "No /bin/sh found on disk, falling back to kernel shell");
+  }
+
   KLOG_INFO("KERNEL", "Starting shell_run...");
   shell_run();
 
