@@ -1732,6 +1732,11 @@ static void reaper_thread_func(void *arg) {
          * dès leur réveil. */
         proc->state = PROCESS_STATE_ZOMBIE;
 
+        /* Chaque processus possède sa table, mais les descriptions ouvertes
+         * héritées sont partagées et ne ferment la ressource qu'à la dernière
+         * référence. */
+        file_table_destroy(proc->fd_table);
+
         /* Libérer le Page Directory si ce n'est pas le kernel directory */
         if (proc->pml4 &&
             proc->pml4 != (uint64_t *)vmm_get_kernel_directory()) {

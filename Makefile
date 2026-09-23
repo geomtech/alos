@@ -74,8 +74,8 @@ NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 
 # Filesystem (VFS + drivers)
-FS_SRC = src/fs/vfs.c src/fs/ext2.c
-FS_OBJ = src/fs/vfs.o src/fs/ext2.o
+FS_SRC = src/fs/vfs.c src/fs/ext2.c src/fs/file.c
+FS_OBJ = src/fs/vfs.o src/fs/ext2.o src/fs/file.o
 
 
 # Shell

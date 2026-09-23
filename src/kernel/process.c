@@ -182,6 +182,7 @@ void init_multitasking(void) {
   idle_process->heap_start = 0;
   idle_process->heap_brk = 0;
   process_inherit_cwd(idle_process, NULL);
+  file_table_init(idle_process->fd_table, NULL);
 
   /* Pas de stack allouée (on utilise la stack du kernel) */
   idle_process->stack_base = NULL;
@@ -255,6 +256,7 @@ process_t *create_kernel_thread(void (*function)(void), const char *name) {
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   process_inherit_cwd(proc, current_process);
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   /* Page Directory (partagé avec le kernel pour les threads kernel) */
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
@@ -759,6 +761,7 @@ int process_execute(const char *filename) {
   proc->first_child = NULL;
   proc->sibling_next = NULL;
   proc->sibling_prev = NULL;
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   /* ========================================
    * Créer le thread user mode
@@ -776,6 +779,7 @@ int process_execute(const char *filename) {
 
   if (main_thread == NULL) {
     KLOG_ERROR("EXEC", "Failed to create user thread!");
+    file_table_destroy(proc->fd_table);
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
@@ -1093,6 +1097,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   proc->first_child = NULL;
   proc->sibling_next = NULL;
   proc->sibling_prev = NULL;
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   /* ========================================
    * Créer le thread user mode
@@ -1110,6 +1115,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   if (main_thread == NULL) {
     KLOG_ERROR("EXEC", "Failed to create user thread!");
+    file_table_destroy(proc->fd_table);
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
@@ -1189,6 +1195,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   proc->should_terminate = 0;
   proc->exit_status = 0;
   process_inherit_cwd(proc, current_process);
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
   proc->cr3 = (uint64_t)proc->pml4;
@@ -1213,6 +1220,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
       proc, name, entry, arg, stack_size, THREAD_PRIORITY_NORMAL);
   if (!main_thread) {
     KLOG_ERROR("PROC", "Failed to create main thread");
+    file_table_destroy(proc->fd_table);
     kfree(proc);
     return NULL;
   }

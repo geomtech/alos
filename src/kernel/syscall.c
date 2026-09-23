@@ -23,102 +23,14 @@
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
 static inline void disable_interrupts(void) { __asm__ volatile("cli"); }
 
-/* ========================================
- * File Descriptor Table (per-process, simplifié)
- * Pour V1, on utilise une table globale allouée dynamiquement
- * ======================================== */
-
-static file_descriptor_t *fd_table = NULL;
-static int fd_table_initialized = 0;
-
-/* Socket serveur global pour contourner le bug fd_table */
-static tcp_socket_t *g_server_socket = NULL;
-static int g_server_fd = -1;
-static int g_server_closing = 0; /* Flag pour fermeture demandée par CTRL+D */
-
-/**
- * Initialise la table des file descriptors.
- */
-static void fd_table_init(void) {
-  if (fd_table_initialized && fd_table != NULL)
-    return;
-
-  /* Allouer la table dynamiquement pour éviter les problèmes de .bss */
-  if (fd_table == NULL) {
-    extern void *kmalloc(size_t size);
-    fd_table = (file_descriptor_t *)kmalloc(sizeof(file_descriptor_t) * MAX_FD);
-    if (fd_table == NULL) {
-      console_puts("[SYSCALL] FATAL: Cannot allocate fd_table!\n");
-      return;
-    }
-
-    KLOG_INFO_HEX("SYSCALL", "fd_table allocated at address: ",
-                  (uint32_t)(uintptr_t)fd_table);
-
-    /* Forcer le rechargement du TLB pour être sûr que les nouveaux mappings
-     * sont visibles */
-    __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3"
-                     :
-                     :
-                     : "rax", "memory");
-  }
-
-  for (int i = 0; i < MAX_FD; i++) {
-    fd_table[i].type = FILE_TYPE_NONE;
-    fd_table[i].flags = 0;
-    fd_table[i].position = 0;
-    fd_table[i].socket = NULL;
-    fd_table[i].ref_count = 0;
-  }
-
-  /* Réserver stdin, stdout, stderr comme console */
-  fd_table[FD_STDIN].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDIN].flags = O_RDONLY;
-  fd_table[FD_STDIN].ref_count = 1;
-
-  fd_table[FD_STDOUT].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDOUT].flags = O_WRONLY;
-  fd_table[FD_STDOUT].ref_count = 1;
-
-  fd_table[FD_STDERR].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDERR].flags = O_WRONLY;
-  fd_table[FD_STDERR].ref_count = 1;
-
-  fd_table_initialized = 1;
+static file_descriptor_t *current_fd_table(void) {
+  process_t *proc = process_current();
+  return proc != NULL ? proc->fd_table : NULL;
 }
 
-/**
- * Alloue un nouveau file descriptor.
- * @return FD number, ou -1 si plus de place
- */
-static int fd_alloc(void) {
-  fd_table_init();
-
-  /* Commencer à 3 (après stdin/stdout/stderr) */
-  for (int i = 3; i < MAX_FD; i++) {
-    if (fd_table[i].type == FILE_TYPE_NONE) {
-      fd_table[i].ref_count = 1;
-      KLOG_DEBUG_DEC("SYSCALL", "fd_alloc: found free fd ", i);
-      return i;
-    }
-  }
-  return -1;
-}
-
-/**
- * Libère un file descriptor.
- */
-static void fd_free(int fd) {
-  if (fd < 0 || fd >= MAX_FD)
-    return;
-  if (fd < 3)
-    return; /* Ne pas libérer stdin/stdout/stderr */
-
-  fd_table[fd].type = FILE_TYPE_NONE;
-  fd_table[fd].flags = 0;
-  fd_table[fd].position = 0;
-  fd_table[fd].socket = NULL;
-  fd_table[fd].ref_count = 0;
+static open_file_description_t *current_fd_get(int fd) {
+  file_descriptor_t *table = current_fd_table();
+  return table != NULL ? file_table_get(table, fd) : NULL;
 }
 
 /* ========================================
@@ -240,8 +152,9 @@ static int sys_sleep_micros(uint32_t microseconds) {
  * @param count   Nombre de caractères (dans ECX), 0 = null-terminated
  */
 static int sys_write(int fd, const char *buf, uint64_t count) {
-  /* For now, only support stdout (fd=1) and stderr (fd=2) */
-  if (fd != 1 && fd != 2) {
+  open_file_description_t *description = current_fd_get(fd);
+  if ((fd != FD_STDOUT && fd != FD_STDERR) || description == NULL ||
+      description->type != FILE_TYPE_CONSOLE) {
     return -1; /* Invalid file descriptor */
   }
 
@@ -278,8 +191,6 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
  * @return File descriptor, ou -1 si erreur
  */
 static int sys_open(const char *path, int flags) {
-  fd_table_init();
-
   if (path == NULL) {
     return -1;
   }
@@ -300,19 +211,20 @@ static int sys_open(const char *path, int flags) {
     return -1;
   }
 
-  /* Allouer un file descriptor */
-  int fd = fd_alloc();
-  if (fd < 0) {
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_FILE, flags, node);
+  if (description == NULL) {
     vfs_close(node);
-    KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
     return -1;
   }
 
-  /* Configurer le FD */
-  fd_table[fd].type = FILE_TYPE_FILE;
-  fd_table[fd].flags = flags;
-  fd_table[fd].position = 0;
-  fd_table[fd].vfs_node = node;
+  file_descriptor_t *table = current_fd_table();
+  int fd = table != NULL ? file_table_install(table, description) : -1;
+  if (fd < 0) {
+    file_description_release(description);
+    KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
+    return -1;
+  }
 
   KLOG_INFO_DEC("SYSCALL", "[SYSCALL] open: fd=", fd);
   KLOG_INFO_DEC("SYSCALL", "file size=", node->size);
@@ -329,35 +241,34 @@ static int sys_open(const char *path, int flags) {
  * @return Nombre de bytes lus, ou -1 si erreur
  */
 static int sys_read(int fd, void *buf, uint64_t count) {
-  fd_table_init();
-
   if (buf == NULL || fd < 0 || fd >= MAX_FD) {
     return -1;
   }
 
-  if (fd_table[fd].type == FILE_TYPE_NONE) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL) {
     return -1;
   }
 
   /* Lecture depuis un fichier VFS */
-  if (fd_table[fd].type == FILE_TYPE_FILE) {
-    vfs_node_t *node = (vfs_node_t *)fd_table[fd].vfs_node;
+  if (description->type == FILE_TYPE_FILE) {
+    vfs_node_t *node = (vfs_node_t *)description->vfs_node;
     if (node == NULL) {
       return -1;
     }
 
     /* Lire depuis la position courante */
     int bytes_read =
-        vfs_read(node, fd_table[fd].position, count, (uint8_t *)buf);
+        vfs_read(node, description->position, count, (uint8_t *)buf);
     if (bytes_read > 0) {
-      fd_table[fd].position += bytes_read;
+      description->position += bytes_read;
     }
 
     return bytes_read;
   }
 
   /* Lecture depuis la console (stdin) - bloquant via clavier */
-  if (fd_table[fd].type == FILE_TYPE_CONSOLE) {
+  if (description->type == FILE_TYPE_CONSOLE) {
     if (count == 0) {
       return 0;
     }
@@ -796,30 +707,22 @@ static int sys_socket(int domain, int type, int protocol) {
     return -1;
   }
 
-  /* Allouer un file descriptor */
-  int fd = fd_alloc();
-  if (fd < 0) {
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_SOCKET, O_RDWR, sock);
+  if (description == NULL) {
     tcp_close(sock);
+    return -1;
+  }
+
+  file_descriptor_t *table = current_fd_table();
+  int fd = table != NULL ? file_table_install(table, description) : -1;
+  if (fd < 0) {
+    file_description_release(description);
     KLOG_ERROR("SYSCALL", "sys_socket: no free file descriptors");
     return -1;
   }
 
-  KLOG_DEBUG("SYSCALL", "sys_socket: fd allocated, setting up table...");
-
-  /* Associer le socket au FD */
-  fd_table[fd].type = FILE_TYPE_SOCKET;
-  fd_table[fd].flags = O_RDWR;
-  fd_table[fd].socket = sock;
-
-  KLOG_DEBUG("SYSCALL", "sys_socket: table entry set");
-
-  /* Sauvegarder globalement pour contourner le bug fd_table */
-  g_server_socket = sock;
-  g_server_fd = fd;
-  g_server_closing = 0; /* Reset du flag de fermeture */
-
-  KLOG_DEBUG_DEC("SYSCALL", "sys_socket: created fd (global socket saved) ",
-                 fd);
+  KLOG_DEBUG_DEC("SYSCALL", "sys_socket: created fd ", fd);
 
   return fd;
 }
@@ -835,8 +738,6 @@ static int sys_socket(int domain, int type, int protocol) {
 static int sys_bind(int fd, sockaddr_in_t *addr, int len) {
   (void)len;
 
-  fd_table_init(); /* S'assurer que la table est initialisée */
-
   KLOG_INFO("SYSCALL", "sys_bind called");
   KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
   KLOG_INFO_HEX("SYSCALL", "  addr: ", (uint32_t)addr);
@@ -847,15 +748,13 @@ static int sys_bind(int fd, sockaddr_in_t *addr, int len) {
     return -1;
   }
 
-  KLOG_DEBUG_DEC("SYSCALL",
-                 "sys_bind: fd_table[fd].type = ", fd_table[fd].type);
-
-  if (fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     KLOG_ERROR("SYSCALL", "sys_bind: not a socket");
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     KLOG_ERROR("SYSCALL", "sys_bind: socket is NULL");
     return -1;
@@ -897,12 +796,13 @@ static int sys_listen(int fd, int backlog) {
     return -1;
   }
 
-  if (fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     KLOG_ERROR("SYSCALL", "sys_listen: not a socket");
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     return -1;
   }
@@ -951,11 +851,12 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
   (void)len;
 
   /* Vérifier le FD du socket serveur */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *listen_sock = fd_table[fd].socket;
+  tcp_socket_t *listen_sock = description->socket;
   if (listen_sock == NULL || listen_sock->state != TCP_STATE_LISTEN) {
     return -1;
   }
@@ -984,9 +885,9 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
     }
   }
 
-  /* Allouer un nouveau FD pour le socket client */
-  int client_fd = fd_alloc();
-  if (client_fd < 0) {
+  open_file_description_t *client_description =
+      file_description_create(FILE_TYPE_SOCKET, O_RDWR, client_sock);
+  if (client_description == NULL) {
     KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
     net_lock();
     tcp_close(client_sock);
@@ -994,10 +895,14 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
     return -1;
   }
 
-  /* Configurer le FD */
-  fd_table[client_fd].type = FILE_TYPE_SOCKET;
-  fd_table[client_fd].socket = client_sock;
-  fd_table[client_fd].flags = O_RDWR;
+  file_descriptor_t *table = current_fd_table();
+  int client_fd =
+      table != NULL ? file_table_install(table, client_description) : -1;
+  if (client_fd < 0) {
+    file_description_release(client_description);
+    KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
+    return -1;
+  }
 
   /* Remplir l'adresse du client si demandé */
   if (addr != NULL) {
@@ -1023,11 +928,12 @@ static int sys_recv(int fd, uint8_t *buf, int len, int flags) {
   (void)flags;
 
   /* Vérifier le FD */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL || sock->state != TCP_STATE_ESTABLISHED) {
     return 0;
   }
@@ -1060,11 +966,12 @@ static int sys_send(int fd, const uint8_t *buf, int len, int flags) {
   (void)flags;
 
   /* Vérifier le FD */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     return -1;
   }
@@ -1087,55 +994,11 @@ static int sys_close(int fd) {
     return -1;
   }
 
-  /* Ne pas fermer stdin/stdout/stderr */
-  if (fd < 3) {
+  file_descriptor_t *table = current_fd_table();
+  if (table == NULL) {
     return -1;
   }
-
-  if (fd_table == NULL || fd_table[fd].type == FILE_TYPE_NONE) {
-    return -1;
-  }
-
-  /* Si c'est le socket serveur global - fermeture CTRL+D uniquement */
-  if (fd == g_server_fd && g_server_socket != NULL && g_server_closing) {
-    /* Libérer complètement le socket pour permettre un nouveau bind */
-    tcp_close(g_server_socket);
-    g_server_socket = NULL;
-    g_server_fd = -1;
-    g_server_closing = 0;
-    fd_free(fd);
-    return 0;
-  }
-
-  /* Si c'est un socket client (créé par accept) ou le serveur après connexion
-   */
-  if (fd_table[fd].type == FILE_TYPE_SOCKET && fd_table[fd].socket != NULL) {
-    tcp_socket_t *sock = fd_table[fd].socket;
-    uint16_t port = sock->local_port;
-
-    /* Vérifier si c'est le socket serveur (même socket que g_server_socket) */
-    if (sock == g_server_socket) {
-      /* Socket serveur : fermer connexion et remettre en LISTEN */
-      tcp_close_and_relisten(sock, port);
-      /* Ne pas libérer le FD ni le socket - on le réutilise */
-      return 0;
-    } else {
-      /* Socket client séparé : fermement et libérer */
-      tcp_close(sock);
-      fd_free(fd);
-      return 0;
-    }
-  }
-
-  /* Si c'est un fichier VFS, le fermer */
-  if (fd_table[fd].type == FILE_TYPE_FILE && fd_table[fd].vfs_node != NULL) {
-    vfs_close((vfs_node_t *)fd_table[fd].vfs_node);
-  }
-
-  /* Libérer le FD */
-  fd_free(fd);
-
-  return 0;
+  return file_table_close(table, fd);
 }
 
 /* ========================================
