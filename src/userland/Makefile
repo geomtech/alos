@@ -44,7 +44,7 @@ FREETYPE_SRC = $(FREETYPE_BASE) $(FREETYPE_TRUETYPE) $(FREETYPE_SMOOTH) $(FREETY
 # Tous les objets GUI
 GUI_OBJ = $(GUI_SRC:.c=.o) $(COMPONENTS_SRC:.c=.o) $(FREETYPE_SRC:.c=.o)
 
-all: threads-test fork-test gui_app sh ls cat mkdir touch rm rmdir meminfo
+all: threads-test fork-test exec-test gui_app sh ls cat mkdir touch rm rmdir meminfo
 
 
 # Force libc build
@@ -58,6 +58,9 @@ threads-test: libc_build threads-test.o
 
 fork-test: libc_build fork-test.o
 	$(LD) -T linker.ld -o fork-test $(CRT0) fork-test.o $(LIBC)
+
+exec-test: libc_build exec-test.o
+	$(LD) -T linker.ld -o exec-test $(CRT0) exec-test.o $(LIBC)
 
 sh: libc_build sh.o
 	$(LD) -T linker.ld -o sh $(CRT0) sh.o $(LIBC)
@@ -90,7 +93,7 @@ gui_app: libc_build $(GUI_OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o threads-test fork-test sh ls cat mkdir touch rm rmdir meminfo gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -f *.o threads-test fork-test exec-test sh ls cat mkdir touch rm rmdir meminfo gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 
