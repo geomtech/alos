@@ -36,6 +36,9 @@ static rect_t g_resize_queued_rect = {0, 0, 0, 0};
 static bool g_resize_queued = false;
 static bool g_resize_slow = false; // Indique si le redimensionnement précédent a dépassé RESIZE_SLOW_THRESHOLD
 
+/* Rectangle occupé à l'écran par une fenêtre (bounds + ombre portée éventuelle) */
+static rect_t wm_window_screen_bounds(window_t* win);
+
 /* Fonction pour obtenir le timestamp actuel en millisecondes */
 static uint64_t wm_get_current_time_ms(void) {
     /* Utilise SYS_GET_MICROSECONDS pour un timestamp réel */
@@ -129,6 +132,7 @@ void wm_destroy_window(window_t* win) {
     
     /* Libère la couche */
     if (win->layer) {
+        compositor_invalidate_rect(wm_window_screen_bounds(win));
         compositor_destroy_layer(win->layer);
     }
     
@@ -188,10 +192,35 @@ window_t* wm_get_focused_window(void) {
     return g_focused_window;
 }
 
+/* Calcule le rectangle occupé par une fenêtre à l'écran, en incluant
+ * l'ombre portée (WINDOW_FLAG_SHADOW) qui déborde de win->bounds. Sans
+ * cela, déplacer/redimensionner une fenêtre laisse une "traînée" d'ombre
+ * fantôme car le compositeur ne redessine jamais l'ancienne zone d'ombre. */
+static rect_t wm_window_screen_bounds(window_t* win) {
+    rect_t r = win->bounds;
+    if (win->flags & WINDOW_FLAG_SHADOW) {
+        shadow_params_t shadow = shadow_window();
+        int32_t pad = (int32_t)shadow.blur_radius + (int32_t)shadow.spread;
+        int32_t left = pad - shadow.offset_x;
+        int32_t right = pad + shadow.offset_x;
+        int32_t top = pad - shadow.offset_y;
+        int32_t bottom = pad + shadow.offset_y;
+        if (left < 0) left = 0;
+        if (right < 0) right = 0;
+        if (top < 0) top = 0;
+        if (bottom < 0) bottom = 0;
+        r.x -= left;
+        r.y -= top;
+        r.width += (uint32_t)(left + right);
+        r.height += (uint32_t)(top + bottom);
+    }
+    return r;
+}
+
 void wm_move_window(window_t* win, int32_t x, int32_t y) {
     if (!win) return;
     
-    compositor_invalidate_rect(win->bounds);
+    compositor_invalidate_rect(wm_window_screen_bounds(win));
     
     win->bounds.x = x;
     win->bounds.y = y;
@@ -222,7 +251,7 @@ void wm_resize_window(window_t* win, uint32_t width, uint32_t height) {
     // Réinitialiser l'état de redimensionnement
     g_resize_queued = false;
 
-    compositor_invalidate_rect(win->bounds);
+    compositor_invalidate_rect(wm_window_screen_bounds(win));
 
     // Mettre à jour les dimensions de la fenêtre
     win->bounds.width = width;
@@ -266,7 +295,7 @@ void wm_minimize_window(window_t* win) {
     if (!win || win->is_minimized) return;
     win->is_minimized = true;
     if (win->layer) win->layer->visible = false;
-    compositor_invalidate_rect(win->bounds);
+    compositor_invalidate_rect(wm_window_screen_bounds(win));
 }
 
 void wm_maximize_window(window_t* win) {
@@ -432,7 +461,7 @@ void wm_draw_all(void) {
 
 void wm_invalidate_window(window_t* win) {
     if (win && win->layer) {
-        compositor_invalidate_layer(win->layer);
+        compositor_invalidate_rect(wm_window_screen_bounds(win));
     }
 }
 
