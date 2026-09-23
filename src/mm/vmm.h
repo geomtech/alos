@@ -38,6 +38,7 @@
 #define PAGE_HUGE           (1ULL << 7)   /* PS: page 2MB (PD) ou 1GB (PDPT) */
 #define PAGE_PAT_4K         (1ULL << 7)   /* PAT bit dans une PTE 4 KiB */
 #define PAGE_GLOBAL         (1ULL << 8)   /* Page globale */
+#define PAGE_OWNED          (1ULL << 9)   /* Page physique détenue par ce PML4 */
 #define PAGE_PAT_HUGE       (1ULL << 12)  /* PAT bit dans PDE/PDPTE huge */
 #define PAGE_NX             (1ULL << 63)  /* No-Execute */
 
@@ -229,6 +230,9 @@ page_directory_t* vmm_get_kernel_directory(void);
 
 /**
  * Clone un espace d'adressage (pour fork).
+ * Les pages user détenues sont copiées profondément ; les mappings externes
+ * non détenus restent partagés. Les mappings kernel/MMIO sont installés par
+ * vmm_create_directory() et ne deviennent jamais propriété du processus.
  * 
  * @param src  Page Directory source
  * @return Nouveau Page Directory, ou NULL si échec

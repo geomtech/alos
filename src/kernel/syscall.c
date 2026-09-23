@@ -1072,7 +1072,8 @@ static void *sys_brk(void *addr) {
 
         /* Map page in the PROCESS's page directory, not kernel's */
         if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, phys, virt,
-                                PAGE_USER | PAGE_RW | PAGE_PRESENT) != 0) {
+                                PAGE_USER | PAGE_RW | PAGE_PRESENT |
+                                    PAGE_OWNED) != 0) {
           KLOG_ERROR("SYSCALL", "sys_brk: Failed to map page");
           pmm_free_block(phys_virt);
           return (void *)-1;

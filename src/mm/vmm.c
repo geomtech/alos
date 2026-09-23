@@ -117,6 +117,66 @@ static page_entry_t* get_table(page_entry_t* table, uint64_t index)
     return (page_entry_t*)hhdm_phys_to_virt(phys);
 }
 
+static int clone_supervisor_mappings(page_entry_t *dst_pml4,
+                                     page_entry_t *src_pml4) {
+    for (int i = 0; i < 256; i++) {
+        if (!(src_pml4[i] & PAGE_PRESENT)) continue;
+
+        page_entry_t *src_pdpt = get_table(src_pml4, i);
+        if (src_pdpt == NULL) continue;
+        page_entry_t *dst_pdpt = alloc_table();
+        if (dst_pdpt == NULL) return -1;
+        dst_pml4[i] = hhdm_virt_to_phys(dst_pdpt) |
+                      (src_pml4[i] & 0xFFF) | PAGE_PRESENT;
+        dst_pml4[i] &= ~PAGE_USER;
+
+        for (int j = 0; j < 512; j++) {
+            if (!(src_pdpt[j] & PAGE_PRESENT)) continue;
+            if (src_pdpt[j] & PAGE_HUGE) {
+                if (!(src_pdpt[j] & PAGE_USER)) {
+                    dst_pdpt[j] = src_pdpt[j] & ~PAGE_OWNED;
+                }
+                continue;
+            }
+
+            page_entry_t *src_pd = get_table(src_pdpt, j);
+            if (src_pd == NULL) continue;
+            page_entry_t *dst_pd = alloc_table();
+            if (dst_pd == NULL) return -1;
+            dst_pdpt[j] = hhdm_virt_to_phys(dst_pd) |
+                          (src_pdpt[j] & 0xFFF) | PAGE_PRESENT;
+            dst_pdpt[j] &= ~PAGE_USER;
+
+            for (int k = 0; k < 512; k++) {
+                if (!(src_pd[k] & PAGE_PRESENT)) continue;
+                if (src_pd[k] & PAGE_HUGE) {
+                    if (!(src_pd[k] & PAGE_USER)) {
+                        dst_pd[k] = src_pd[k] & ~PAGE_OWNED;
+                    }
+                    continue;
+                }
+
+                page_entry_t *src_pt = get_table(src_pd, k);
+                if (src_pt == NULL) continue;
+                page_entry_t *dst_pt = alloc_table();
+                if (dst_pt == NULL) return -1;
+                dst_pd[k] = hhdm_virt_to_phys(dst_pt) |
+                            (src_pd[k] & 0xFFF) | PAGE_PRESENT;
+                dst_pd[k] &= ~PAGE_USER;
+
+                for (int l = 0; l < 512; l++) {
+                    if ((src_pt[l] & PAGE_PRESENT) &&
+                        !(src_pt[l] & PAGE_USER)) {
+                        dst_pt[l] = src_pt[l] & ~PAGE_OWNED;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
 /* ========================================
  * Fonctions publiques
  * ======================================== */
@@ -476,11 +536,16 @@ page_directory_t* vmm_create_directory(void)
         pml4[i] = kernel_directory.pml4[i];
     }
     
-    /* Copier l'entrée PML4[0] qui contient les mappings MMIO (0x01000000 - 0x10000000).
-     * Ces mappings sont nécessaires pour que le kernel puisse accéder aux périphériques
-     * même quand on exécute du code kernel avec le CR3 d'un processus user (syscalls). */
-    if (kernel_directory.pml4[0] & PAGE_PRESENT) {
-        pml4[0] = kernel_directory.pml4[0];
+    /*
+     * Les mappings kernel/MMIO de la moitié basse doivent rester accessibles
+     * pendant les syscalls, mais leurs tables ne peuvent pas être partagées
+     * avec les mappings user du processus. Copier les structures de tables
+     * supervisor évite qu'un mapping user modifie le PML4 kernel. Les pages
+     * physiques kernel/MMIO restent partagées et ne portent jamais PAGE_OWNED.
+     */
+    if (clone_supervisor_mappings(pml4, kernel_directory.pml4) != 0) {
+        vmm_free_directory(dir);
+        return NULL;
     }
     
     KLOG_INFO_HEX("VMM", "Created new PML4 at: ", (uint32_t)dir->pml4_phys);
@@ -515,6 +580,14 @@ void vmm_free_directory(page_directory_t* dir)
                 
                 page_entry_t* pt = get_table(pd, k);
                 if (pt != NULL) {
+                    for (int l = 0; l < 512; l++) {
+                        page_entry_t pte = pt[l];
+                        if ((pte & PAGE_PRESENT) && (pte & PAGE_OWNED)) {
+                            void *page =
+                                hhdm_phys_to_virt(pte & PAGE_FRAME_MASK);
+                            pmm_free_block(page);
+                        }
+                    }
                     free_table(pt);
                 }
             }
@@ -569,13 +642,73 @@ page_directory_t* vmm_clone_directory(page_directory_t* src)
         return NULL;
     }
     
-    /* Copier les mappings user (indices 0-255) */
-    /* Pour l'instant, copie simple des entrées (pas COW) */
+    /* Copier profondément les pages user détenues. Les mappings user externes
+     * (par exemple le framebuffer) restent partagés et sans PAGE_OWNED. */
     for (int i = 0; i < 256; i++) {
-        dst->pml4[i] = src->pml4[i];
+        if (!(src->pml4[i] & PAGE_PRESENT)) continue;
+        page_entry_t *src_pdpt = get_table(src->pml4, i);
+        if (src_pdpt == NULL) continue;
+
+        for (int j = 0; j < 512; j++) {
+            if (!(src_pdpt[j] & PAGE_PRESENT)) continue;
+            if (src_pdpt[j] & PAGE_HUGE) {
+                if (src_pdpt[j] & PAGE_USER) goto fail;
+                continue;
+            }
+
+            page_entry_t *src_pd = get_table(src_pdpt, j);
+            if (src_pd == NULL) continue;
+            for (int k = 0; k < 512; k++) {
+                if (!(src_pd[k] & PAGE_PRESENT)) continue;
+                if (src_pd[k] & PAGE_HUGE) {
+                    if (src_pd[k] & PAGE_USER) goto fail;
+                    continue;
+                }
+
+                page_entry_t *src_pt = get_table(src_pd, k);
+                if (src_pt == NULL) continue;
+                for (int l = 0; l < 512; l++) {
+                    page_entry_t pte = src_pt[l];
+                    if (!(pte & PAGE_PRESENT) || !(pte & PAGE_USER)) continue;
+
+                    uint64_t virt = ((uint64_t)i << 39) |
+                                    ((uint64_t)j << 30) |
+                                    ((uint64_t)k << 21) |
+                                    ((uint64_t)l << 12);
+                    uint64_t phys = pte & PAGE_FRAME_MASK;
+                    uint64_t flags = pte & (0xFFF | PAGE_NX);
+
+                    if (pte & PAGE_OWNED) {
+                        void *new_page = pmm_alloc_block();
+                        if (new_page == NULL) goto fail;
+                        void *source_page = hhdm_phys_to_virt(phys);
+                        uint8_t *dst_bytes = (uint8_t *)new_page;
+                        uint8_t *src_bytes = (uint8_t *)source_page;
+                        for (uint64_t n = 0; n < PAGE_SIZE; n++) {
+                            dst_bytes[n] = src_bytes[n];
+                        }
+                        phys = hhdm_virt_to_phys(new_page);
+                        flags |= PAGE_OWNED;
+                    } else {
+                        flags &= ~PAGE_OWNED;
+                    }
+
+                    if (vmm_map_page_in_dir(dst, phys, virt, flags) != 0) {
+                        if (flags & PAGE_OWNED) {
+                            pmm_free_block(hhdm_phys_to_virt(phys));
+                        }
+                        goto fail;
+                    }
+                }
+            }
+        }
     }
     
     return dst;
+
+fail:
+    vmm_free_directory(dst);
+    return NULL;
 }
 
 bool vmm_is_mapped_in_dir(page_directory_t* dir, uint64_t virt)

@@ -702,7 +702,8 @@ int process_execute(const char *filename) {
       }
       if (vmm_map_page_in_dir((page_directory_t *)proc->pml4,
                               (uint64_t)phys_page, addr,
-                              PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
+                              PAGE_PRESENT | PAGE_RW | PAGE_USER |
+                                  PAGE_OWNED) != 0) {
         KLOG_ERROR("EXEC", "Failed to map user stack page!");
         pmm_free_block(phys_page);
         vmm_free_directory((page_directory_t *)proc->pml4);
@@ -941,7 +942,8 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
       /* Convertir en adresse physique pour le mapping */
       uint64_t page_phys = pmm_virt_to_phys(page_virt);
       if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, page_phys, addr,
-                              PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
+                              PAGE_PRESENT | PAGE_RW | PAGE_USER |
+                                  PAGE_OWNED) != 0) {
         KLOG_ERROR("EXEC", "Failed to map user stack page!");
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("Error: Failed to map user stack page\n");
