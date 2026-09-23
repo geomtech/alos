@@ -351,6 +351,13 @@ fs_root: disk_structure userland
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/gui_app fs_root/bin/gui
 	@cp -v src/userland/sh fs_root/bin/sh
+	@cp -v src/userland/ls fs_root/bin/ls
+	@cp -v src/userland/cat fs_root/bin/cat
+	@cp -v src/userland/mkdir fs_root/bin/mkdir
+	@cp -v src/userland/touch fs_root/bin/touch
+	@cp -v src/userland/rm fs_root/bin/rm
+	@cp -v src/userland/rmdir fs_root/bin/rmdir
+	@cp -v src/userland/meminfo fs_root/bin/meminfo
 
 # Créer une image de disque à partir de fs_root
 disk.img: fs_root

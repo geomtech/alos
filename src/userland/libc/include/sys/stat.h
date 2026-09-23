@@ -17,4 +17,12 @@
 #define S_IWOTH 0002 /* Write for others */
 #define S_IXOTH 0001 /* Execute for others */
 
+/**
+ * mkdir() - Crée un répertoire via SYS_MKDIR.
+ *
+ * ALOS n'implémente pas encore de permissions : `mode` est accepté pour
+ * compatibilité avec la signature POSIX standard mais ignoré.
+ */
+int mkdir(const char *pathname, int mode);
+
 #endif

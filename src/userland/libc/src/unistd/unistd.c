@@ -1,6 +1,9 @@
 /* src/userland/libc/src/unistd/unistd.c - Standard Unix functions */
 #include "internal/syscall.h"
+#include <dirent.h>
 #include <fcntl.h>
+#include <sys/meminfo.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -63,6 +66,24 @@ int spawn_wait(const char *path, int argc, char **argv) {
 
 int rmdir(const char *pathname) {
   return syscall3(SYS_RMDIR, (long)pathname, 0, 0);
+}
+
+int mkdir(const char *pathname, int mode) {
+  (void)mode;
+  return (int)syscall3(SYS_MKDIR, (long)pathname, 0, 0);
+}
+
+int creat(const char *pathname, int mode) {
+  (void)mode;
+  return (int)syscall3(SYS_CREATE, (long)pathname, 0, 0);
+}
+
+int readdir(const char *path, unsigned int index, struct dirent *entry) {
+  return (int)syscall3(SYS_READDIR, (long)path, (long)index, (long)entry);
+}
+
+int meminfo(struct meminfo *info) {
+  return (int)syscall3(SYS_MEMINFO, (long)info, 0, 0);
 }
 
 void _exit(int status) {
