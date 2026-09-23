@@ -59,6 +59,94 @@ static void safe_strcpy(char *dest, const char *src, uint32_t max_len) {
   dest[i] = '\0';
 }
 
+static void process_inherit_cwd(process_t *proc, const process_t *parent) {
+  const char *cwd =
+      (parent != NULL && parent->cwd[0] == '/') ? parent->cwd : "/";
+  safe_strcpy(proc->cwd, cwd, sizeof(proc->cwd));
+}
+
+int process_resolve_path(const char *path, char *resolved, size_t size) {
+  if (path == NULL || resolved == NULL || size < 2 || path[0] == '\0') {
+    return -1;
+  }
+
+  size_t out_len = 1;
+  resolved[0] = '/';
+  resolved[1] = '\0';
+
+  if (path[0] != '/') {
+    process_t *proc = process_current();
+    if (proc == NULL || proc->cwd[0] != '/') {
+      return -1;
+    }
+
+    size_t cwd_len = 0;
+    while (cwd_len < PROCESS_CWD_MAX && proc->cwd[cwd_len] != '\0') {
+      cwd_len++;
+    }
+    if (cwd_len == PROCESS_CWD_MAX || cwd_len >= size) {
+      return -1;
+    }
+
+    for (size_t i = 0; i <= cwd_len; i++) {
+      resolved[i] = proc->cwd[i];
+    }
+    out_len = cwd_len;
+  }
+
+  size_t pos = 0;
+  while (pos < PROCESS_CWD_MAX) {
+    while (pos < PROCESS_CWD_MAX && path[pos] == '/') {
+      pos++;
+    }
+    if (pos == PROCESS_CWD_MAX) {
+      return -1;
+    }
+    if (path[pos] == '\0') {
+      resolved[out_len] = '\0';
+      return 0;
+    }
+
+    size_t component_start = pos;
+    while (pos < PROCESS_CWD_MAX && path[pos] != '/' && path[pos] != '\0') {
+      pos++;
+    }
+    if (pos == PROCESS_CWD_MAX) {
+      return -1;
+    }
+
+    size_t component_len = pos - component_start;
+    if (component_len == 1 && path[component_start] == '.') {
+      continue;
+    }
+    if (component_len == 2 && path[component_start] == '.' &&
+        path[component_start + 1] == '.') {
+      while (out_len > 1 && resolved[out_len - 1] != '/') {
+        out_len--;
+      }
+      if (out_len > 1) {
+        out_len--;
+      }
+      resolved[out_len] = '\0';
+      continue;
+    }
+
+    size_t separator_len = (out_len > 1) ? 1 : 0;
+    if (out_len + separator_len + component_len >= size) {
+      return -1;
+    }
+    if (separator_len != 0) {
+      resolved[out_len++] = '/';
+    }
+    for (size_t i = 0; i < component_len; i++) {
+      resolved[out_len++] = path[component_start + i];
+    }
+    resolved[out_len] = '\0';
+  }
+
+  return -1;
+}
+
 /* ========================================
  * Implémentation
  * ======================================== */
@@ -93,6 +181,7 @@ void init_multitasking(void) {
       (uint64_t)idle_process->pml4; /* Adresse physique pour CR3 */
   idle_process->heap_start = 0;
   idle_process->heap_brk = 0;
+  process_inherit_cwd(idle_process, NULL);
 
   /* Pas de stack allouée (on utilise la stack du kernel) */
   idle_process->stack_base = NULL;
@@ -165,6 +254,7 @@ process_t *create_kernel_thread(void (*function)(void), const char *name) {
   safe_strcpy(proc->name, name, sizeof(proc->name));
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
+  process_inherit_cwd(proc, current_process);
 
   /* Page Directory (partagé avec le kernel pour les threads kernel) */
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
@@ -501,6 +591,13 @@ int process_execute(const char *filename) {
     return -1;
   }
 
+  char resolved_filename[PROCESS_CWD_MAX];
+  if (process_resolve_path(filename, resolved_filename,
+                           sizeof(resolved_filename)) != 0) {
+    return -1;
+  }
+  filename = resolved_filename;
+
   KLOG_INFO("EXEC", "=== Executing Program ===");
   KLOG_INFO("EXEC", filename);
 
@@ -549,6 +646,7 @@ int process_execute(const char *filename) {
 
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
+  process_inherit_cwd(proc, current_process);
 
   /* Créer un nouveau Page Directory pour l'isolation mémoire */
   proc->pml4 = (uint64_t *)vmm_create_directory();
@@ -710,6 +808,13 @@ int process_execute(const char *filename) {
  * Charge et exécute le programme, puis retourne au shell.
  */
 process_t *process_spawn(const char *filename, int argc, char **argv) {
+  char resolved_filename[PROCESS_CWD_MAX];
+  if (process_resolve_path(filename, resolved_filename,
+                           sizeof(resolved_filename)) != 0) {
+    return NULL;
+  }
+  filename = resolved_filename;
+
   KLOG_INFO("EXEC", "=== Execute and Wait ===");
   KLOG_INFO("EXEC", filename);
 
@@ -764,6 +869,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
+  process_inherit_cwd(proc, current_process);
 
   /* Créer un nouveau Page Directory pour l'isolation mémoire */
   page_directory_t *dir = vmm_create_directory();
@@ -1082,6 +1188,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   proc->exit_status = 0;
+  process_inherit_cwd(proc, current_process);
 
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
   proc->cr3 = (uint64_t)proc->pml4;

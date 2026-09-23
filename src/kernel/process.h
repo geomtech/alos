@@ -16,6 +16,7 @@
   32768                     /* Taille de la stack kernel par thread (32 KiB) */
 #define MAX_PROCESSES 64    /* Nombre max de processus */
 #define PROCESS_NAME_MAX 32 /* Longueur max du nom de processus */
+#define PROCESS_CWD_MAX 4096 /* Doit rester compatible avec VFS_MAX_PATH */
 
 /* User stack layout is centralized in ../include/memlayout.h */
 
@@ -78,6 +79,7 @@ typedef struct process {
   uint64_t *pml4;      /* PML4 (Page Map Level 4) */
   uint64_t heap_start; /* Start of heap (initial program break) */
   uint64_t heap_brk;   /* Current program break */
+  char cwd[PROCESS_CWD_MAX]; /* Répertoire courant, canonique et absolu */
 
   /* ===== Stack ===== */
   void *stack_base;    /* Base de la stack allouée (pour kfree) */
@@ -253,6 +255,12 @@ void process_kill_tree(process_t *proc);
  * Retourne le processus courant.
  */
 process_t *process_current(void);
+
+/**
+ * Résout un chemin absolu ou relatif au cwd du processus courant.
+ * Canonicalise les séparateurs, "." et ".." sans remonter au-dessus de "/".
+ */
+int process_resolve_path(const char *path, char *resolved, size_t size);
 
 /**
  * Vérifie si un processus est zombie.

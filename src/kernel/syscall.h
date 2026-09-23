@@ -28,8 +28,10 @@
 
 /* Filesystem syscalls */
 #define SYS_CLOSE 6    /* Fermer un file descriptor */
+#define SYS_UNLINK 10  /* Supprimer un fichier */
 #define SYS_CHDIR 12   /* Changer de répertoire */
 #define SYS_MKDIR 39   /* Créer un répertoire */
+#define SYS_RMDIR 40   /* Supprimer un répertoire vide */
 #define SYS_READDIR 89 /* Lire une entrée de répertoire */
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */

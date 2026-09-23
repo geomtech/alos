@@ -284,12 +284,17 @@ static int sys_open(const char *path, int flags) {
     return -1;
   }
 
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
   KLOG_INFO("SYSCALL", "sys_open called");
   KLOG_INFO("SYSCALL", "[SYSCALL] open:");
-  KLOG_INFO("SYSCALL", path);
+  KLOG_INFO("SYSCALL", resolved);
 
   /* Ouvrir le fichier via VFS */
-  vfs_node_t *node = vfs_open(path, flags);
+  vfs_node_t *node = vfs_open(resolved, flags);
   if (node == NULL) {
     KLOG_ERROR("SYSCALL", "[SYSCALL] open: file not found");
     return -1;
@@ -395,9 +400,6 @@ static int sys_kbhit(void) { return (int)keyboard_getchar_nonblock(); }
  * Filesystem Syscalls
  * ======================================== */
 
-/* Répertoire courant global (pour V1, simplifié) */
-static char current_working_dir[VFS_MAX_PATH] = "/";
-
 /**
  * SYS_GETCWD (183) - Obtenir le répertoire courant
  *
@@ -406,21 +408,22 @@ static char current_working_dir[VFS_MAX_PATH] = "/";
  * @return 0 si succès, -1 si erreur
  */
 static int sys_getcwd(char *buf, uint64_t size) {
-  if (buf == NULL || size == 0) {
+  process_t *proc = process_current();
+  if (proc == NULL || buf == NULL || size == 0) {
     return -1;
   }
 
   uint32_t len = 0;
-  while (current_working_dir[len] != '\0' && len < VFS_MAX_PATH) {
+  while (proc->cwd[len] != '\0' && len < PROCESS_CWD_MAX) {
     len++;
   }
 
-  if (len >= size) {
+  if (len == PROCESS_CWD_MAX || len >= size) {
     return -1; /* Buffer trop petit */
   }
 
   for (uint32_t i = 0; i <= len; i++) {
-    buf[i] = current_working_dir[i];
+    buf[i] = proc->cwd[i];
   }
 
   return 0;
@@ -433,42 +436,14 @@ static int sys_getcwd(char *buf, uint64_t size) {
  * @return 0 si succès, -1 si erreur
  */
 static int sys_chdir(const char *path) {
-  if (path == NULL) {
+  process_t *proc = process_current();
+  if (proc == NULL || path == NULL) {
     return -1;
   }
 
   char new_path[VFS_MAX_PATH];
-
-  /* Construire le chemin absolu */
-  if (path[0] == '/') {
-    /* Chemin absolu */
-    uint32_t i = 0;
-    while (path[i] != '\0' && i < VFS_MAX_PATH - 1) {
-      new_path[i] = path[i];
-      i++;
-    }
-    new_path[i] = '\0';
-  } else {
-    /* Chemin relatif */
-    uint32_t cwd_len = 0;
-    while (current_working_dir[cwd_len] != '\0')
-      cwd_len++;
-
-    uint32_t i = 0;
-    /* Copier le cwd */
-    for (; i < cwd_len && i < VFS_MAX_PATH - 1; i++) {
-      new_path[i] = current_working_dir[i];
-    }
-    /* Ajouter / si nécessaire */
-    if (i > 0 && new_path[i - 1] != '/' && i < VFS_MAX_PATH - 1) {
-      new_path[i++] = '/';
-    }
-    /* Ajouter le chemin relatif */
-    uint32_t j = 0;
-    while (path[j] != '\0' && i < VFS_MAX_PATH - 1) {
-      new_path[i++] = path[j++];
-    }
-    new_path[i] = '\0';
+  if (process_resolve_path(path, new_path, sizeof(new_path)) != 0) {
+    return -1;
   }
 
   /* Vérifier que le répertoire existe */
@@ -483,11 +458,11 @@ static int sys_chdir(const char *path) {
 
   /* Mettre à jour le cwd */
   uint32_t i = 0;
-  while (new_path[i] != '\0' && i < VFS_MAX_PATH - 1) {
-    current_working_dir[i] = new_path[i];
+  while (new_path[i] != '\0') {
+    proc->cwd[i] = new_path[i];
     i++;
   }
-  current_working_dir[i] = '\0';
+  proc->cwd[i] = '\0';
 
   return 0;
 }
@@ -515,7 +490,12 @@ static int sys_readdir(const char *path, uint32_t index,
     return -1;
   }
 
-  vfs_node_t *dir = vfs_resolve_path(path);
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  vfs_node_t *dir = vfs_resolve_path(resolved);
   if (dir == NULL) {
     return -1;
   }
@@ -556,7 +536,11 @@ static int sys_mkdir(const char *path) {
     return -1;
   }
 
-  return vfs_mkdir(path);
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+  return vfs_mkdir(resolved);
 }
 
 /**
@@ -570,7 +554,27 @@ static int sys_create(const char *path) {
     return -1;
   }
 
-  return vfs_create(path);
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+  return vfs_create(resolved);
+}
+
+static int sys_unlink(const char *path) {
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+  return vfs_unlink(resolved);
+}
+
+static int sys_rmdir(const char *path) {
+  char resolved[VFS_MAX_PATH];
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+  return vfs_rmdir(resolved);
 }
 
 /**
@@ -1346,6 +1350,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_close((int)regs->rdi);
     break;
 
+  case SYS_UNLINK:
+    result = sys_unlink((const char *)regs->rdi);
+    break;
+
   case SYS_KBHIT:
     result = sys_kbhit();
     break;
@@ -1366,6 +1374,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_MKDIR:
     result = sys_mkdir((const char *)regs->rdi);
+    break;
+
+  case SYS_RMDIR:
+    result = sys_rmdir((const char *)regs->rdi);
     break;
 
   case SYS_CREATE:
