@@ -53,12 +53,6 @@ static int sys_exit(int status) {
   KLOG_INFO("SYSCALL", "sys_exit called with status:");
   KLOG_INFO_HEX("SYSCALL", "  Exit code: ", (uint32_t)status);
 
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("\n[SYSCALL] Process exited with code: ");
-  console_put_dec(status);
-  console_puts("\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
   /* Terminer proprement le thread/processus courant */
   thread_t *current = thread_current();
   if (current && current->owner) {

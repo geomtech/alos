@@ -853,14 +853,6 @@ int process_execute(const char *filename) {
   KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
   KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
 
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("Started process '");
-  console_puts(proc->name);
-  console_puts("' (PID ");
-  console_put_dec(proc->pid);
-  console_puts(")\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
   return proc->pid;
 }
 
@@ -1191,14 +1183,6 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
   KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
-
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("Started process '");
-  console_puts(filename);
-  console_puts("' (PID ");
-  console_put_dec(proc->pid);
-  console_puts(")\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
 
   /* Note: On ne libere PAS le Page Directory ni la structure process */
   /* Ils seront liberes par le reaper thread quand le processus se terminera */
