@@ -339,6 +339,15 @@ thread_t *thread_create_user(process_t *proc, const char *name,
                              void *arg, void *kernel_stack, uint64_t kernel_stack_size);
 
 /**
+ * Crée un thread user à partir d'un frame d'interruption sauvegardé.
+ * Utilisé par fork() pour reprendre exactement après le syscall.
+ */
+thread_t *thread_create_user_from_frame(process_t *proc, const char *name,
+                                        const interrupt_frame_t *frame,
+                                        void *kernel_stack,
+                                        uint64_t kernel_stack_size);
+
+/**
  * Termine le thread courant.
  */
 void thread_exit(int status) __attribute__((noreturn));

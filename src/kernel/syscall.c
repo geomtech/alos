@@ -1004,8 +1004,9 @@ static int sys_close(int fd) {
 /* ========================================
  * Forward declarations for new syscalls
  * ======================================== */
-static int sys_fork(void);
-static int sys_execve(const char *filename, char **argv, char **envp);
+static int sys_fork(syscall_regs_t *regs);
+static int sys_execve(syscall_regs_t *regs, const char *filename, char **argv,
+                      char **envp);
 static int sys_waitpid(int pid, int *status, int options);
 static int sys_create_thread(void *entry, void *stack, void *arg);
 static int sys_spawn_wait(const char *path, int argc, char **argv);
@@ -1284,11 +1285,11 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   /* Process syscalls - forward declarations */
   case SYS_FORK:
-    result = sys_fork();
+    result = sys_fork(regs);
     break;
 
   case SYS_EXECVE:
-    result = sys_execve((const char *)regs->rdi, (char **)regs->rsi,
+    result = sys_execve(regs, (const char *)regs->rdi, (char **)regs->rsi,
                         (char **)regs->rdx);
     break;
 
@@ -1399,39 +1400,9 @@ void syscall_init(void) {
  *
  * @return PID du processus fils, ou -1 si erreur
  */
-static int sys_fork(void) {
+static int sys_fork(syscall_regs_t *regs) {
   KLOG_INFO("SYSCALL", "sys_fork called");
-
-  /* Obtenir le processus courant */
-  process_t *parent = current_process;
-  if (parent == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_fork: no current process");
-    return -1;
-  }
-
-  /* Créer un nouveau processus en copiant le processus courant */
-  process_t *child = process_create_kernel(parent->name, NULL, NULL, 0);
-  if (child == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_fork: failed to create child process");
-    return -1;
-  }
-
-  /* Configurer la relation parent-enfant */
-  child->parent = parent;
-  child->sibling_next = parent->first_child;
-  if (parent->first_child) {
-    parent->first_child->sibling_prev = child;
-  }
-  parent->first_child = child;
-
-  /* Copier les informations de base */
-  child->state = PROCESS_STATE_READY;
-  child->should_terminate = 0;
-  child->exit_status = 0;
-
-  /* Retourner le PID du processus fils */
-  KLOG_INFO_DEC("SYSCALL", "sys_fork: created child PID ", child->pid);
-  return child->pid;
+  return process_fork((const interrupt_frame_t *)regs);
 }
 
 /**
@@ -1442,22 +1413,17 @@ static int sys_fork(void) {
  * @param envp      Tableau d'environnement
  * @return 0 si succès, -1 si erreur
  */
-static int sys_execve(const char *filename, char **argv, char **envp) {
-  (void)argv; /* Unused parameter */
-  (void)envp; /* Unused parameter */
-
+static int sys_execve(syscall_regs_t *regs, const char *filename, char **argv,
+                      char **envp) {
   KLOG_INFO("SYSCALL", "sys_execve called");
-  KLOG_INFO("SYSCALL", filename);
+  if (filename != NULL) {
+    KLOG_INFO("SYSCALL", filename);
+  }
 
-  /* Pour l'instant, utiliser process_execute qui est déjà implémenté */
-  int result = process_execute(filename);
-  if (result < 0) {
+  if (process_execve((interrupt_frame_t *)regs, filename, argv, envp) != 0) {
     KLOG_ERROR("SYSCALL", "sys_execve: failed to execute program");
     return -1;
   }
-
-  /* Note: process_execute retourne le PID, mais execve devrait retourner 0 en
-   * cas de succès */
   return 0;
 }
 
@@ -1470,66 +1436,9 @@ static int sys_execve(const char *filename, char **argv, char **envp) {
  * @return PID du processus terminé, ou -1 si erreur
  */
 static int sys_waitpid(int pid, int *status, int options) {
-  (void)options; /* Unused parameter */
-
   KLOG_INFO("SYSCALL", "sys_waitpid called");
   KLOG_INFO_DEC("SYSCALL", "  pid: ", pid);
-
-  /* Obtenir le processus courant */
-  process_t *parent = current_process;
-  if (parent == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_waitpid: no current process");
-    return -1;
-  }
-
-  /* Si pid = -1, attendre n'importe quel processus fils */
-  if (pid == -1) {
-    /* Trouver un processus fils terminé */
-    process_t *child = parent->first_child;
-    while (child) {
-      if (child->state == PROCESS_STATE_TERMINATED ||
-          child->state == PROCESS_STATE_ZOMBIE) {
-        /* Retourner le PID et le code de sortie */
-        if (status) {
-          *status = child->exit_status;
-        }
-        KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
-        return child->pid;
-      }
-      child = child->sibling_next;
-    }
-
-    /* Aucun processus fils terminé trouvé */
-    KLOG_INFO("SYSCALL", "sys_waitpid: no terminated child found");
-    return -1;
-  }
-
-  /* Attendre un processus fils spécifique */
-  process_t *child = parent->first_child;
-  while (child) {
-    if (child->pid == (uint32_t)pid) {
-      /* Attendre que le processus se termine */
-      if (child->state != PROCESS_STATE_TERMINATED &&
-          child->state != PROCESS_STATE_ZOMBIE) {
-        /* Pour l'instant, retourner -1 si le processus n'est pas encore terminé
-         */
-        KLOG_INFO("SYSCALL", "sys_waitpid: child not yet terminated");
-        return -1;
-      }
-
-      /* Retourner le PID et le code de sortie */
-      if (status) {
-        *status = child->exit_status;
-      }
-      KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
-      return child->pid;
-    }
-    child = child->sibling_next;
-  }
-
-  /* Processus fils non trouvé */
-  KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
-  return -1;
+  return process_waitpid(pid, status, options);
 }
 
 /**
@@ -1560,11 +1469,6 @@ static int sys_spawn_wait(const char *path, int argc, char **argv) {
 
   /* Bloque (via wait_queue) jusqu'à la terminaison du processus fils */
   int exit_status = process_join(child);
-
-  /* Reap: la structure process_t n'est plus libérée par le reaper (voir
-   * thread.c) une fois que le dernier thread se termine ; c'est à
-   * l'attendant (nous) de la libérer une fois l'exit_status récupéré. */
-  kfree(child);
 
   return exit_status;
 }

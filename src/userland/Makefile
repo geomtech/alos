@@ -44,7 +44,7 @@ FREETYPE_SRC = $(FREETYPE_BASE) $(FREETYPE_TRUETYPE) $(FREETYPE_SMOOTH) $(FREETY
 # Tous les objets GUI
 GUI_OBJ = $(GUI_SRC:.c=.o) $(COMPONENTS_SRC:.c=.o) $(FREETYPE_SRC:.c=.o)
 
-all: threads-test gui_app sh
+all: threads-test fork-test gui_app sh
 
 
 # Force libc build
@@ -56,6 +56,9 @@ libc_build:
 threads-test: libc_build threads-test.o
 	$(LD) -T linker.ld -o threads-test $(CRT0) threads-test.o $(LIBC)
 
+fork-test: libc_build fork-test.o
+	$(LD) -T linker.ld -o fork-test $(CRT0) fork-test.o $(LIBC)
+
 sh: libc_build sh.o
 	$(LD) -T linker.ld -o sh $(CRT0) sh.o $(LIBC)
 
@@ -66,7 +69,7 @@ gui_app: libc_build $(GUI_OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o threads-test sh gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -f *.o threads-test fork-test sh gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 

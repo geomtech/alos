@@ -645,6 +645,27 @@ thread_t *thread_create_user(process_t *proc, const char *name,
   return thread;
 }
 
+thread_t *thread_create_user_from_frame(process_t *proc, const char *name,
+                                        const interrupt_frame_t *frame,
+                                        void *kernel_stack,
+                                        uint64_t kernel_stack_size) {
+  if (frame == NULL) {
+    return NULL;
+  }
+
+  thread_t *thread =
+      thread_create_user(proc, name, frame->rip, frame->rsp, NULL,
+                         kernel_stack, kernel_stack_size);
+  if (thread == NULL) {
+    return NULL;
+  }
+
+  interrupt_frame_t *child_frame = (interrupt_frame_t *)thread->rsp;
+  memcpy(child_frame, frame, sizeof(*child_frame));
+  child_frame->rax = 0;
+  return thread;
+}
+
 /* ========================================
  * Thread Control
  * ======================================== */
@@ -1716,6 +1737,7 @@ static void reaper_thread_func(void *arg) {
     KLOG_INFO("REAPER", zombie->name);
 
     /* Si le thread a un processus owner, vérifier s'il faut le nettoyer */
+    process_t *orphan_process = NULL;
     if (zombie->owner) {
       process_t *proc = zombie->owner;
 
@@ -1751,12 +1773,9 @@ static void reaper_thread_func(void *arg) {
           proc->stack_base = NULL;
         }
 
-        /* Réveiller les threads en attente sur ce processus (waitpid /
-         * process_join). La structure process_t elle-même N'EST PAS libérée
-         * ici : celui qui l'attend (process_join) est responsable de la
-         * "reap" finale (kfree) une fois qu'il a lu l'exit_status, afin
-         * d'éviter tout use-after-free côté attendant. */
-        wait_queue_wake_all(&proc->wait_queue);
+        if (process_complete_exit(proc)) {
+          orphan_process = proc;
+        }
       }
 
       zombie->owner = NULL;
@@ -1771,6 +1790,10 @@ static void reaper_thread_func(void *arg) {
     /* Don't free the main thread structure (it's static) */
     if (zombie != &g_main_thread_struct) {
       kfree(zombie);
+    }
+
+    if (orphan_process != NULL) {
+      process_reap(orphan_process);
     }
   }
 }

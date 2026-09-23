@@ -3,7 +3,7 @@
  * Remplace progressivement le shell kernel (src/shell/shell.c). Tourne en
  * Ring 3 comme un programme ELF normal : lit le clavier via getchar()
  * (SYS_READ bloquant sur stdin), affiche via printf() (SYS_WRITE), et lance
- * les commandes externes via spawn_wait() (SYS_SPAWN_WAIT).
+ * les commandes externes via fork()/execve()/waitpid().
  *
  * Deux modes d'exécution, qui partagent le MÊME tokenizer et le MÊME
  * dispatcher de commandes (shell_execute_line) :
@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define LINE_MAX 256
@@ -202,9 +203,23 @@ static line_result_t shell_execute_line(char *line) {
       snprintf(path, sizeof(path), "/bin/%s", av[0]);
     }
 
-    int ret = spawn_wait(path, ac, av);
-    if (ret < 0) {
+    pid_t child = fork();
+    if (child < 0) {
+      printf("sh: %s: unable to fork\n", av[0]);
+    } else if (child == 0) {
+      char *child_argv[ARGV_MAX + 1];
+      for (int i = 0; i < ac; i++) {
+        child_argv[i] = av[i];
+      }
+      child_argv[ac] = NULL;
+      execve(path, child_argv, NULL);
       printf("sh: %s: command not found\n", av[0]);
+      _exit(127);
+    } else {
+      int status;
+      if (waitpid(child, &status, 0) < 0) {
+        printf("sh: %s: wait failed\n", av[0]);
+      }
     }
   }
 
@@ -306,7 +321,7 @@ static int script_reader_getline(script_reader_t *r, char *line, int size,
  *
  * Réutilise shell_execute_line() : chaque ligne du script est exécutée
  * exactement comme si elle avait été tapée au clavier (mêmes builtins,
- * même résolution de commande externe via spawn_wait()).
+ * même résolution de commande externe via fork()/execve()/waitpid()).
  *
  * Comportement (aligné sur l'ancien config_run_script() du kernel) :
  *   - lignes vides ou commentaires ('#' ou ';' en tête) ignorées,

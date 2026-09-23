@@ -4,12 +4,12 @@
 #include <stdint.h>
 
 #define SYS_EXIT 1
-#define SYS_FORK 2
+#define SYS_FORK 57
 #define SYS_READ 3
 #define SYS_WRITE 4
 #define SYS_OPEN 5
 #define SYS_CLOSE 6
-#define SYS_WAITPID 7
+#define SYS_WAITPID 61
 #define SYS_UNLINK 10
 #define SYS_CHDIR 12
 #define SYS_TIME 13

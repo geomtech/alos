@@ -35,6 +35,12 @@ off_t lseek(int fd, off_t offset, int whence) {
 
 int getpid(void) { return syscall0(SYS_GETPID); }
 
+pid_t fork(void) { return (pid_t)syscall0(SYS_FORK); }
+
+int execve(const char *pathname, char *const argv[], char *const envp[]) {
+  return (int)syscall3(SYS_EXECVE, (long)pathname, (long)argv, (long)envp);
+}
+
 int getuid(void) { return syscall0(SYS_GETUID); }
 
 unsigned int sleep(unsigned int seconds) {

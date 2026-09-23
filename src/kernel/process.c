@@ -65,6 +65,62 @@ static void process_inherit_cwd(process_t *proc, const process_t *parent) {
   safe_strcpy(proc->cwd, cwd, sizeof(proc->cwd));
 }
 
+static uint64_t process_lock(void) {
+  uint64_t flags;
+  asm volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+  return flags;
+}
+
+static void process_unlock(uint64_t flags) {
+  asm volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+static void process_link(process_t *parent, process_t *proc) {
+  uint64_t flags = process_lock();
+
+  proc->next = parent->next;
+  proc->prev = parent;
+  parent->next->prev = proc;
+  parent->next = proc;
+
+  proc->parent = parent;
+  proc->sibling_prev = NULL;
+  proc->sibling_next = parent->first_child;
+  if (parent->first_child != NULL) {
+    parent->first_child->sibling_prev = proc;
+  }
+  parent->first_child = proc;
+
+  process_unlock(flags);
+}
+
+static void process_unlink(process_t *proc) {
+  if (proc->parent != NULL) {
+    if (proc->sibling_prev != NULL) {
+      proc->sibling_prev->sibling_next = proc->sibling_next;
+    } else {
+      proc->parent->first_child = proc->sibling_next;
+    }
+    if (proc->sibling_next != NULL) {
+      proc->sibling_next->sibling_prev = proc->sibling_prev;
+    }
+  }
+
+  if (proc->next != NULL && proc->prev != NULL) {
+    proc->prev->next = proc->next;
+    proc->next->prev = proc->prev;
+    if (process_list == proc) {
+      process_list = proc->next != proc ? proc->next : NULL;
+    }
+  }
+
+  proc->parent = NULL;
+  proc->sibling_next = NULL;
+  proc->sibling_prev = NULL;
+  proc->next = NULL;
+  proc->prev = NULL;
+}
+
 int process_resolve_path(const char *path, char *resolved, size_t size) {
   if (path == NULL || resolved == NULL || size < 2 || path[0] == '\0') {
     return -1;
@@ -1131,6 +1187,8 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   /* Ne pas libérer kernel_stack ici, il appartient au thread maintenant */
   proc->stack_base = NULL; /* Le thread gère sa propre stack */
 
+  process_link(current_process, proc);
+
   KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
   KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
 
@@ -1146,6 +1204,134 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   /* Ils seront liberes par le reaper thread quand le processus se terminera */
 
   return proc;
+}
+
+int process_fork(const interrupt_frame_t *frame) {
+  process_t *parent = process_current();
+  if (parent == NULL || parent == idle_process || frame == NULL ||
+      parent->thread_count != 1 || parent->pml4 == NULL) {
+    return -1;
+  }
+
+  process_t *child = (process_t *)kmalloc(sizeof(*child));
+  if (child == NULL) {
+    return -1;
+  }
+  memset(child, 0, sizeof(*child));
+
+  page_directory_t *child_dir =
+      vmm_clone_directory((page_directory_t *)parent->pml4);
+  if (child_dir == NULL) {
+    kfree(child);
+    return -1;
+  }
+
+  void *kernel_stack = kmalloc(KERNEL_STACK_SIZE);
+  if (kernel_stack == NULL) {
+    vmm_free_directory(child_dir);
+    kfree(child);
+    return -1;
+  }
+  memset(kernel_stack, 0, KERNEL_STACK_SIZE);
+
+  child->pid = next_pid++;
+  safe_strcpy(child->name, parent->name, sizeof(child->name));
+  child->state = PROCESS_STATE_READY;
+  child->pml4 = (uint64_t *)child_dir;
+  child->cr3 = child_dir->pml4_phys;
+  child->heap_start = parent->heap_start;
+  child->heap_brk = parent->heap_brk;
+  process_inherit_cwd(child, parent);
+  file_table_init(child->fd_table, parent->fd_table);
+  wait_queue_init(&child->wait_queue);
+
+  thread_t *thread = thread_create_user_from_frame(
+      child, child->name, frame, kernel_stack, KERNEL_STACK_SIZE);
+  if (thread == NULL) {
+    file_table_destroy(child->fd_table);
+    kfree(kernel_stack);
+    vmm_free_directory(child_dir);
+    kfree(child);
+    return -1;
+  }
+
+  child->main_thread = thread;
+  child->thread_list = thread;
+  child->thread_count = 1;
+  process_link(parent, child);
+
+  KLOG_INFO_DEC("PROC", "Forked child PID: ", child->pid);
+  return (int)child->pid;
+}
+
+int process_execve(interrupt_frame_t *frame, const char *filename,
+                   char *const argv[], char *const envp[]) {
+  process_t *proc = process_current();
+  thread_t *thread = thread_current();
+  if (proc == NULL || proc == idle_process || thread == NULL || frame == NULL ||
+      filename == NULL || proc->thread_count != 1) {
+    return -1;
+  }
+  if (envp != NULL && envp[0] != NULL) {
+    return -1;
+  }
+
+  int argc = 0;
+  if (argv != NULL) {
+    while (argc < 16 && argv[argc] != NULL) {
+      argc++;
+    }
+    if (argc == 16) {
+      return -1;
+    }
+  }
+
+  char *default_argv[2] = {(char *)filename, NULL};
+  if (argv == NULL || argc == 0) {
+    argv = default_argv;
+    argc = 1;
+  }
+
+  process_t *image = process_spawn(filename, argc, (char **)argv);
+  if (image == NULL || image->main_thread == NULL || image->pml4 == NULL) {
+    return -1;
+  }
+
+  thread_t *image_thread = image->main_thread;
+  interrupt_frame_t new_frame =
+      *(interrupt_frame_t *)(uintptr_t)image_thread->rsp;
+  page_directory_t *old_dir = (page_directory_t *)proc->pml4;
+  page_directory_t *new_dir = (page_directory_t *)image->pml4;
+
+  scheduler_dequeue(image_thread);
+  uint64_t flags = process_lock();
+  process_unlink(image);
+  process_unlock(flags);
+
+  file_table_destroy(image->fd_table);
+  safe_strcpy(proc->name, image->name, sizeof(proc->name));
+  safe_strcpy(thread->name, image->name, sizeof(thread->name));
+  proc->pml4 = image->pml4;
+  proc->cr3 = image->cr3;
+  proc->heap_start = image->heap_start;
+  proc->heap_brk = image->heap_brk;
+
+  image->pml4 = NULL;
+  image_thread->owner = NULL;
+  kfree(image_thread->stack_base);
+  image_thread->stack_base = NULL;
+  kfree(image_thread);
+  kfree(image);
+
+  if (vmm_switch_directory(new_dir) != 0) {
+    KLOG_ERROR("EXEC", "Failed to activate replacement address space");
+    return -1;
+  }
+  vmm_free_directory(old_dir);
+
+  memcpy(frame, &new_frame, sizeof(*frame));
+  frame->rax = 0;
+  return 0;
 }
 
 /**
@@ -1269,10 +1455,104 @@ int process_join(process_t *proc) {
   if (!proc)
     return -1;
 
-  /* Attendre que le processus se termine */
   wait_queue_wait(&proc->wait_queue, process_waiting_still_running, proc);
+  int status = proc->exit_status;
+  process_reap(proc);
+  return status;
+}
 
-  return proc->exit_status;
+typedef struct {
+  process_t *parent;
+  int pid;
+} process_wait_context_t;
+
+static process_t *process_find_waitable_child(process_t *parent, int pid) {
+  process_t *child = parent->first_child;
+  while (child != NULL) {
+    if ((pid == -1 || child->pid == (uint32_t)pid) &&
+        (child->state == PROCESS_STATE_ZOMBIE ||
+         child->state == PROCESS_STATE_TERMINATED)) {
+      return child;
+    }
+    child = child->sibling_next;
+  }
+  return NULL;
+}
+
+static bool process_child_waitable(void *context) {
+  process_wait_context_t *wait = (process_wait_context_t *)context;
+  return process_find_waitable_child(wait->parent, wait->pid) != NULL;
+}
+
+int process_waitpid(int pid, int *status, int options) {
+  process_t *parent = process_current();
+  if (parent == NULL || (pid == 0 || pid < -1) || options != 0) {
+    return -1;
+  }
+
+  process_t *child = parent->first_child;
+  while (child != NULL && (pid != -1 && child->pid != (uint32_t)pid)) {
+    child = child->sibling_next;
+  }
+  if (child == NULL) {
+    return -1;
+  }
+
+  process_wait_context_t wait = {.parent = parent, .pid = pid};
+  wait_queue_wait(&parent->wait_queue, process_child_waitable, &wait);
+
+  child = process_find_waitable_child(parent, pid);
+  if (child == NULL) {
+    return -1;
+  }
+
+  int child_pid = (int)child->pid;
+  if (status != NULL) {
+    *status = child->exit_status;
+  }
+  process_reap(child);
+  return child_pid;
+}
+
+bool process_complete_exit(process_t *proc) {
+  if (proc == NULL || proc == idle_process) {
+    return false;
+  }
+
+  uint64_t flags = process_lock();
+  process_t *child = proc->first_child;
+  proc->first_child = NULL;
+  while (child != NULL) {
+    process_t *next = child->sibling_next;
+    child->parent = idle_process;
+    child->sibling_prev = NULL;
+    child->sibling_next = idle_process->first_child;
+    if (idle_process->first_child != NULL) {
+      idle_process->first_child->sibling_prev = child;
+    }
+    idle_process->first_child = child;
+    child = next;
+  }
+  process_t *parent = proc->parent;
+  bool orphan = parent == NULL || parent == idle_process;
+  process_unlock(flags);
+
+  wait_queue_wake_all(&proc->wait_queue);
+  if (parent != NULL) {
+    wait_queue_wake_all(&parent->wait_queue);
+  }
+  return orphan;
+}
+
+void process_reap(process_t *proc) {
+  if (proc == NULL || proc == idle_process) {
+    return;
+  }
+
+  uint64_t flags = process_lock();
+  process_unlink(proc);
+  process_unlock(flags);
+  kfree(proc);
 }
 
 void process_kill(process_t *proc) {

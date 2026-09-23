@@ -14,6 +14,8 @@ int close(int fd);
 int unlink(const char *pathname);
 off_t lseek(int fd, off_t offset, int whence);
 int getpid(void);
+pid_t fork(void);
+int execve(const char *pathname, char *const argv[], char *const envp[]);
 int getuid(void);
 unsigned int sleep(unsigned int seconds);
 int chdir(const char *path);

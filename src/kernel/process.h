@@ -217,6 +217,33 @@ int process_exec_and_wait(const char *filename, int argc, char **argv);
  */
 process_t *process_spawn(const char *filename, int argc, char **argv);
 
+/**
+ * Duplique le processus user courant et son contexte d'exécution.
+ */
+int process_fork(const interrupt_frame_t *frame);
+
+/**
+ * Remplace transactionnellement l'image du processus user courant.
+ */
+int process_execve(interrupt_frame_t *frame, const char *filename,
+                   char *const argv[], char *const envp[]);
+
+/**
+ * Attend et reap un enfant du processus courant.
+ */
+int process_waitpid(int pid, int *status, int options);
+
+/**
+ * Notifie le parent et adopte les enfants à la terminaison d'un processus.
+ * Retourne vrai si le processus terminé est un orphelin auto-reapable.
+ */
+bool process_complete_exit(process_t *proc);
+
+/**
+ * Détache et libère une structure de processus déjà nettoyée par le reaper.
+ */
+void process_reap(process_t *proc);
+
 /* ========================================
  * Nouvelles fonctions Multithreading
  * ======================================== */

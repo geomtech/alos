@@ -348,6 +348,7 @@ fs_root: disk_structure userland
 	@cp -r disk_structure/* fs_root/
 	@mkdir -p fs_root/bin
 	@cp -v src/userland/threads-test fs_root/bin/
+	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/gui_app fs_root/bin/gui
 	@cp -v src/userland/sh fs_root/bin/sh
 
