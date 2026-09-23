@@ -39,17 +39,6 @@ static rect_t g_dirty_rects[MAX_DIRTY_RECTS];
 static int g_dirty_rect_count = 0;
 static bool g_dirty_tracking_enabled = true;
 
-/* Lightweight renderer profiling (reported periodically). */
-static uint64_t g_perf_flip_calls = 0;
-static uint64_t g_perf_flip_bytes = 0;
-static uint64_t g_perf_flip_cycles = 0;
-
-static inline uint64_t render_read_tsc(void) {
-  uint32_t lo, hi;
-  __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-  return ((uint64_t)hi << 32) | lo;
-}
-
 /* ============================================================================
  * FAST MEMORY OPERATIONS (x86-64 optimized)
  * ============================================================================
@@ -202,23 +191,11 @@ void render_flip_region(rect_t region) {
 
   uint32_t pitch_pixels = g_main_buffer.pitch / 4;
   size_t bytes_per_line = (size_t)(x2 - x1) * sizeof(uint32_t);
-  uint64_t start = render_read_tsc();
 
   for (int32_t y = y1; y < y2; y++) {
     uint32_t *src = g_back_buffer.pixels + y * pitch_pixels + x1;
     uint32_t *dst = g_main_buffer.pixels + y * pitch_pixels + x1;
     memcpy(dst, src, bytes_per_line);
-  }
-
-  g_perf_flip_calls++;
-  g_perf_flip_bytes += bytes_per_line * (uint64_t)(y2 - y1);
-  g_perf_flip_cycles += render_read_tsc() - start;
-
-  if ((g_perf_flip_calls % 240) == 0) {
-    printf("GUI PERF: flips=%lu avg_bytes=%lu avg_cycles=%lu\n",
-           g_perf_flip_calls,
-           g_perf_flip_bytes / g_perf_flip_calls,
-           g_perf_flip_cycles / g_perf_flip_calls);
   }
 }
 
