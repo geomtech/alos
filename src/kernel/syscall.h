@@ -23,11 +23,14 @@
 #define SYS_CLONE 56   /* Créer un thread/processus */
 #define SYS_GETTID 186 /* Obtenir le Thread ID */
 #define SYS_TKILL 200  /* Terminer un thread spécifique */
+#define SYS_SPAWN_WAIT 201 /* Spawner un processus fils et attendre sa fin */
 
 /* Filesystem syscalls */
 #define SYS_CLOSE 6    /* Fermer un file descriptor */
+#define SYS_UNLINK 10  /* Supprimer un fichier */
 #define SYS_CHDIR 12   /* Changer de répertoire */
 #define SYS_MKDIR 39   /* Créer un répertoire */
+#define SYS_RMDIR 40   /* Supprimer un répertoire */
 #define SYS_READDIR 89 /* Lire une entrée de répertoire */
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */
@@ -41,19 +44,30 @@
 #define SYS_RECV 45   /* Recevoir des données */
 
 /* System syscalls */
-#define SYS_KBHIT                                                              \
-  100                 /* Vérifier si une touche est disponible (non-bloquant) \
-                       */
-#define SYS_CLEAR 101 /* Effacer l'écran */
-#define SYS_MEMINFO 102         /* Obtenir les infos mémoire */
-#define SYS_GET_FRAMEBUFFER 110 /* Obtenir les infos framebuffer */
-#define SYS_GET_EVENT 111       /* Obtenir un événement input */
-#define SYS_WAIT_EVENT 112      /* Attendre un événement input (bloquant) */
-#define SYS_BRK 120 /* Modifier la taille du segment de données du processus  \
-                     */
-#define SYS_NANOSLEEP 162 /* Dormir pendant un temps spécifié */
-#define SYS_GET_MICROSECONDS 163 /* Obtenir le temps en microsecondes */
-#define SYS_SLEEP_MICROS 164     /* Dormir pendant un temps spécifié en microsecondes */
+#define SYS_KBHIT 100                 /* Vérifier si une touche est disponible (non-bloquant) */
+#define SYS_CLEAR 101                 /* Effacer l'écran */
+#define SYS_MEMINFO 102               /* Obtenir les infos mémoire */
+#define SYS_PS_INFO 103               /* Obtenir la liste des processus/threads */
+#define SYS_PING 104                  /* Envoyer une requête ping ICMP */
+#define SYS_WGET 105                  /* Télécharger un fichier HTTP */
+#define SYS_HTTPD 107                 /* Contrôle du serveur HTTP */
+#define SYS_GET_FRAMEBUFFER 110       /* Obtenir les infos framebuffer */
+#define SYS_GET_EVENT 111             /* Obtenir un événement input */
+#define SYS_WAIT_EVENT 112            /* Attendre un événement input (bloquant) */
+#define SYS_BRK 120                   /* Modifier la taille du segment de données du processus */
+#define SYS_NANOSLEEP 162             /* Dormir pendant un temps spécifié */
+#define SYS_GET_MICROSECONDS 163      /* Obtenir le temps en microsecondes */
+#define SYS_SLEEP_MICROS 164          /* Dormir pendant un temps spécifié en microsecondes */
+
+/* Structure pour SYS_PS_INFO */
+typedef struct {
+  uint32_t pid;
+  uint32_t tid;
+  char name[32];
+  uint32_t state;
+  uint64_t rip;
+  uint64_t rsp;
+} proc_info_t;
 
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256
@@ -199,5 +213,11 @@ void syscall_init(void);
  * @param regs  Pointeur vers les registres sauvegardés
  */
 void syscall_dispatcher(syscall_regs_t *regs);
+
+/**
+ * Configure et lit le répertoire de travail courant pour les syscalls.
+ */
+void syscall_set_cwd(const char *path);
+const char *syscall_get_cwd(void);
 
 #endif /* SYSCALL_H */

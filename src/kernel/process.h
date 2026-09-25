@@ -101,6 +101,9 @@ typedef struct process {
   struct process *next; /* Processus suivant dans la liste */
   struct process *prev; /* Processus précédent */
 
+  /* ===== GUI / Framebuffer ===== */
+  bool uses_framebuffer; /* Le processus utilise le framebuffer (GUI) */
+
 } process_t;
 
 /* ========================================
@@ -201,6 +204,29 @@ int process_execute(const char *filename);
  */
 int process_exec_and_wait(const char *filename, int argc, char **argv);
 
+/**
+ * Crée et démarre un processus user mode à partir d'un fichier ELF.
+ *
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @param argc      Nombre d'arguments
+ * @param argv      Tableau d'arguments
+ * @return          Pointeur vers le nouveau process, ou NULL si erreur
+ */
+process_t *process_spawn(const char *filename, int argc, char **argv);
+
+/**
+ * Nettoyage final d'un processus zombie (libération mémoire et détachement).
+ */
+void process_reap(process_t *proc);
+
+/* Fonctions de log pour le lifecycle des processus */
+void proc_log_wait_begin(uint32_t pid);
+void proc_log_last_thread_exited(uint32_t pid);
+void proc_log_zombie(uint32_t pid, int status);
+void proc_log_waking_parent(uint32_t pid);
+void proc_log_wait_completed(uint32_t pid, int status);
+void proc_log_final_reap(uint32_t pid);
+
 /* ========================================
  * Nouvelles fonctions Multithreading
  * ======================================== */
@@ -266,6 +292,19 @@ typedef struct {
 } process_info_t;
 
 size_t process_snapshot(process_info_t *buffer, size_t capacity);
+
+/**
+ * Gère une faute fatale (exception CPU ou violation mémoire) survenue dans un processus utilisateur.
+ * Affiche un diagnostic, restaure la console si le processus était en mode GUI,
+ * termine le processus et cède immédiatement la main au scheduler (ne retourne jamais).
+ *
+ * @param int_no      Numéro de l'interruption / exception CPU (ex: 14 = Page Fault, 13 = GPF)
+ * @param rip         Adresse de l'instruction ayant causé la faute
+ * @param fault_addr  Adresse virtuelle fautive (pour Page Fault / CR2, ou 0)
+ * @param error_code  Code d'erreur poussé par le CPU
+ */
+void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                             uint64_t error_code) __attribute__((noreturn));
 
 /* ========================================
  * Fonction ASM (définie dans switch.s)

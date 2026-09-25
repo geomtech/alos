@@ -5,6 +5,7 @@
 #include "menubar.h"
 #include "dock.h"
 #include "compositor.h"
+#include "gui.h"
 #include <string.h>
 
 /* File d'événements circulaire */
@@ -78,8 +79,10 @@ void events_dispatch(event_t* event) {
         case EVENT_MOUSE_MOVE:
             g_mouse_pos = event->mouse.position;
             
-            /* Dispatch principal: menubar ou window manager. */
-            if (event->mouse.position.y < MENUBAR_HEIGHT) {
+            /* Dispatch principal: menubar ou window manager */
+            if (menubar_is_menu_open()) {
+                menubar_handle_mouse_move(event->mouse.position);
+            } else if (event->mouse.position.y < MENUBAR_HEIGHT) {
                 menubar_handle_mouse_move(event->mouse.position);
             } else if (!point_in_rect(event->mouse.position, dock_get_bounds())) {
                 wm_handle_mouse_move(event->mouse.position);
@@ -92,8 +95,23 @@ void events_dispatch(event_t* event) {
         case EVENT_MOUSE_DOWN:
             g_mouse_buttons = (mouse_button_t)(g_mouse_buttons | event->mouse.button);
             
+            if (menubar_is_menu_open()) {
+                /* Si clic dans le dropdown ou sur la menubar, menubar le traite */
+                if (point_in_rect(event->mouse.position, menubar_get_open_menu_bounds()) ||
+                    event->mouse.position.y < MENUBAR_HEIGHT) {
+                    menubar_handle_mouse_down(event->mouse.position);
+                } else {
+                    /* Clic hors du menu : fermer le menu et router le clic normalement */
+                    menubar_close_menu();
+                    if (point_in_rect(event->mouse.position, dock_get_bounds())) {
+                        dock_handle_mouse_down(event->mouse.position);
+                    } else {
+                        wm_handle_mouse_down(event->mouse.position, event->mouse.button);
+                    }
+                }
+            }
             /* Menubar */
-            if (event->mouse.position.y < MENUBAR_HEIGHT) {
+            else if (event->mouse.position.y < MENUBAR_HEIGHT) {
                 menubar_handle_mouse_down(event->mouse.position);
             }
             /* Dock */
@@ -126,7 +144,43 @@ void events_dispatch(event_t* event) {
             } else if (event->key.scancode == 0x38) {
                 g_modifiers = (key_modifier_t)(g_modifiers | MOD_ALT);
             }
-            
+
+            /* Raccourcis pour quitter la GUI et revenir au shell :
+             * 1. Touche Échap (Escape) : scancode 0x01 ou ASCII 27
+             * 2. Touche 'q' ou 'Q'
+             * 3. Ctrl+C : ASCII 3 ou scancode 0x2E avec MOD_CTRL
+             * 4. Ctrl+Q : ASCII 17 ou scancode 0x10 avec MOD_CTRL
+             * 5. Alt+F4 : scancode 0x3E avec MOD_ALT
+             */
+            if (event->key.scancode == 0x01 || event->key.character == 27) {
+                gui_request_quit();
+                break;
+            }
+
+            if (event->key.character == 'q' || event->key.character == 'Q') {
+                gui_request_quit();
+                break;
+            }
+
+            if (((g_modifiers & MOD_CTRL) || (event->key.mods & MOD_CTRL)) &&
+                (event->key.character == 'c' || event->key.character == 'C' ||
+                 event->key.character == 3 || event->key.scancode == 0x2E)) {
+                gui_request_quit();
+                break;
+            }
+
+            if (((g_modifiers & MOD_CTRL) || (event->key.mods & MOD_CTRL)) &&
+                (event->key.character == 'q' || event->key.character == 'Q' ||
+                 event->key.character == 17 || event->key.scancode == 0x10)) {
+                gui_request_quit();
+                break;
+            }
+
+            if (((g_modifiers & MOD_ALT) || (event->key.mods & MOD_ALT)) && event->key.scancode == 0x3E) {
+                gui_request_quit();
+                break;
+            }
+
             /* TODO: dispatch aux fenêtres focusées */
             break;
             

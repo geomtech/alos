@@ -42,6 +42,10 @@
 #define SYS_KBHIT 100
 #define SYS_CLEAR 101
 #define SYS_MEMINFO 102
+#define SYS_PS_INFO 103
+#define SYS_PING 104
+#define SYS_WGET 105
+#define SYS_HTTPD 107
 #define SYS_STAT 106
 #define SYS_GET_FRAMEBUFFER 110
 #define SYS_GET_EVENT 111
@@ -52,8 +56,34 @@
 #define SYS_GETCWD 183
 #define SYS_GETTID 186
 #define SYS_TKILL 200
+#define SYS_SPAWN_WAIT 201
 #define SYS_GET_MICROSECONDS 163 /* Obtenir le temps en microsecondes */
 #define SYS_SLEEP_MICROS 164 /* Dormir pendant un temps spécifié en microsecondes */
+
+/* Structure pour SYS_PS_INFO */
+typedef struct {
+  uint32_t pid;
+  uint32_t tid;
+  char name[32];
+  uint32_t state;
+  uint64_t rip;
+  uint64_t rsp;
+} proc_info_t;
+
+/* Structure pour SYS_MEMINFO */
+typedef struct {
+  uint32_t total_size;
+  uint32_t free_size;
+  uint32_t block_count;
+  uint32_t free_block_count;
+} meminfo_t;
+
+/* Structure pour SYS_READDIR */
+typedef struct {
+  char name[256];
+  uint32_t type;
+  uint32_t size;
+} userspace_dirent_t;
 
 /* Event types for SYS_GET_EVENT */
 #define INPUT_EVENT_NONE 0

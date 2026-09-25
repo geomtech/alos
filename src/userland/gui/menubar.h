@@ -58,6 +58,12 @@ void menubar_handle_mouse_move(point_t pos);
 void menubar_handle_mouse_down(point_t pos);
 void menubar_handle_mouse_up(point_t pos);
 
+/* État et gestion des menus déroulants */
+bool menubar_is_menu_open(void);
+rect_t menubar_get_open_menu_bounds(void);
+void menubar_open_menu(int32_t idx);
+void menubar_close_menu(void);
+
 /* Horloge système */
 void menubar_set_time(uint8_t hour, uint8_t minute);
 void menubar_update_time(void);

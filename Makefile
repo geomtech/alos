@@ -348,7 +348,9 @@ fs_root: disk_structure userland
 	@cp -r disk_structure/* fs_root/
 	@mkdir -p fs_root/bin
 	@cp -v src/userland/threads-test fs_root/bin/
+	@cp -v src/userland/crash-test fs_root/bin/
 	@cp -v src/userland/gui_app fs_root/bin/gui
+	@cp -v src/userland/bin/* fs_root/bin/
 
 # Créer une image de disque à partir de fs_root
 disk.img: fs_root

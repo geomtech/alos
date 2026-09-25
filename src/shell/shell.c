@@ -9,6 +9,7 @@
 #include "../include/string.h"
 #include "../fs/vfs.h"
 #include "../config/config.h"
+#include "../kernel/syscall.h"
 
 /* Type signé pour les tailles (compatible 64 bits) */
 typedef int64_t ssize_t;
@@ -291,6 +292,7 @@ int shell_set_cwd(const char* path)
     /* Mettre à jour le cwd */
     strncpy(cwd, resolved, SHELL_PATH_MAX - 1);
     cwd[SHELL_PATH_MAX - 1] = '\0';
+    syscall_set_cwd(resolved);
     
     return 0;
 }
@@ -404,6 +406,7 @@ void shell_init(void)
 {
     /* Initialiser le cwd à la racine */
     strcpy(cwd, "/");
+    syscall_set_cwd("/");
     
     /* Initialiser l'historique */
     history_count = 0;

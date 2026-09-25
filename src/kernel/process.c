@@ -10,9 +10,11 @@
 #include "../mm/vmm.h"
 #include "console.h"
 #include "elf.h"
+#include "keyboard.h"
 #include "klog.h"
 #include "thread.h"
 #include "workqueue.h"
+#include "input.h"
 
 /* ========================================
  * Constantes
@@ -82,6 +84,7 @@ void init_multitasking(void) {
   idle_process->state = PROCESS_STATE_RUNNING;
   idle_process->should_terminate = 0;
   idle_process->exit_status = 0;
+  idle_process->uses_framebuffer = false;
 
   /* L'ESP sera sauvegardé lors du premier switch */
   idle_process->rsp = 0;
@@ -476,6 +479,12 @@ void kill_all_user_tasks(void) {
   /* Réactiver les interruptions */
   asm volatile("sti");
 
+  if (!console_is_enabled()) {
+    keyboard_clear_buffer();
+    console_set_enabled(true);
+    console_clear(VGA_COLOR_BLACK);
+  }
+
   if (killed_count > 0) {
     console_puts("\nKilled ");
     console_put_dec(killed_count);
@@ -489,228 +498,223 @@ void kill_all_user_tasks(void) {
 
 /* User stack address/size are defined centrally in memlayout.h. */
 
-/**
- * Exécute un programme ELF en créant un nouveau processus User Mode.
- *
- * @param filename  Chemin du fichier ELF à exécuter
- * @return          PID du nouveau processus, ou -1 si erreur
- */
-int process_execute(const char *filename) {
-  if (!multitasking_enabled) {
-    KLOG_ERROR("EXEC", "Multitasking not initialized!");
-    return -1;
+/* ========================================
+ * Helpers de log pour le lifecycle
+ * ======================================== */
+
+static void int_to_dec(int val, char *buf) {
+  if (val == 0) {
+    buf[0] = '0';
+    buf[1] = '\0';
+    return;
   }
-
-  KLOG_INFO("EXEC", "=== Executing Program ===");
-  KLOG_INFO("EXEC", filename);
-
-  /* Vérifier si le fichier est un ELF valide */
-  if (!elf_is_valid(filename)) {
-    KLOG_ERROR("EXEC", "Not a valid ELF file");
-    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    console_puts("Error: ");
-    console_puts(filename);
-    console_puts(" is not a valid ELF executable\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return -1;
+  int i = 0;
+  bool neg = false;
+  unsigned int uval;
+  if (val < 0) {
+    neg = true;
+    uval = (unsigned int)(-val);
+  } else {
+    uval = (unsigned int)val;
   }
-
-  /* Allouer la structure du processus */
-  process_t *proc = (process_t *)kmalloc(sizeof(process_t));
-  if (proc == NULL) {
-    KLOG_ERROR("EXEC", "Failed to allocate process structure!");
-    return -1;
+  char tmp[16];
+  int t = 0;
+  while (uval > 0) {
+    tmp[t++] = '0' + (uval % 10);
+    uval /= 10;
   }
-
-  /* Allouer une stack kernel pour ce processus (pour les syscalls) */
-  void *kernel_stack = kmalloc(KERNEL_STACK_SIZE);
-  if (kernel_stack == NULL) {
-    KLOG_ERROR("EXEC", "Failed to allocate kernel stack!");
-    kfree(proc);
-    return -1;
+  if (neg) {
+    buf[i++] = '-';
   }
-
-  /* Initialiser la kernel stack à 0 pour éviter les problèmes de mémoire non
-   * initialisée */
-  for (uint32_t i = 0; i < KERNEL_STACK_SIZE; i++) {
-    ((uint8_t *)kernel_stack)[i] = 0;
+  while (t > 0) {
+    buf[i++] = tmp[--t];
   }
+  buf[i] = '\0';
+}
 
-  /* Initialiser le processus */
-  proc->pid = next_pid++;
+void proc_log_wait_begin(uint32_t pid) {
+  char buf[64];
+  char num[16];
+  int_to_dec((int)pid, num);
+  buf[0] = '\0';
+  strcpy(buf, "wait begin ");
+  strcat(buf, num);
+  KLOG_INFO("PROC", buf);
+}
 
-  /* Extraire le nom du fichier pour le nom du processus */
-  const char *name = filename;
-  for (const char *p = filename; *p; p++) {
-    if (*p == '/')
-      name = p + 1;
-  }
-  safe_strcpy(proc->name, name, sizeof(proc->name));
+void proc_log_last_thread_exited(uint32_t pid) {
+  char buf[64];
+  char num[16];
+  int_to_dec((int)pid, num);
+  buf[0] = '\0';
+  strcpy(buf, "last thread exited ");
+  strcat(buf, num);
+  KLOG_INFO("PROC", buf);
+}
 
-  proc->state = PROCESS_STATE_READY;
-  proc->should_terminate = 0;
+void proc_log_zombie(uint32_t pid, int status) {
+  char buf[64];
+  char num[16];
+  char snum[16];
+  int_to_dec((int)pid, num);
+  int_to_dec(status, snum);
+  buf[0] = '\0';
+  strcpy(buf, "-> ZOMBIE ");
+  strcat(buf, num);
+  strcat(buf, " ");
+  strcat(buf, snum);
+  KLOG_INFO("PROC", buf);
+}
 
-  /* Créer un nouveau Page Directory pour l'isolation mémoire */
-  proc->pml4 = (uint64_t *)vmm_create_directory();
-  if (proc->pml4 == NULL) {
-    KLOG_ERROR("EXEC", "Failed to create page directory!");
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
-  }
-  proc->cr3 = (uint64_t)proc->pml4;
+void proc_log_waking_parent(uint32_t pid) {
+  char buf[64];
+  char num[16];
+  int_to_dec((int)pid, num);
+  buf[0] = '\0';
+  strcpy(buf, "waking parent ");
+  strcat(buf, num);
+  KLOG_INFO("PROC", buf);
+}
 
-  KLOG_INFO_HEX("EXEC", "Created page directory at: ", proc->cr3);
+void proc_log_wait_completed(uint32_t pid, int status) {
+  char buf[64];
+  char num[16];
+  char snum[16];
+  int_to_dec((int)pid, num);
+  int_to_dec(status, snum);
+  buf[0] = '\0';
+  strcpy(buf, "wait completed ");
+  strcat(buf, num);
+  strcat(buf, " ");
+  strcat(buf, snum);
+  KLOG_INFO("PROC", buf);
+}
 
-  /* Stack kernel */
-  proc->stack_base = kernel_stack;
-  proc->stack_size = KERNEL_STACK_SIZE;
-  proc->rsp0 = (uint64_t)kernel_stack + KERNEL_STACK_SIZE;
-
-  /* Charger le fichier ELF */
-  elf_load_result_t elf_result;
-  int err = elf_load_file(filename, proc, &elf_result);
-  if (err != ELF_OK) {
-    KLOG_ERROR("EXEC", "Failed to load ELF file");
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
-  }
-
-  KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
-
-  /* Initialize heap relative to ELF top address (aligned to 4KB) */
-  uint64_t heap_base = (elf_result.top_addr + 0xFFF) & ~0xFFF;
-  proc->heap_start = heap_base;
-  proc->heap_brk = heap_base;
-
-  KLOG_INFO_HEX("EXEC", "Heap start: ", proc->heap_start);
-
-  /* Allouer la stack utilisateur dans le Page Directory du processus */
-  uint64_t user_stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
-  for (uint64_t addr = user_stack_bottom; addr < USER_STACK_TOP;
-       addr += PAGE_SIZE) {
-    if (!vmm_is_mapped_in_dir((page_directory_t *)proc->pml4, addr)) {
-      void *phys_page = pmm_alloc_block();
-      if (phys_page == NULL) {
-        KLOG_ERROR("EXEC", "Failed to allocate user stack!");
-        vmm_free_directory((page_directory_t *)proc->pml4);
-        kfree(kernel_stack);
-        kfree(proc);
-        return -1;
-      }
-      if (vmm_map_page_in_dir((page_directory_t *)proc->pml4,
-                              (uint64_t)phys_page, addr,
-                              PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
-        KLOG_ERROR("EXEC", "Failed to map user stack page!");
-        pmm_free_block(phys_page);
-        vmm_free_directory((page_directory_t *)proc->pml4);
-        kfree(kernel_stack);
-        kfree(proc);
-        return -1;
-      }
-    }
-  }
-
-  KLOG_INFO_HEX64("EXEC", "User stack top: ", USER_STACK_TOP);
-
-  /* ========================================
-   * Préparer la stack utilisateur
-   * ========================================
-   *
-   * La libc attend que _start() trouve argc et argv sur la stack:
-   *   popl %eax  // argc
-   *   popl %ebx  // argv
-   *
-   * Donc on doit mettre sur la stack user:
-   *   [ESP+0] = argc
-   *   [ESP+4] = argv
-   *
-   * Pour l'instant, on met argc=0 et argv=NULL.
-   */
-  uint64_t user_stack_data[2] = {0, 0}; /* argc=0, argv=NULL */
-  uint64_t user_rsp =
-      USER_STACK_TOP - 16; /* Aligné sur 16 octets, pointe vers argc */
-
-  if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, user_stack_data,
-                      sizeof(user_stack_data)) != 0) {
-    KLOG_ERROR("EXEC", "Failed to initialize user stack!");
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
-  }
-
-  KLOG_INFO_HEX("EXEC", "User ESP: ", user_rsp);
-
-  /* ========================================
-   * Initialiser les champs du processus
-   * ======================================== */
-
-  proc->main_thread = NULL;
-  proc->thread_list = NULL;
-  proc->thread_count = 0;
-  proc->exit_status = 0;
-
-  /* Initialiser la wait queue pour waitpid */
-  wait_queue_init(&proc->wait_queue);
-
-  /* Hiérarchie des processus */
-  proc->parent = current_process;
-  proc->first_child = NULL;
-  proc->sibling_next = NULL;
-  proc->sibling_prev = NULL;
-
-  /* ========================================
-   * Créer le thread user mode
-   * ========================================
-   *
-   * On utilise thread_create_user() qui prépare la stack
-   * pour un IRET vers Ring 3.
-   */
-
-  thread_t *main_thread = thread_create_user(
-      proc, proc->name, elf_result.entry_point,
-      user_rsp, /* ESP utilisateur avec argc/argv */
-      NULL,     /* arg - pas d'argument pour le thread principal */
-      kernel_stack, KERNEL_STACK_SIZE);
-
-  if (main_thread == NULL) {
-    KLOG_ERROR("EXEC", "Failed to create user thread!");
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
-  }
-
-  proc->main_thread = main_thread;
-  proc->thread_list = main_thread;
-  proc->thread_count = 1;
-
-  /* Ne pas libérer kernel_stack ici, il appartient au thread maintenant */
-  proc->stack_base = NULL; /* Le thread gère sa propre stack */
-
-  KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
-  KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
-
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("Started process '");
-  console_puts(proc->name);
-  console_puts("' (PID ");
-  console_put_dec(proc->pid);
-  console_puts(")\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
-  return proc->pid;
+void proc_log_final_reap(uint32_t pid) {
+  char buf[64];
+  char num[16];
+  int_to_dec((int)pid, num);
+  buf[0] = '\0';
+  strcpy(buf, "final reap ");
+  strcat(buf, num);
+  KLOG_INFO("PROC", buf);
 }
 
 /**
- * Lance immédiatement un programme ELF (bloquant).
- * Charge et exécute le programme, puis retourne au shell.
+ * Nettoyage final d'un processus zombie :
+ * - reparentage des orphelins éventuels vers idle_process
+ * - détachement de la hiérarchie parent / siblings
+ * - détachement de la liste circulaire process_list
+ * - libération des ressources résiduelles
+ * - kfree(proc)
  */
-int process_exec_and_wait(const char *filename, int argc, char **argv) {
-  KLOG_INFO("EXEC", "=== Execute and Wait ===");
+void process_reap(process_t *proc) {
+  if (!proc)
+    return;
+
+  asm volatile("cli");
+  if (proc->state == PROCESS_STATE_TERMINATED) {
+    asm volatile("sti");
+    return;
+  }
+  proc->state = PROCESS_STATE_TERMINATED;
+
+  /* Reparenter les éventuels enfants orphelins vers idle_process */
+  if (proc->first_child && idle_process) {
+    process_t *child = proc->first_child;
+    while (child) {
+      child->parent = idle_process;
+      if (!child->sibling_next) {
+        child->sibling_next = idle_process->first_child;
+        if (idle_process->first_child) {
+          idle_process->first_child->sibling_prev = child;
+        }
+        break;
+      }
+      child = child->sibling_next;
+    }
+    idle_process->first_child = proc->first_child;
+    proc->first_child = NULL;
+  }
+
+  /* Détacher du parent et des siblings */
+  if (proc->parent) {
+    if (proc->parent->first_child == proc) {
+      proc->parent->first_child = proc->sibling_next;
+    }
+  }
+  if (proc->sibling_prev) {
+    proc->sibling_prev->sibling_next = proc->sibling_next;
+  }
+  if (proc->sibling_next) {
+    proc->sibling_next->sibling_prev = proc->sibling_prev;
+  }
+  proc->sibling_next = NULL;
+  proc->sibling_prev = NULL;
+  proc->parent = NULL;
+
+  /* Détacher de la liste circulaire process_list */
+  if (proc->next && proc->prev) {
+    if (proc->next == proc) {
+      if (process_list == proc) {
+        process_list = NULL;
+      }
+    } else {
+      if (process_list == proc) {
+        process_list = proc->next;
+      }
+      proc->prev->next = proc->next;
+      proc->next->prev = proc->prev;
+    }
+    proc->next = NULL;
+    proc->prev = NULL;
+  }
+  asm volatile("sti");
+
+  /* Libérer les ressources restantes (si pas déjà fait par le reaper) */
+  if (proc->pml4 && proc->pml4 != (uint64_t *)vmm_get_kernel_directory()) {
+    vmm_free_directory((page_directory_t *)proc->pml4);
+    proc->pml4 = NULL;
+  }
+
+  if (proc->stack_base) {
+    kfree(proc->stack_base);
+    proc->stack_base = NULL;
+  }
+
+  uint32_t pid = proc->pid;
+  bool was_gui = proc->uses_framebuffer;
+  proc_log_final_reap(pid);
+
+  /* Libérer la structure du processus.
+   * Aucune utilisation du pointeur proc après ce kfree !
+   */
+  kfree(proc);
+
+  if (was_gui && !console_is_enabled()) {
+    keyboard_clear_buffer();
+    console_set_enabled(true);
+    console_clear(VGA_COLOR_BLACK);
+    console_refresh();
+  }
+}
+
+/* ========================================
+ * Exécution de programmes ELF (User Mode)
+ * ======================================== */
+
+/**
+ * Crée et démarre un processus user mode à partir d'un fichier ELF.
+ * Factorise proprement le chargement ELF, la création du Page Directory,
+ * la stack user avec argc/argv, et le rattachement à la hiérarchie.
+ */
+process_t *process_spawn(const char *filename, int argc, char **argv) {
+  if (!multitasking_enabled) {
+    KLOG_ERROR("EXEC", "Multitasking not initialized!");
+    return NULL;
+  }
+
+  KLOG_INFO("EXEC", "=== Spawning Program ===");
   KLOG_INFO("EXEC", filename);
 
   /* Vérifier si le fichier est un ELF valide */
@@ -721,7 +725,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_puts(filename);
     console_puts(" is not a valid ELF executable\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return -1;
+    return NULL;
   }
 
   /* Allouer la structure du processus */
@@ -731,7 +735,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     console_puts("Error: Failed to allocate process structure\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    return -1;
+    return NULL;
   }
 
   /* Allouer une stack kernel pour ce processus (pour les syscalls) */
@@ -742,14 +746,11 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_puts("Error: Failed to allocate kernel stack\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
-  /* Initialiser la kernel stack à 0 pour éviter les problèmes de mémoire non
-   * initialisée */
-  for (uint32_t i = 0; i < KERNEL_STACK_SIZE; i++) {
-    ((uint8_t *)kernel_stack)[i] = 0;
-  }
+  /* Initialiser la kernel stack à 0 */
+  memset(kernel_stack, 0, KERNEL_STACK_SIZE);
 
   /* Initialiser le processus */
   proc->pid = next_pid++;
@@ -764,6 +765,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
 
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
+  proc->exit_status = 0;
 
   /* Créer un nouveau Page Directory pour l'isolation mémoire */
   page_directory_t *dir = vmm_create_directory();
@@ -774,7 +776,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
   proc->pml4 = (uint64_t *)dir; /* Stocker le pointeur vers la structure */
   proc->cr3 = dir->pml4_phys;   /* CR3 = adresse PHYSIQUE du PML4 */
@@ -799,7 +801,7 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
     vmm_free_directory((page_directory_t *)proc->pml4);
     kfree(kernel_stack);
     kfree(proc);
-    return -1;
+    return NULL;
   }
 
   KLOG_INFO_HEX("EXEC", "Entry point: ", elf_result.entry_point);
@@ -816,7 +818,6 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
   for (uint64_t addr = user_stack_bottom; addr < USER_STACK_TOP;
        addr += PAGE_SIZE) {
     if (!vmm_is_mapped_in_dir((page_directory_t *)proc->pml4, addr)) {
-      /* pmm_alloc_block retourne une adresse virtuelle HHDM */
       void *page_virt = pmm_alloc_block();
       if (page_virt == NULL) {
         KLOG_ERROR("EXEC", "Failed to allocate user stack!");
@@ -826,9 +827,8 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
         vmm_free_directory((page_directory_t *)proc->pml4);
         kfree(kernel_stack);
         kfree(proc);
-        return -1;
+        return NULL;
       }
-      /* Convertir en adresse physique pour le mapping */
       uint64_t page_phys = pmm_virt_to_phys(page_virt);
       if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, page_phys, addr,
                               PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
@@ -840,133 +840,118 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
         vmm_free_directory((page_directory_t *)proc->pml4);
         kfree(kernel_stack);
         kfree(proc);
-        return -1;
+        return NULL;
       }
-      /* Mettre la page à zéro */
       memset(page_virt, 0, PAGE_SIZE);
     }
   }
 
   KLOG_INFO_HEX64("EXEC", "User stack top: ", USER_STACK_TOP);
 
-  /* ========================================
-   * Préparer la stack utilisateur avec argc/argv
-   * ======================================== */
-
-  /* Allouer un buffer pour la stack utilisateur dans le kernel */
-  uint64_t stack_buffer_size =
-      1024; /* 1KB devrait être suffisant pour argc/argv */
-  uint8_t *stack_buffer = (uint8_t *)kmalloc(stack_buffer_size);
-  if (stack_buffer == NULL) {
-    KLOG_ERROR("EXEC", "Failed to allocate stack buffer!");
-    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    console_puts("Error: Failed to allocate stack buffer\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
-  }
-
-  /* Construire la stack utilisateur dans le buffer */
-  uint64_t user_rsp = USER_STACK_TOP;
-
-  /* D'abord, copier les chaînes d'arguments */
-  char *string_ptr =
-      (char *)(stack_buffer +
-               stack_buffer_size); /* Commencer à la fin du buffer */
-  char *argv_ptrs[16];             /* Max 16 arguments */
-
-  for (int i = 0; i < argc && i < 16; i++) {
-    int len = 0;
-    while (argv[i][len])
-      len++;
-    len++; /* Inclure le null terminator */
-    string_ptr -= len;
-    if ((uint8_t *)string_ptr < stack_buffer) {
-      KLOG_ERROR("EXEC", "Arguments too large for stack buffer!");
+  /* Préparer la stack utilisateur avec ou sans arguments */
+  uint64_t user_rsp;
+  if (argc <= 0 || argv == NULL) {
+    uint64_t user_stack_data[2] = {0, 0}; /* argc=0, argv=NULL */
+    user_rsp = USER_STACK_TOP - 16;
+    if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp,
+                        user_stack_data, sizeof(user_stack_data)) != 0) {
+      KLOG_ERROR("EXEC", "Failed to initialize user stack!");
+      vmm_free_directory((page_directory_t *)proc->pml4);
+      kfree(kernel_stack);
+      kfree(proc);
+      return NULL;
+    }
+  } else {
+    uint64_t stack_buffer_size = 1024;
+    uint8_t *stack_buffer = (uint8_t *)kmalloc(stack_buffer_size);
+    if (stack_buffer == NULL) {
+      KLOG_ERROR("EXEC", "Failed to allocate stack buffer!");
       console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      console_puts("Error: Arguments too large for stack buffer\n");
+      console_puts("Error: Failed to allocate stack buffer\n");
+      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      vmm_free_directory((page_directory_t *)proc->pml4);
+      kfree(kernel_stack);
+      kfree(proc);
+      return NULL;
+    }
+
+    char *string_ptr = (char *)(stack_buffer + stack_buffer_size);
+    char *argv_ptrs[16];
+
+    for (int i = 0; i < argc && i < 16; i++) {
+      int len = 0;
+      while (argv[i][len])
+        len++;
+      len++;
+      string_ptr -= len;
+      if ((uint8_t *)string_ptr < stack_buffer) {
+        KLOG_ERROR("EXEC", "Arguments too large for stack buffer!");
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Error: Arguments too large for stack buffer\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+        kfree(stack_buffer);
+        vmm_free_directory((page_directory_t *)proc->pml4);
+        kfree(kernel_stack);
+        kfree(proc);
+        return NULL;
+      }
+      for (int j = 0; j < len; j++) {
+        string_ptr[j] = argv[i][j];
+      }
+      argv_ptrs[i] = string_ptr;
+    }
+
+    string_ptr = (char *)((uint64_t)string_ptr & ~7ULL);
+    uint64_t *stack_ptr = (uint64_t *)string_ptr;
+    stack_ptr--;
+    *stack_ptr = 0; /* NULL terminator for argv */
+
+    for (int i = argc - 1; i >= 0; i--) {
+      stack_ptr--;
+      *stack_ptr = (uint64_t)argv_ptrs[i];
+    }
+
+    uint64_t *argv_table = stack_ptr;
+
+    stack_ptr--;
+    *stack_ptr = (uint64_t)argc;
+
+    uint64_t data_size =
+        stack_buffer_size - ((uint8_t *)stack_ptr - stack_buffer);
+
+    user_rsp = USER_STACK_TOP - data_size;
+    user_rsp &= ~0xFULL;
+
+    /* Relocate argv string pointers to user virtual address space */
+    for (int i = 0; i < argc && i < 16; i++) {
+      uint64_t offset = (uint8_t *)argv_ptrs[i] - (uint8_t *)stack_ptr;
+      argv_table[i] = user_rsp + offset;
+    }
+
+    if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, stack_ptr,
+                        data_size) != 0) {
+      KLOG_ERROR("EXEC", "Failed to initialize user stack!");
+      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+      console_puts("Error: Failed to initialize user stack (copy failed)\n");
       console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
       kfree(stack_buffer);
       vmm_free_directory((page_directory_t *)proc->pml4);
       kfree(kernel_stack);
       kfree(proc);
-      return -1;
+      return NULL;
     }
-    for (int j = 0; j < len; j++) {
-      string_ptr[j] = argv[i][j];
-    }
-    argv_ptrs[i] = string_ptr;
-  }
-
-  /* Aligner sur 4 octets */
-  string_ptr = (char *)((uint64_t)string_ptr & ~3);
-
-  /* Construire le tableau argv */
-  uint64_t *stack_ptr = (uint64_t *)string_ptr;
-  stack_ptr--; /* argv[argc] = NULL */
-  *stack_ptr = 0;
-
-  for (int i = argc - 1; i >= 0; i--) {
-    stack_ptr--;
-    *stack_ptr = (uint64_t)argv_ptrs[i];
-  }
-
-  uint64_t argv_addr = (uint64_t)stack_ptr; /* Adresse de argv[0] */
-
-  /* Pousser argv (pointeur vers argv[0]) */
-  stack_ptr--;
-  *stack_ptr = argv_addr;
-
-  /* Pousser argc */
-  stack_ptr--;
-  *stack_ptr = (uint64_t)argc;
-
-  /* Calculer la taille des données à copier */
-  uint64_t data_size =
-      stack_buffer_size - ((uint8_t *)stack_ptr - stack_buffer);
-
-  /* Calculer le RSP utilisateur final */
-  /* Les données doivent se terminer à USER_STACK_TOP */
-  user_rsp = USER_STACK_TOP - data_size;
-  /* Aligner sur 16 octets (requis par x86-64 ABI) */
-  user_rsp &= ~0xFULL;
-
-  /* Copier les données de la stack dans le Page Directory du processus */
-  if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, stack_ptr,
-                      data_size) != 0) {
-    KLOG_ERROR("EXEC", "Failed to initialize user stack!");
-    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-    console_puts("Error: Failed to initialize user stack (copy failed)\n");
-    console_puts("  User ESP: 0x");
-    console_put_hex(user_rsp);
-    console_puts("\n  Data size: ");
-    console_put_dec(data_size);
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
     kfree(stack_buffer);
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
   }
-
-  /* Libérer le buffer temporaire */
-  kfree(stack_buffer);
 
   KLOG_INFO_HEX("EXEC", "User ESP: ", user_rsp);
 
-  /* ========================================
-   * Initialiser les champs du processus
-   * ======================================== */
-
+  /* Initialiser les champs */
   proc->main_thread = NULL;
   proc->thread_list = NULL;
   proc->thread_count = 0;
   proc->exit_status = 0;
+  proc->uses_framebuffer = false;
 
-  /* Initialiser la wait queue pour waitpid */
   wait_queue_init(&proc->wait_queue);
 
   /* Hiérarchie des processus */
@@ -975,60 +960,89 @@ int process_exec_and_wait(const char *filename, int argc, char **argv) {
   proc->sibling_next = NULL;
   proc->sibling_prev = NULL;
 
-  /* ========================================
-   * Créer le thread user mode
-   * ========================================
-   *
-   * On utilise thread_create_user() qui prépare la stack
-   * pour un IRET vers Ring 3.
-   */
+  asm volatile("cli");
 
+  /* Ajouter comme premier enfant du parent */
+  if (proc->parent) {
+    proc->sibling_next = proc->parent->first_child;
+    proc->sibling_prev = NULL;
+    if (proc->parent->first_child) {
+      proc->parent->first_child->sibling_prev = proc;
+    }
+    proc->parent->first_child = proc;
+  }
+
+  /* Ajouter à la liste circulaire des processus */
+  if (process_list) {
+    proc->next = process_list->next;
+    proc->prev = process_list;
+    process_list->next->prev = proc;
+    process_list->next = proc;
+  } else {
+    proc->next = proc;
+    proc->prev = proc;
+    process_list = proc;
+  }
+
+  asm volatile("sti");
+
+  /* Créer le thread user mode */
   thread_t *main_thread = thread_create_user(
       proc, proc->name, elf_result.entry_point,
-      user_rsp, /* ESP utilisateur avec argc/argv */
-      NULL,     /* arg - pas d'argument pour le thread principal */
+      user_rsp,
+      NULL,
       kernel_stack, KERNEL_STACK_SIZE);
 
   if (main_thread == NULL) {
     KLOG_ERROR("EXEC", "Failed to create user thread!");
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    kfree(kernel_stack);
-    kfree(proc);
-    return -1;
+    process_reap(proc);
+    return NULL;
   }
 
   proc->main_thread = main_thread;
   proc->thread_list = main_thread;
   proc->thread_count = 1;
 
-  /* Ne pas libérer kernel_stack ici, il appartient au thread maintenant */
-  proc->stack_base = NULL; /* Le thread gère sa propre stack */
+  /* Ne pas libérer kernel_stack ici, il appartient au thread */
+  proc->stack_base = NULL;
 
   KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
   KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
 
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("Started process '");
-  console_puts(filename);
-  console_puts("' (PID ");
-  console_put_dec(proc->pid);
-  console_puts(")\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  return proc;
+}
 
-  /* EXEC NON-BLOQUANT: On retourne immédiatement */
-  /* Le scheduler se chargera d'exécuter le nouveau thread */
-  /* Pas de wait loop ici ! */
-
-  /* Note: On ne libère PAS le Page Directory ni la structure process */
-  /* Ils seront libérés par le reaper thread quand le processus se terminera */
-
-  /* Céder le CPU pour donner une chance au nouveau thread de s'exécuter.
-   * C'est nécessaire car scheduler_preempt (IRQ timer) ne peut pas switcher
-   * vers un thread user - seul scheduler_schedule peut le faire.
-   */
+/**
+ * Exécute un programme ELF en créant un nouveau processus User Mode (non-bloquant).
+ *
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @return          PID du nouveau processus, ou -1 si erreur
+ */
+int process_execute(const char *filename) {
+  process_t *proc = process_spawn(filename, 0, NULL);
+  if (!proc) {
+    return -1;
+  }
   thread_yield();
+  return (int)proc->pid;
+}
 
-  return 0;
+/**
+ * Lance un programme ELF et attend sa fin (bloquant pour le shell / thread appelant).
+ *
+ * @param filename  Chemin du fichier ELF à exécuter
+ * @param argc      Nombre d'arguments
+ * @param argv      Tableau d'arguments
+ * @return          Exit status du processus, ou -1 si erreur de lancement
+ */
+int process_exec_and_wait(const char *filename, int argc, char **argv) {
+  process_t *proc = process_spawn(filename, argc, argv);
+  if (!proc) {
+    return -1;
+  }
+
+  /* Attente bloquante via process_join */
+  return process_join(proc);
 }
 
 /* ========================================
@@ -1057,6 +1071,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   proc->exit_status = 0;
+  proc->uses_framebuffer = false;
 
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
   proc->cr3 = (uint64_t)proc->pml4;
@@ -1127,10 +1142,23 @@ int process_join(process_t *proc) {
   if (!proc)
     return -1;
 
-  /* Attendre que le processus se termine */
-  wait_queue_wait(&proc->wait_queue, process_waiting_still_running, proc);
+  uint32_t pid = proc->pid;
+  proc_log_wait_begin(pid);
 
-  return proc->exit_status;
+  /* Si le process tourne encore : bloquer sur sa wait_queue */
+  if (proc->state != PROCESS_STATE_ZOMBIE &&
+      proc->state != PROCESS_STATE_TERMINATED) {
+    wait_queue_wait(&proc->wait_queue, process_waiting_still_running, proc);
+  }
+
+  /* Lire et sauvegarder exit_status avant le reap */
+  int status = proc->exit_status;
+  proc_log_wait_completed(pid, status);
+
+  /* Effectuer le final reap (détachement et kfree) */
+  process_reap(proc);
+
+  return status;
 }
 
 void process_kill(process_t *proc) {
@@ -1233,4 +1261,181 @@ size_t process_snapshot(process_info_t *buffer, size_t capacity) {
   asm volatile("sti");
 
   return count;
+}
+
+void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                             uint64_t error_code) {
+  /* Désactiver les interruptions pour manipulation atomique des états */
+  asm volatile("cli");
+
+  /* Récupérer le thread courant et son processus propriétaire */
+  thread_t *curr = thread_current();
+  process_t *proc = curr ? curr->owner : NULL;
+
+  /* Mapper le numéro d'exception sur un nom clair et un signal */
+  const char *fault_name = "Fatal Exception";
+  const char *sig_name = "SIGSEGV";
+  int sig = 11;
+
+  switch (int_no) {
+  case 0:
+    fault_name = "Division By Zero";
+    sig_name = "SIGFPE";
+    sig = 8;
+    break;
+  case 1:
+    fault_name = "Debug Exception";
+    sig_name = "SIGTRAP";
+    sig = 5;
+    break;
+  case 3:
+    fault_name = "Breakpoint";
+    sig_name = "SIGTRAP";
+    sig = 5;
+    break;
+  case 4:
+    fault_name = "Overflow";
+    sig_name = "SIGFPE";
+    sig = 8;
+    break;
+  case 5:
+    fault_name = "Bound Range Exceeded";
+    sig_name = "SIGSEGV";
+    sig = 11;
+    break;
+  case 6:
+    fault_name = "Invalid Opcode (Illegal Instruction)";
+    sig_name = "SIGILL";
+    sig = 4;
+    break;
+  case 7:
+    fault_name = "Device Not Available";
+    sig_name = "SIGFPE";
+    sig = 8;
+    break;
+  case 8:
+    fault_name = "Double Fault";
+    sig_name = "SIGSEGV";
+    sig = 11;
+    break;
+  case 10:
+    fault_name = "Invalid TSS";
+    sig_name = "SIGSEGV";
+    sig = 11;
+    break;
+  case 11:
+    fault_name = "Segment Not Present";
+    sig_name = "SIGBUS";
+    sig = 7;
+    break;
+  case 12:
+    fault_name = "Stack-Segment Fault";
+    sig_name = "SIGBUS";
+    sig = 7;
+    break;
+  case 13:
+    fault_name = "General Protection Fault";
+    sig_name = "SIGSEGV";
+    sig = 11;
+    break;
+  case 14:
+    fault_name = "Page Fault (Segmentation Fault)";
+    sig_name = "SIGSEGV";
+    sig = 11;
+    break;
+  case 16:
+    fault_name = "x87 FPU Floating-Point Error";
+    sig_name = "SIGFPE";
+    sig = 8;
+    break;
+  case 17:
+    fault_name = "Alignment Check";
+    sig_name = "SIGBUS";
+    sig = 7;
+    break;
+  case 19:
+    fault_name = "SIMD Floating-Point Exception";
+    sig_name = "SIGFPE";
+    sig = 8;
+    break;
+  default:
+    break;
+  }
+
+  /* Log détaillé sur le port série */
+  KLOG_ERROR("USER_FAULT", "========================================");
+  KLOG_ERROR("USER_FAULT", "   FATAL USER PROCESS FAULT DETECTED    ");
+  KLOG_ERROR("USER_FAULT", "========================================");
+  if (proc) {
+    KLOG_ERROR("USER_FAULT", proc->name);
+    KLOG_ERROR_DEC("USER_FAULT", "PID: ", proc->pid);
+  }
+  KLOG_ERROR("USER_FAULT", fault_name);
+  KLOG_ERROR_HEX("USER_FAULT", "INT: ", (uint32_t)int_no);
+  KLOG_ERROR_HEX("USER_FAULT", "Error code: ", (uint32_t)error_code);
+  KLOG_ERROR_HEX("USER_FAULT", "RIP (high): ", (uint32_t)(rip >> 32));
+  KLOG_ERROR_HEX("USER_FAULT", "RIP (low): ", (uint32_t)rip);
+  if (int_no == 14) {
+    KLOG_ERROR_HEX("USER_FAULT", "Fault Addr (high): ", (uint32_t)(fault_addr >> 32));
+    KLOG_ERROR_HEX("USER_FAULT", "Fault Addr (low): ", (uint32_t)fault_addr);
+  }
+
+  /* Si le processus utilisait la GUI ou si la console est désactivée, restaurer la console */
+  bool was_gui = false;
+  if (proc && proc->uses_framebuffer) {
+    was_gui = true;
+  }
+  if (!console_is_enabled() || was_gui) {
+    keyboard_clear_buffer();
+    input_clear_events();
+    console_set_enabled(true);
+    console_clear(VGA_COLOR_BLACK);
+    console_refresh();
+  }
+
+  /* Notification visuelle sur la console texte */
+  console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+  console_puts("\n[KERNEL] Process '");
+  console_puts(proc ? proc->name : "<unknown>");
+  console_puts("' (PID ");
+  if (proc) {
+    console_put_dec(proc->pid);
+  } else {
+    console_putc('?');
+  }
+  console_puts(") terminated: ");
+  console_puts(fault_name);
+  console_puts(" (");
+  console_puts(sig_name);
+  console_puts(")\n");
+  console_puts("         RIP: 0x");
+  console_put_hex64(rip);
+  if (int_no == 14) {
+    console_puts(" | Fault Addr: 0x");
+    console_put_hex64(fault_addr);
+  }
+  console_puts(" | Error code: 0x");
+  console_put_hex((uint32_t)error_code);
+  console_puts("\n");
+  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+  int exit_status = 128 + sig;
+  if (proc) {
+    proc->exit_status = exit_status;
+    /* Tuer les autres threads du même processus pour éviter des zombies orphelins */
+    thread_t *t = proc->thread_list;
+    while (t) {
+      if (t != curr && t->state != THREAD_STATE_ZOMBIE) {
+        thread_kill(t, exit_status);
+      }
+      t = t->proc_next;
+    }
+  }
+
+  /* Terminer le thread courant - ne retourne JAMAIS */
+  thread_exit(exit_status);
+
+  for (;;) {
+    asm volatile("hlt");
+  }
 }

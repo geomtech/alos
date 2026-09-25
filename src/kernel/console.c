@@ -147,3 +147,27 @@ void console_disable_hw_cursor(void) {
 void console_show_cursor(int show) { (void)show; }
 
 void console_update_cursor(void) { /* Cursor handled by fb_console */ }
+
+void console_set_enabled(bool enabled) {
+  if (!initialized)
+    return;
+  fb_console_set_enabled(enabled);
+}
+
+bool console_is_enabled(void) {
+  if (!initialized)
+    return false;
+  return fb_console_is_enabled();
+}
+
+int console_get_cols(void) {
+  if (!initialized)
+    return 80;
+  return fb_console_get_cols();
+}
+
+int console_get_rows(void) {
+  if (!initialized)
+    return 25;
+  return fb_console_get_rows();
+}

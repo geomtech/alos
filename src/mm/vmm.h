@@ -136,6 +136,11 @@ page_directory_t* vmm_get_directory(void);
 uint64_t vmm_get_physical(uint64_t virt);
 
 /**
+ * Vérifie si une adresse virtuelle est mappée.
+ */
+bool vmm_is_mapped(uint64_t virt);
+
+/**
  * Inspecte le mapping d'une adresse virtuelle dans un espace donné.
  * Supporte les pages 4 KiB, 2 MiB et 1 GiB.
  */

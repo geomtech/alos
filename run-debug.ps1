@@ -27,7 +27,7 @@ Write-Host "This window will show kernel serial logs as soon as QEMU creates ser
 Write-Host ""
 
 $quotedRunScript = '"' + $runScript + '"'
-$arguments = "-NoProfile -ExecutionPolicy Bypass -File $quotedRunScript"
+$arguments = "-NoProfile -ExecutionPolicy Bypass -NoExit -File $quotedRunScript"
 $runner = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -PassThru
 
 while (-not (Test-Path -LiteralPath $serialLog)) {

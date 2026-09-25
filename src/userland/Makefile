@@ -44,8 +44,12 @@ FREETYPE_SRC = $(FREETYPE_BASE) $(FREETYPE_TRUETYPE) $(FREETYPE_SMOOTH) $(FREETY
 # Tous les objets GUI
 GUI_OBJ = $(GUI_SRC:.c=.o) $(COMPONENTS_SRC:.c=.o) $(FREETYPE_SRC:.c=.o)
 
-all: threads-test gui_app
+# Liste des utilitaires dans cmd/
+CMDS = sh echo pwd cd cat ls mkdir touch rm rmdir meminfo ps ping wget httpd
+BIN_DIR = bin
+CMD_BINS = $(addprefix $(BIN_DIR)/, $(CMDS))
 
+all: libc_build threads-test crash-test gui_app $(CMD_BINS)
 
 # Force libc build
 .PHONY: libc_build
@@ -53,17 +57,29 @@ all: threads-test gui_app
 libc_build:
 	$(MAKE) -C $(LIBC_DIR)
 
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+$(BIN_DIR)/%: cmd/%.o $(CRT0) $(LIBC) | $(BIN_DIR)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
 threads-test: libc_build threads-test.o
 	$(LD) -T linker.ld -o threads-test $(CRT0) threads-test.o $(LIBC)
 
+crash-test: libc_build crash-test.o
+	$(LD) -T linker.ld -o crash-test $(CRT0) crash-test.o $(LIBC)
+
 gui_app: libc_build $(GUI_OBJ)
 	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
+
+cmd/%.o: cmd/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o threads-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -rf bin cmd/*.o *.o threads-test crash-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 

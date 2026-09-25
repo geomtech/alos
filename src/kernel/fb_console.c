@@ -226,6 +226,8 @@ static uint32_t g_fb_pitch = 0;  /* bytes per line */
 static uint32_t g_fb_bpp = 0;
 
 /* Console state */
+static int g_cols = 80;
+static int g_rows = 25;
 static int g_cursor_col = 0;
 static int g_cursor_row = 0;
 static int g_view_start = 0;
@@ -241,7 +243,7 @@ typedef struct {
     uint32_t bg;
 } fb_char_t;
 
-static fb_char_t g_buffer[FB_CONSOLE_BUFFER_LINES][FB_CONSOLE_COLS];
+static fb_char_t g_buffer[FB_CONSOLE_BUFFER_LINES][FB_CONSOLE_MAX_COLS];
 
 /* ============================================ */
 /* Internal functions                           */
@@ -254,7 +256,7 @@ static inline void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color) {
 }
 
 static void fb_draw_char(int col, int row, char c, uint32_t fg, uint32_t bg) {
-    if (col < 0 || col >= FB_CONSOLE_COLS || row < 0 || row >= FB_CONSOLE_ROWS) {
+    if (col < 0 || col >= g_cols || row < 0 || row >= g_rows) {
         return;
     }
     
@@ -282,13 +284,13 @@ static void fb_draw_char(int col, int row, char c, uint32_t fg, uint32_t bg) {
 static void fb_scroll_buffer(void) {
     /* Move all lines up by one */
     for (int row = 0; row < FB_CONSOLE_BUFFER_LINES - 1; row++) {
-        for (int col = 0; col < FB_CONSOLE_COLS; col++) {
+        for (int col = 0; col < g_cols; col++) {
             g_buffer[row][col] = g_buffer[row + 1][col];
         }
     }
     
     /* Clear the last line */
-    for (int col = 0; col < FB_CONSOLE_COLS; col++) {
+    for (int col = 0; col < g_cols; col++) {
         g_buffer[FB_CONSOLE_BUFFER_LINES - 1][col].c = ' ';
         g_buffer[FB_CONSOLE_BUFFER_LINES - 1][col].fg = g_fg_color;
         g_buffer[FB_CONSOLE_BUFFER_LINES - 1][col].bg = g_bg_color;
@@ -299,8 +301,19 @@ static void fb_scroll_buffer(void) {
 /* Cursor functions                             */
 /* ============================================ */
 
+static void fb_erase_cursor(void) {
+    if (!g_initialized || !g_enabled) return;
+    if (g_cursor_col < 0 || g_cursor_col >= g_cols || g_cursor_row < 0 || g_cursor_row >= g_rows) return;
+    int buffer_row = g_view_start + g_cursor_row;
+    if (buffer_row >= 0 && buffer_row < FB_CONSOLE_BUFFER_LINES) {
+        fb_char_t *ch = &g_buffer[buffer_row][g_cursor_col];
+        fb_draw_char(g_cursor_col, g_cursor_row, ch->c ? ch->c : ' ', ch->fg, ch->bg);
+    }
+}
+
 static void fb_draw_cursor(void) {
     if (!g_initialized || !g_enabled) return;
+    if (g_cursor_col < 0 || g_cursor_col >= g_cols || g_cursor_row < 0 || g_cursor_row >= g_rows) return;
 
     uint32_t x_start = g_cursor_col * FONT_WIDTH;
     uint32_t y_start = g_cursor_row * FONT_HEIGHT;
@@ -371,9 +384,31 @@ int fb_console_init(struct limine_framebuffer *fb) {
         return -1;
     }
     
+    /* Calculate dynamic columns and rows to fill full screen */
+    g_cols = g_fb_width / FONT_WIDTH;
+    g_rows = g_fb_height / FONT_HEIGHT;
+
+    if (g_cols > FB_CONSOLE_MAX_COLS) {
+        g_cols = FB_CONSOLE_MAX_COLS;
+    }
+    if (g_rows > FB_CONSOLE_MAX_ROWS) {
+        g_rows = FB_CONSOLE_MAX_ROWS;
+    }
+    if (g_rows > FB_CONSOLE_BUFFER_LINES) {
+        g_rows = FB_CONSOLE_BUFFER_LINES;
+    }
+    if (g_cols < 1) g_cols = 1;
+    if (g_rows < 1) g_rows = 1;
+
+    serial_str("[FB] Console geometry: ");
+    serial_hex((uint64_t)g_cols);
+    serial_str(" cols x ");
+    serial_hex((uint64_t)g_rows);
+    serial_str(" rows\n");
+
     /* Initialize buffer */
     for (int row = 0; row < FB_CONSOLE_BUFFER_LINES; row++) {
-        for (int col = 0; col < FB_CONSOLE_COLS; col++) {
+        for (int col = 0; col < FB_CONSOLE_MAX_COLS; col++) {
             g_buffer[row][col].c = ' ';
             g_buffer[row][col].fg = FB_COLOR_WHITE;
             g_buffer[row][col].bg = FB_COLOR_BLACK;
@@ -387,16 +422,8 @@ int fb_console_init(struct limine_framebuffer *fb) {
     g_bg_color = FB_COLOR_BLACK;
     g_initialized = true;
     
-    /* Clear screen with dark blue background */
+    /* Clear screen with black background across full screen */
     fb_console_clear(FB_COLOR_BLACK);
-    
-    /* Draw a test pattern to verify framebuffer works */
-    /* White border at top */
-    for (uint32_t x = 0; x < g_fb_width && x < 640; x++) {
-        for (uint32_t y = 0; y < 2; y++) {
-            fb_put_pixel(x, y, FB_COLOR_WHITE);
-        }
-    }
     
     return 0;
 }
@@ -405,8 +432,16 @@ bool fb_console_available(void) {
     return g_initialized;
 }
 
+int fb_console_get_cols(void) {
+    return g_cols;
+}
+
+int fb_console_get_rows(void) {
+    return g_rows;
+}
+
 void fb_console_clear(uint32_t bg_color) {
-    if (!g_initialized) return;
+    if (!g_initialized || !g_enabled) return;
     
     /* Clear framebuffer */
     for (uint32_t y = 0; y < g_fb_height; y++) {
@@ -417,7 +452,7 @@ void fb_console_clear(uint32_t bg_color) {
     
     /* Clear buffer */
     for (int row = 0; row < FB_CONSOLE_BUFFER_LINES; row++) {
-        for (int col = 0; col < FB_CONSOLE_COLS; col++) {
+        for (int col = 0; col < g_cols; col++) {
             g_buffer[row][col].c = ' ';
             g_buffer[row][col].fg = g_fg_color;
             g_buffer[row][col].bg = bg_color;
@@ -446,6 +481,8 @@ void fb_console_set_vga_color(uint8_t fg, uint8_t bg) {
 void fb_console_putc(char c) {
     if (!g_initialized || !g_enabled) return;
     
+    fb_erase_cursor();
+    
     int buffer_row = g_view_start + g_cursor_row;
     
     if (c == '\n') {
@@ -463,28 +500,30 @@ void fb_console_putc(char c) {
         }
     } else {
         /* Regular character */
-        g_buffer[buffer_row][g_cursor_col].c = c;
-        g_buffer[buffer_row][g_cursor_col].fg = g_fg_color;
-        g_buffer[buffer_row][g_cursor_col].bg = g_bg_color;
-        
-        fb_draw_char(g_cursor_col, g_cursor_row, c, g_fg_color, g_bg_color);
-        g_cursor_col++;
+        if (g_cursor_col < g_cols) {
+            g_buffer[buffer_row][g_cursor_col].c = c;
+            g_buffer[buffer_row][g_cursor_col].fg = g_fg_color;
+            g_buffer[buffer_row][g_cursor_col].bg = g_bg_color;
+            
+            fb_draw_char(g_cursor_col, g_cursor_row, c, g_fg_color, g_bg_color);
+            g_cursor_col++;
+        }
     }
     
     /* Handle line wrap */
-    if (g_cursor_col >= FB_CONSOLE_COLS) {
+    if (g_cursor_col >= g_cols) {
         g_cursor_col = 0;
         g_cursor_row++;
     }
     
     /* Handle scroll */
-    if (g_cursor_row >= FB_CONSOLE_ROWS) {
-        g_cursor_row = FB_CONSOLE_ROWS - 1;
+    if (g_cursor_row >= g_rows) {
+        g_cursor_row = g_rows - 1;
         g_view_start++;
         
-        if (g_view_start + FB_CONSOLE_ROWS > FB_CONSOLE_BUFFER_LINES) {
+        if (g_view_start + g_rows > FB_CONSOLE_BUFFER_LINES) {
             fb_scroll_buffer();
-            g_view_start = FB_CONSOLE_BUFFER_LINES - FB_CONSOLE_ROWS;
+            g_view_start = FB_CONSOLE_BUFFER_LINES - g_rows;
         }
         
         fb_console_refresh();
@@ -538,9 +577,9 @@ void fb_console_put_dec(uint64_t value) {
 void fb_console_refresh(void) {
     if (!g_initialized || !g_enabled) return;
     
-    for (int row = 0; row < FB_CONSOLE_ROWS; row++) {
+    for (int row = 0; row < g_rows; row++) {
         int buffer_row = g_view_start + row;
-        for (int col = 0; col < FB_CONSOLE_COLS; col++) {
+        for (int col = 0; col < g_cols; col++) {
             fb_char_t *ch = &g_buffer[buffer_row][col];
             fb_draw_char(col, row, ch->c, ch->fg, ch->bg);
         }
@@ -558,7 +597,7 @@ void fb_console_scroll_up(void) {
 }
 
 void fb_console_scroll_down(void) {
-    if (g_view_start + FB_CONSOLE_ROWS < FB_CONSOLE_BUFFER_LINES) {
+    if (g_view_start + g_rows < FB_CONSOLE_BUFFER_LINES) {
         g_view_start++;
         fb_console_refresh();
     }
@@ -570,8 +609,12 @@ void fb_console_get_cursor(int *col, int *row) {
 }
 
 void fb_console_set_cursor(int col, int row) {
-    if (col >= 0 && col < FB_CONSOLE_COLS) g_cursor_col = col;
-    if (row >= 0 && row < FB_CONSOLE_ROWS) g_cursor_row = row;
+    if (col >= 0 && col < g_cols && row >= 0 && row < g_rows) {
+        fb_erase_cursor();
+        g_cursor_col = col;
+        g_cursor_row = row;
+        fb_draw_cursor();
+    }
 }
 
 void fb_console_set_enabled(bool enabled) {

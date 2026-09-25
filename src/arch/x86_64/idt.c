@@ -251,15 +251,27 @@ void idt_init(void)
 /* Page fault handler from VMM */
 extern void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr);
 
+/* User process fault termination */
+extern void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                                     uint64_t error_code) __attribute__((noreturn));
+
 void exception_handler(struct interrupt_frame *frame)
 {
     uint64_t int_no = frame->int_no;
     uint64_t error_code = frame->error_code;
     
-    /* Page Fault (exception 14) - delegate to VMM */
+    /* Page Fault (exception 14) */
     if (int_no == 14) {
         uint64_t fault_addr;
         __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
+        
+        /* Check if the page fault originated from User Mode (Ring 3) */
+        if ((frame->cs & 3) == 3 || (error_code & 0x4) != 0) {
+            process_terminate_fault(14, frame->rip, fault_addr, error_code);
+            return;
+        }
+        
+        /* Kernel mode page fault - delegate to VMM */
         vmm_page_fault_handler(error_code, fault_addr);
         return;
     }
@@ -305,7 +317,13 @@ void exception_handler(struct interrupt_frame *frame)
         return;
     }
     
-    /* Kernel panic for other exceptions - use serial only */
+    /* Check if any other exception originated from User Mode (Ring 3) */
+    if ((frame->cs & 3) == 3) {
+        process_terminate_fault(int_no, frame->rip, 0, error_code);
+        return;
+    }
+    
+    /* Kernel panic for other exceptions in Kernel Mode (Ring 0) - use serial only */
     cli();
     
     const char *name = (int_no < 32) ? exception_names[int_no] : "Unknown";

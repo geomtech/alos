@@ -499,4 +499,11 @@ void reaper_add_zombie(thread_t *thread);
  */
 void thread_list_debug(void);
 
+/**
+ * Récupère les informations sur tous les threads existants.
+ * Rempli un tableau de proc_info_t.
+ * @return Nombre d'entrées renseignées
+ */
+int thread_get_all_info(void *out_table, int max_entries);
+
 #endif /* THREAD_H */

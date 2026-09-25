@@ -10,6 +10,7 @@
 #include "process.h"
 #include "sync.h"
 #include "timer.h"
+#include "syscall.h"
 
 /* Fonction ASM pour sauter vers un thread user (premier switch) */
 extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
@@ -1624,6 +1625,7 @@ void scheduler_schedule(void) {
 
 void check_thread_timeouts(void) {
   uint64_t now = timer_get_ticks();
+  (void)now;
 
   /* We need to check all blocked threads with timeouts.
    * For now, we iterate through all run queues and check blocked threads.
@@ -1722,15 +1724,23 @@ static void reaper_thread_func(void *arg) {
       /* Décrémenter le compteur de threads du processus */
       proc->thread_count--;
 
-      /* Si c'était le dernier thread, nettoyer le processus */
+      /* Si c'était le dernier thread, marquer le processus ZOMBIE et réveiller le parent */
       if (proc->thread_count == 0) {
-        KLOG_INFO("REAPER", "Last thread of process, cleaning up process:");
+        KLOG_INFO("REAPER", "Last thread of process exited:");
         KLOG_INFO("REAPER", proc->name);
 
-        /* Réveiller les threads en attente sur ce processus (waitpid) */
-        wait_queue_wake_all(&proc->wait_queue);
+        proc_log_last_thread_exited(proc->pid);
 
-        /* Libérer le Page Directory si ce n'est pas le kernel directory */
+        /* Conserver exit_status (fourni par sys_exit ou par ce thread) */
+        if (proc->exit_status == 0 && zombie->exit_status != 0) {
+          proc->exit_status = zombie->exit_status;
+        }
+
+        /* Transition vers ZOMBIE avant tout réveil */
+        proc->state = PROCESS_STATE_ZOMBIE;
+        proc_log_zombie(proc->pid, proc->exit_status);
+
+        /* Libérer les ressources lourdes si possible (Page Directory et stack kernel) */
         if (proc->pml4 &&
             proc->pml4 != (uint64_t *)vmm_get_kernel_directory()) {
           KLOG_INFO("REAPER", "Freeing user page directory");
@@ -1738,14 +1748,21 @@ static void reaper_thread_func(void *arg) {
           proc->pml4 = NULL;
         }
 
-        /* Libérer la kernel stack du processus */
         if (proc->stack_base) {
           kfree(proc->stack_base);
           proc->stack_base = NULL;
         }
 
-        /* Libérer la structure du processus */
-        kfree(proc);
+        /* Réveiller les threads en attente sur ce processus (process_join / waitpid) */
+        proc_log_waking_parent(proc->pid);
+        wait_queue_wake_all(&proc->wait_queue);
+        if (proc->parent) {
+          wait_queue_wake_all(&proc->parent->wait_queue);
+        }
+
+        /* IMPORTANT: Ne PAS kfree(proc) ici !
+         * Le process_t zombie doit rester valide jusqu'au wait/reap du parent.
+         */
       }
 
       zombie->owner = NULL;
@@ -1896,4 +1913,55 @@ void thread_list_debug(void) {
 
   console_puts("\nB = Boosted by aging (Rocket Boost)\n");
   console_puts("===================\n");
+}
+
+int thread_get_all_info(void *out_table, int max_entries) {
+  if (!out_table || max_entries <= 0) return 0;
+  proc_info_t *info = (proc_info_t *)out_table;
+  int count = 0;
+
+  cpu_cli();
+
+  #define RECORD_THREAD(th, st) do { \
+    if ((th) && count < max_entries) { \
+      info[count].tid = (th)->tid; \
+      info[count].pid = (th)->owner ? (th)->owner->pid : 0; \
+      safe_strcpy(info[count].name, (th)->name ? (th)->name : "", sizeof(info[count].name)); \
+      info[count].state = (st); \
+      info[count].rip = (uint64_t)(th)->entry; \
+      info[count].rsp = (th)->rsp; \
+      count++; \
+    } \
+  } while(0)
+
+  if (g_current_thread) {
+    RECORD_THREAD(g_current_thread, THREAD_STATE_RUNNING);
+  }
+
+  for (int pri = THREAD_PRIORITY_COUNT - 1; pri >= 0; pri--) {
+    thread_t *t = g_run_queues[pri];
+    while (t && count < max_entries) {
+      if (t != g_current_thread) {
+        RECORD_THREAD(t, THREAD_STATE_READY);
+      }
+      t = t->sched_next;
+    }
+  }
+
+  thread_t *sleep = g_sleep_queue;
+  while (sleep && count < max_entries) {
+    RECORD_THREAD(sleep, THREAD_STATE_BLOCKED);
+    sleep = sleep->sched_next;
+  }
+
+  thread_t *zombie = g_zombie_list;
+  while (zombie && count < max_entries) {
+    RECORD_THREAD(zombie, THREAD_STATE_ZOMBIE);
+    zombie = zombie->zombie_next;
+  }
+
+  #undef RECORD_THREAD
+
+  cpu_sti();
+  return count;
 }

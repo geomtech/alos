@@ -434,11 +434,16 @@ void vmm_page_fault_handler(uint64_t error_code, uint64_t fault_addr)
     if (error_code & 0x10) {
         KLOG_ERROR("VMM", "  - Instruction fetch");
     }
-    KLOG_ERROR_HEX("VMM", "Current RSP (high): ", (uint32_t)(current_rsp >> 32));
-    KLOG_ERROR_HEX("VMM", "Current RSP (low): ", (uint32_t)current_rsp);
+    /* Safety net: If this was a user mode fault, terminate the process instead of halting */
+    if (error_code & 0x4) {
+        extern void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                                             uint64_t error_code) __attribute__((noreturn));
+        process_terminate_fault(14, 0, fault_addr, error_code);
+    }
+    
     KLOG_ERROR("VMM", "System halted.");
     
-    /* Halt */
+    /* Halt (kernel mode fault only) */
     for (;;) {
         __asm__ volatile("hlt");
     }

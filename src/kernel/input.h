@@ -8,5 +8,6 @@ void input_init(void);
 void input_push_event(input_event_t *event);
 int input_pop_event(input_event_t *event);
 int input_wait_event(input_event_t *event, uint32_t timeout_ms);
+void input_clear_events(void);
 
 #endif

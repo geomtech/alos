@@ -21,7 +21,11 @@ void commands_init(void);
  * @param argc  Nombre d'arguments
  * @param argv  Tableau des arguments (argv[0] = nom de la commande)
  * @return Code de retour de la commande (0 = succès)
- */
 int command_execute(int argc, char** argv);
+
+/**
+ * Retourne la table des commandes shell (terminée par {NULL, NULL, NULL}).
+ */
+const shell_command_t* commands_get_table(void);
 
 #endif /* SHELL_COMMANDS_H */

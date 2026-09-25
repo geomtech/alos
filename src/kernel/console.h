@@ -129,4 +129,25 @@ void console_update_cursor(void);
  */
 void console_disable_hw_cursor(void);
 
+/**
+ * Active ou désactive l'affichage sur la console.
+ * Quand désactivée, les sorties texte ne dessinent pas sur l'écran.
+ */
+void console_set_enabled(bool enabled);
+
+/**
+ * Vérifie si la console est activée.
+ */
+bool console_is_enabled(void);
+
+/**
+ * Retourne la largeur de la console en colonnes/caractères.
+ */
+int console_get_cols(void);
+
+/**
+ * Retourne la hauteur de la console en lignes/caractères.
+ */
+int console_get_rows(void);
+
 #endif /* CONSOLE_H */

@@ -141,12 +141,6 @@ static int sys_exit(int status) {
   KLOG_INFO("SYSCALL", "sys_exit called with status:");
   KLOG_INFO_HEX("SYSCALL", "  Exit code: ", (uint32_t)status);
 
-  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
-  console_puts("\n[SYSCALL] Process exited with code: ");
-  console_put_dec(status);
-  console_puts("\n");
-  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
   /* Terminer proprement le thread/processus courant */
   thread_t *current = thread_current();
   if (current && current->owner) {
@@ -257,9 +251,12 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
    * KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
    */
 
-  /* Write to console AND log to serial */
+  /* Write to console (if enabled) AND log to serial */
+  bool draw_console = console_is_enabled();
   for (uint64_t i = 0; i < count; i++) {
-    console_putc(buf[i]);
+    if (draw_console) {
+      console_putc(buf[i]);
+    }
     
     /* Output to serial port 0x3F8 for debugging */
     /* Wait for transmit empty */
@@ -268,6 +265,89 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
   }
 
   return (int)count;
+}
+
+/* ========================================
+ * Filesystem Syscalls & Path Resolution
+ * ======================================== */
+
+/* Répertoire courant global pour les processus/syscalls */
+static char current_working_dir[VFS_MAX_PATH] = "/";
+
+/**
+ * Normalise et résout un chemin (relatif ou absolu) par rapport au répertoire courant (CWD).
+ */
+static int resolve_user_path(const char *in_path, char *out_path, size_t out_size) {
+  if (in_path == NULL || out_path == NULL || out_size == 0) {
+    return -1;
+  }
+
+  char temp[VFS_MAX_PATH];
+  if (in_path[0] == '/') {
+    strncpy(temp, in_path, sizeof(temp) - 1);
+    temp[sizeof(temp) - 1] = '\0';
+  } else {
+    strncpy(temp, current_working_dir, sizeof(temp) - 1);
+    temp[sizeof(temp) - 1] = '\0';
+    size_t cwd_len = strlen(temp);
+    if (cwd_len > 0 && temp[cwd_len - 1] != '/') {
+      strncat(temp, "/", sizeof(temp) - strlen(temp) - 1);
+    }
+    strncat(temp, in_path, sizeof(temp) - strlen(temp) - 1);
+  }
+
+  /* Normaliser les composants . et .. */
+  char *components[32];
+  int depth = 0;
+  char buf[VFS_MAX_PATH];
+  strncpy(buf, temp, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  char *saveptr = NULL;
+  char *token = strtok_r(buf, "/", &saveptr);
+  while (token != NULL && depth < 32) {
+    if (strcmp(token, ".") == 0) {
+      /* Ignorer . */
+    } else if (strcmp(token, "..") == 0) {
+      if (depth > 0) {
+        depth--;
+      }
+    } else if (strlen(token) > 0) {
+      components[depth++] = token;
+    }
+    token = strtok_r(NULL, "/", &saveptr);
+  }
+
+  if (depth == 0) {
+    if (out_size < 2) return -1;
+    out_path[0] = '/';
+    out_path[1] = '\0';
+    return 0;
+  }
+
+  out_path[0] = '\0';
+  for (int i = 0; i < depth; i++) {
+    if (strlen(out_path) + 1 + strlen(components[i]) >= out_size) {
+      return -1;
+    }
+    strcat(out_path, "/");
+    strcat(out_path, components[i]);
+  }
+
+  return 0;
+}
+
+void syscall_set_cwd(const char *path) {
+  if (!path) return;
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) == 0) {
+    strncpy(current_working_dir, resolved, sizeof(current_working_dir) - 1);
+    current_working_dir[sizeof(current_working_dir) - 1] = '\0';
+  }
+}
+
+const char *syscall_get_cwd(void) {
+  return current_working_dir;
 }
 
 /**
@@ -284,12 +364,17 @@ static int sys_open(const char *path, int flags) {
     return -1;
   }
 
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
   KLOG_INFO("SYSCALL", "sys_open called");
   KLOG_INFO("SYSCALL", "[SYSCALL] open:");
-  KLOG_INFO("SYSCALL", path);
+  KLOG_INFO("SYSCALL", resolved);
 
   /* Ouvrir le fichier via VFS */
-  vfs_node_t *node = vfs_open(path, flags);
+  vfs_node_t *node = vfs_open(resolved, flags);
   if (node == NULL) {
     KLOG_ERROR("SYSCALL", "[SYSCALL] open: file not found");
     return -1;
@@ -351,10 +436,18 @@ static int sys_read(int fd, void *buf, uint64_t count) {
     return bytes_read;
   }
 
-  /* Lecture depuis la console (stdin) - non implémenté */
+  /* Lecture depuis la console (stdin) */
   if (fd_table[fd].type == FILE_TYPE_CONSOLE) {
-    /* TODO: keyboard input */
-    return 0;
+    if (count == 0) {
+      return 0;
+    }
+    char *cbuf = (char *)buf;
+    cbuf[0] = keyboard_getchar();
+    uint64_t bytes_read = 1;
+    while (bytes_read < count && keyboard_has_char()) {
+      cbuf[bytes_read++] = keyboard_getchar_nonblock();
+    }
+    return (int)bytes_read;
   }
 
   return -1;
@@ -381,9 +474,6 @@ static int sys_kbhit(void) { return (int)keyboard_getchar_nonblock(); }
  * Filesystem Syscalls
  * ======================================== */
 
-/* Répertoire courant global (pour V1, simplifié) */
-static char current_working_dir[VFS_MAX_PATH] = "/";
-
 /**
  * SYS_GETCWD (183) - Obtenir le répertoire courant
  *
@@ -396,19 +486,13 @@ static int sys_getcwd(char *buf, uint64_t size) {
     return -1;
   }
 
-  uint32_t len = 0;
-  while (current_working_dir[len] != '\0' && len < VFS_MAX_PATH) {
-    len++;
-  }
-
+  uint32_t len = (uint32_t)strlen(current_working_dir);
   if (len >= size) {
     return -1; /* Buffer trop petit */
   }
 
-  for (uint32_t i = 0; i <= len; i++) {
-    buf[i] = current_working_dir[i];
-  }
-
+  strncpy(buf, current_working_dir, size - 1);
+  buf[size - 1] = '\0';
   return 0;
 }
 
@@ -423,42 +507,13 @@ static int sys_chdir(const char *path) {
     return -1;
   }
 
-  char new_path[VFS_MAX_PATH];
-
-  /* Construire le chemin absolu */
-  if (path[0] == '/') {
-    /* Chemin absolu */
-    uint32_t i = 0;
-    while (path[i] != '\0' && i < VFS_MAX_PATH - 1) {
-      new_path[i] = path[i];
-      i++;
-    }
-    new_path[i] = '\0';
-  } else {
-    /* Chemin relatif */
-    uint32_t cwd_len = 0;
-    while (current_working_dir[cwd_len] != '\0')
-      cwd_len++;
-
-    uint32_t i = 0;
-    /* Copier le cwd */
-    for (; i < cwd_len && i < VFS_MAX_PATH - 1; i++) {
-      new_path[i] = current_working_dir[i];
-    }
-    /* Ajouter / si nécessaire */
-    if (i > 0 && new_path[i - 1] != '/' && i < VFS_MAX_PATH - 1) {
-      new_path[i++] = '/';
-    }
-    /* Ajouter le chemin relatif */
-    uint32_t j = 0;
-    while (path[j] != '\0' && i < VFS_MAX_PATH - 1) {
-      new_path[i++] = path[j++];
-    }
-    new_path[i] = '\0';
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
   }
 
   /* Vérifier que le répertoire existe */
-  vfs_node_t *node = vfs_resolve_path(new_path);
+  vfs_node_t *node = vfs_resolve_path(resolved);
   if (node == NULL) {
     return -1;
   }
@@ -468,12 +523,8 @@ static int sys_chdir(const char *path) {
   }
 
   /* Mettre à jour le cwd */
-  uint32_t i = 0;
-  while (new_path[i] != '\0' && i < VFS_MAX_PATH - 1) {
-    current_working_dir[i] = new_path[i];
-    i++;
-  }
-  current_working_dir[i] = '\0';
+  strncpy(current_working_dir, resolved, sizeof(current_working_dir) - 1);
+  current_working_dir[sizeof(current_working_dir) - 1] = '\0';
 
   return 0;
 }
@@ -501,7 +552,12 @@ static int sys_readdir(const char *path, uint32_t index,
     return -1;
   }
 
-  vfs_node_t *dir = vfs_resolve_path(path);
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  vfs_node_t *dir = vfs_resolve_path(resolved);
   if (dir == NULL) {
     return -1;
   }
@@ -522,11 +578,15 @@ static int sys_readdir(const char *path, uint32_t index,
     i++;
   }
   entry->name[i] = '\0';
-  entry->type = dirent->type;
-
-  /* Obtenir la taille du fichier */
+  /* Obtenir le type et la taille du fichier */
   vfs_node_t *file_node = vfs_finddir(dir, dirent->name);
-  entry->size = (file_node != NULL) ? file_node->size : 0;
+  if (file_node != NULL) {
+    entry->type = file_node->type;
+    entry->size = file_node->size;
+  } else {
+    entry->type = dirent->type;
+    entry->size = 0;
+  }
 
   return 0;
 }
@@ -542,7 +602,12 @@ static int sys_mkdir(const char *path) {
     return -1;
   }
 
-  return vfs_mkdir(path);
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  return vfs_mkdir(resolved);
 }
 
 /**
@@ -556,7 +621,136 @@ static int sys_create(const char *path) {
     return -1;
   }
 
-  return vfs_create(path);
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  return vfs_create(resolved);
+}
+
+/**
+ * SYS_UNLINK (10) - Supprimer un fichier
+ */
+static int sys_unlink(const char *path) {
+  if (path == NULL) {
+    return -1;
+  }
+
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  return vfs_unlink(resolved);
+}
+
+/**
+ * SYS_RMDIR (40) - Supprimer un répertoire
+ */
+static int sys_rmdir(const char *path) {
+  if (path == NULL) {
+    return -1;
+  }
+
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+
+  return vfs_unlink(resolved);
+}
+
+/**
+ * SYS_PS_INFO (103) - Récupérer les informations sur les processus et threads
+ */
+extern int thread_get_all_info(void *out_table, int max_entries);
+static int sys_ps_info(proc_info_t *table, int max_entries) {
+  if (!table || max_entries <= 0) {
+    return -1;
+  }
+  return thread_get_all_info(table, max_entries);
+}
+
+/**
+ * SYS_PING (104) - Pinger une adresse IP ou un hostname
+ */
+#include "../net/l3/icmp.h"
+extern int ping(const char *hostname);
+extern int ping_continuous(const char *hostname);
+
+static int parse_target_ip(const char *str, uint8_t *ip) {
+  int octet = 0;
+  int value = 0;
+  while (*str) {
+    if (*str >= '0' && *str <= '9') {
+      value = value * 10 + (*str - '0');
+      if (value > 255) return -1;
+    } else if (*str == '.') {
+      if (octet >= 3) return -1;
+      ip[octet++] = (uint8_t)value;
+      value = 0;
+    } else {
+      return -1;
+    }
+    str++;
+  }
+  if (octet != 3) return -1;
+  ip[octet] = (uint8_t)value;
+  return 0;
+}
+
+static int sys_ping(const char *target, int count) {
+  if (!target) return -1;
+  uint8_t ip[4];
+  if (parse_target_ip(target, ip) == 0) {
+    if (count == 1) {
+      return ping_ip(ip);
+    } else {
+      return ping_ip_continuous(ip);
+    }
+  } else {
+    if (count == 1) {
+      return ping(target);
+    } else {
+      return ping_continuous(target);
+    }
+  }
+}
+
+/**
+ * SYS_WGET (105) - Télécharger un fichier HTTP
+ */
+extern int http_download_file(const char *url, const char *dest_path);
+static int sys_wget(const char *url, const char *dest_path) {
+  if (!url || !dest_path) return -1;
+  char resolved[VFS_MAX_PATH];
+  if (resolve_user_path(dest_path, resolved, sizeof(resolved)) != 0) {
+    return -1;
+  }
+  return http_download_file(url, resolved);
+}
+
+/**
+ * SYS_HTTPD (107) - Contrôler le serveur HTTP
+ */
+#include "../net/l4/httpd.h"
+static int sys_httpd(int cmd, int port) {
+  if (cmd == 1) {
+    /* start */
+    if (port <= 0 || port > 65535) port = 80;
+    if (httpd_is_running()) return 1; /* Déjà actif */
+    return httpd_start((uint16_t)port);
+  } else if (cmd == 2) {
+    /* stop */
+    if (!httpd_is_running()) return 0;
+    httpd_stop();
+    return 0;
+  } else if (cmd == 3) {
+    /* status: retourne le port si actif, 0 sinon */
+    return httpd_is_running() ? (int)httpd_get_port() : 0;
+  }
+  return -1;
 }
 
 /**
@@ -712,6 +906,12 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   info->green_mask_shift = fb->green_mask_shift;
   info->blue_mask_size = fb->blue_mask_size;
   info->blue_mask_shift = fb->blue_mask_shift;
+
+  /* Marquer le processus comme utilisant le framebuffer et désactiver la console texte */
+  if (proc) {
+    proc->uses_framebuffer = true;
+  }
+  console_set_enabled(false);
 
   return 0;
 }
@@ -1237,6 +1437,58 @@ static void *sys_brk(void *addr) {
   return (void *)new_brk;
 }
 
+/**
+ * SYS_SPAWN_WAIT (201) - Lance un programme ELF et attend sa fin.
+ *
+ * @param path  Chemin du binaire ELF (absolu, relatif ou nom direct)
+ * @param argc  Nombre d'arguments
+ * @param argv  Tableau d'arguments
+ * @return Code de sortie du processus ou -1 si introuvable / erreur
+ */
+static int sys_spawn_wait(const char *path, int argc, char **argv) {
+  if (path == NULL) {
+    return -1;
+  }
+
+  char resolved[VFS_MAX_PATH];
+  if (path[0] == '/') {
+    strncpy(resolved, path, sizeof(resolved) - 1);
+    resolved[sizeof(resolved) - 1] = '\0';
+  } else if (path[0] == '.' && (path[1] == '/' || (path[1] == '.' && path[2] == '/'))) {
+    if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+      return -1;
+    }
+  } else {
+    /* Chemin relatif simple sans ./ - essayer d'abord dans /bin/ */
+    char bin_path[VFS_MAX_PATH];
+    strncpy(bin_path, "/bin/", sizeof(bin_path) - 1);
+    bin_path[sizeof(bin_path) - 1] = '\0';
+    strncat(bin_path, path, sizeof(bin_path) - strlen(bin_path) - 1);
+    vfs_node_t *bin_node = vfs_resolve_path(bin_path);
+    if (bin_node != NULL && (bin_node->type & VFS_FILE)) {
+      strncpy(resolved, bin_path, sizeof(resolved) - 1);
+      resolved[sizeof(resolved) - 1] = '\0';
+    } else {
+      /* Sinon tenter résolution par rapport au CWD */
+      if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+        return -1;
+      }
+    }
+  }
+
+  vfs_node_t *node = vfs_resolve_path(resolved);
+  if (node == NULL || !(node->type & VFS_FILE)) {
+    return -1;
+  }
+
+  if (argc <= 0 || argv == NULL) {
+    char *default_argv[] = {(char *)resolved, NULL};
+    return process_exec_and_wait(resolved, 1, default_argv);
+  }
+
+  return process_exec_and_wait(resolved, argc, argv);
+}
+
 /* ========================================
  * Dispatcher principal
  * ======================================== */
@@ -1256,8 +1508,7 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
     KLOG_ERROR_HEX("SYSCALL", "  RSP (low): ", (uint32_t)regs->rsp);
     KLOG_ERROR_HEX("SYSCALL", "  RFLAGS: ", (uint32_t)regs->rflags);
-    for (;;)
-      __asm__ volatile("hlt");
+    process_terminate_fault(13, regs->rip, 0, 0);
   }
 
   /* Vérifier si l'adresse de retour est dans la plage utilisateur valide */
@@ -1268,8 +1519,7 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     KLOG_ERROR_HEX("SYSCALL", "  RSP (high): ", (uint32_t)(regs->rsp >> 32));
     KLOG_ERROR_HEX("SYSCALL", "  RSP (low): ", (uint32_t)regs->rsp);
     KLOG_ERROR_HEX("SYSCALL", "  RFLAGS: ", (uint32_t)regs->rflags);
-    for (;;)
-      __asm__ volatile("hlt");
+    process_terminate_fault(13, regs->rip, 0, 0);
   }
 
   switch (syscall_num) {
@@ -1357,6 +1607,14 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_create((const char *)regs->rdi);
     break;
 
+  case SYS_UNLINK:
+    result = sys_unlink((const char *)regs->rdi);
+    break;
+
+  case SYS_RMDIR:
+    result = sys_rmdir((const char *)regs->rdi);
+    break;
+
   /* System syscalls */
   case SYS_CLEAR:
     result = sys_clear();
@@ -1364,6 +1622,22 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_MEMINFO:
     result = sys_meminfo((meminfo_t *)regs->rdi);
+    break;
+
+  case SYS_PS_INFO:
+    result = sys_ps_info((proc_info_t *)regs->rdi, (int)regs->rsi);
+    break;
+
+  case SYS_PING:
+    result = sys_ping((const char *)regs->rdi, (int)regs->rsi);
+    break;
+
+  case SYS_WGET:
+    result = sys_wget((const char *)regs->rdi, (const char *)regs->rsi);
+    break;
+
+  case SYS_HTTPD:
+    result = sys_httpd((int)regs->rdi, (int)regs->rsi);
     break;
 
   case SYS_GET_FRAMEBUFFER:
@@ -1420,6 +1694,11 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_SLEEP_MICROS:
     result = sys_sleep_micros((uint32_t)regs->rdi);
+    break;
+
+  case SYS_SPAWN_WAIT:
+    result = sys_spawn_wait((const char *)regs->rdi, (int)regs->rsi,
+                            (char **)regs->rdx);
     break;
 
   default:
@@ -1565,19 +1844,32 @@ static int sys_execve(const char *filename, char **argv, char **envp) {
   return 0;
 }
 
+static bool has_zombie_child(void *context) {
+  process_t *parent = (process_t *)context;
+  if (!parent)
+    return false;
+  process_t *child = parent->first_child;
+  while (child) {
+    if (child->state == PROCESS_STATE_ZOMBIE ||
+        child->state == PROCESS_STATE_TERMINATED) {
+      return true;
+    }
+    child = child->sibling_next;
+  }
+  return false;
+}
+
 /**
  * SYS_WAITPID (61) - Attendre la fin d'un processus fils
  *
  * @param pid       PID du processus à attendre (-1 pour n'importe quel fils)
  * @param status    Pointeur pour stocker le code de sortie
- * @param options   Options (0 pour l'instant)
- * @return PID du processus terminé, ou -1 si erreur
+ * @param options   Options (0 = bloquant, 1 = WNOHANG)
+ * @return PID du processus terminé, 0 si WNOHANG et non terminé, ou -1 si erreur
  */
 static int sys_waitpid(int pid, int *status, int options) {
-  (void)options; /* Unused parameter */
-
   KLOG_INFO("SYSCALL", "sys_waitpid called");
-  KLOG_INFO_DEC("SYSCALL", "  pid: ", pid);
+  KLOG_INFO_DEC("SYSCALL", "  pid: ", (uint32_t)pid);
 
   /* Obtenir le processus courant */
   process_t *parent = current_process;
@@ -1588,52 +1880,67 @@ static int sys_waitpid(int pid, int *status, int options) {
 
   /* Si pid = -1, attendre n'importe quel processus fils */
   if (pid == -1) {
-    /* Trouver un processus fils terminé */
-    process_t *child = parent->first_child;
-    while (child) {
-      if (child->state == PROCESS_STATE_TERMINATED ||
-          child->state == PROCESS_STATE_ZOMBIE) {
-        /* Retourner le PID et le code de sortie */
-        if (status) {
-          *status = child->exit_status;
-        }
-        KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
-        return child->pid;
-      }
-      child = child->sibling_next;
+    if (!parent->first_child) {
+      KLOG_INFO("SYSCALL", "sys_waitpid: no children");
+      return -1;
     }
 
-    /* Aucun processus fils terminé trouvé */
-    KLOG_INFO("SYSCALL", "sys_waitpid: no terminated child found");
-    return -1;
+    while (1) {
+      process_t *child = parent->first_child;
+      while (child) {
+        if (child->state == PROCESS_STATE_ZOMBIE ||
+            child->state == PROCESS_STATE_TERMINATED) {
+          int child_pid = (int)child->pid;
+          int exit_code = process_join(child);
+          if (status) {
+            *status = exit_code;
+          }
+          KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", (uint32_t)child_pid);
+          return child_pid;
+        }
+        child = child->sibling_next;
+      }
+
+      /* Si options & 1 (WNOHANG), ne pas bloquer */
+      if (options & 1) {
+        return 0;
+      }
+
+      if (!parent->first_child) {
+        return -1;
+      }
+
+      /* Attendre qu'un enfant se termine via wait queue du parent */
+      wait_queue_wait(&parent->wait_queue, has_zombie_child, parent);
+    }
   }
 
   /* Attendre un processus fils spécifique */
   process_t *child = parent->first_child;
-  while (child) {
-    if (child->pid == (uint32_t)pid) {
-      /* Attendre que le processus se termine */
-      if (child->state != PROCESS_STATE_TERMINATED &&
-          child->state != PROCESS_STATE_ZOMBIE) {
-        /* Pour l'instant, retourner -1 si le processus n'est pas encore terminé
-         */
-        KLOG_INFO("SYSCALL", "sys_waitpid: child not yet terminated");
-        return -1;
-      }
-
-      /* Retourner le PID et le code de sortie */
-      if (status) {
-        *status = child->exit_status;
-      }
-      KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", child->pid);
-      return child->pid;
-    }
+  while (child && child->pid != (uint32_t)pid) {
     child = child->sibling_next;
   }
 
-  /* Processus fils non trouvé */
-  KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
-  return -1;
+  if (!child) {
+    KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
+    return -1;
+  }
+
+  /* Si options & 1 (WNOHANG) et le fils n'est pas terminé, ne pas bloquer */
+  if ((options & 1) &&
+      child->state != PROCESS_STATE_ZOMBIE &&
+      child->state != PROCESS_STATE_TERMINATED) {
+    return 0;
+  }
+
+  /* Attente bloquante via process_join quand options == 0 */
+  int child_pid = (int)child->pid;
+  int exit_code = process_join(child);
+  if (status) {
+    *status = exit_code;
+  }
+  KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", (uint32_t)child_pid);
+  return child_pid;
 }
 
 /**
@@ -1687,7 +1994,9 @@ static int sys_create_thread(void *entry, void *stack, void *arg) {
     return -1;
   }
 
-  /* Incrémenter le compteur de threads du processus */
+  /* Incrémenter le compteur de threads du processus et lier dans la liste */
+  new_thread->proc_next = proc->thread_list;
+  proc->thread_list = new_thread;
   proc->thread_count++;
 
   KLOG_INFO_DEC("SYSCALL", "sys_create_thread: created thread TID ",

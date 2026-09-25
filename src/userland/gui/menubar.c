@@ -1,12 +1,14 @@
 #include "menubar.h"
 #include "render.h"
 #include "font.h"
+#include "gui.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
 /* État de la menubar */
 static layer_t* g_menubar_layer = NULL;
+static layer_t* g_dropdown_layer = NULL;
 static menu_t g_menus[MAX_MENUS];
 static uint32_t g_menu_count = 0;
 static int32_t g_hovered_menu = -1;
@@ -29,6 +31,15 @@ static void menubar_draw_layer(layer_t* layer) {
     menubar_draw();
 }
 
+static void draw_menu_dropdown(menu_t* menu);
+
+static void menubar_draw_dropdown_layer(layer_t* layer) {
+    (void)layer;
+    if (g_open_menu >= 0 && g_open_menu < (int32_t)g_menu_count) {
+        draw_menu_dropdown(&g_menus[g_open_menu]);
+    }
+}
+
 int menubar_init(void) {
     render_get_screen_size(&g_screen_width, NULL);
 
@@ -40,14 +51,17 @@ int menubar_init(void) {
         compositor_add_layer(g_menubar_layer);
     }
     
+    g_dropdown_layer = NULL;
     g_menu_count = 0;
     g_hovered_menu = -1;
     g_open_menu = -1;
+    g_hovered_item = -1;
     
     return 0;
 }
 
 void menubar_shutdown(void) {
+    menubar_close_menu();
     if (g_menubar_layer) {
         compositor_destroy_layer(g_menubar_layer);
         g_menubar_layer = NULL;
@@ -131,18 +145,18 @@ void menubar_update_time(void) {
     /* TODO: lire l'heure système */
 }
 
-static void draw_menu_dropdown(menu_t* menu) {
+static void calculate_dropdown_bounds(menu_t* menu) {
     if (!menu || menu->item_count == 0) return;
     
     /* Calcule les dimensions du dropdown */
-    uint32_t max_width = 150;
+    uint32_t max_width = 170;
     for (uint32_t i = 0; i < menu->item_count; i++) {
         if (!menu->items[i].separator) {
             text_bounds_t tb = measure_text(menu->items[i].label, font_system);
             uint32_t w = tb.width + 40;  /* Marge pour le raccourci */
             if (menu->items[i].shortcut[0]) {
                 text_bounds_t stb = measure_text(menu->items[i].shortcut, font_system);
-                w += stb.width + 20;
+                w += stb.width + 24;
             }
             if (w > max_width) max_width = w;
         }
@@ -159,6 +173,10 @@ static void draw_menu_dropdown(menu_t* menu) {
     menu->dropdown_bounds.y = MENUBAR_HEIGHT;
     menu->dropdown_bounds.width = max_width;
     menu->dropdown_bounds.height = total_height;
+}
+
+static void draw_menu_dropdown(menu_t* menu) {
+    if (!menu || menu->item_count == 0) return;
     
     /* Ombre */
     shadow_params_t shadow = shadow_card();
@@ -168,6 +186,7 @@ static void draw_menu_dropdown(menu_t* menu) {
     draw_rounded_rect_alpha(menu->dropdown_bounds, 8, rgba(255, 255, 255, 245));
     
     /* Items */
+    uint32_t item_height = 24;
     int32_t y = menu->dropdown_bounds.y + 8;
     for (uint32_t i = 0; i < menu->item_count; i++) {
         menu_item_t* item = &menu->items[i];
@@ -209,11 +228,59 @@ static void draw_menu_dropdown(menu_t* menu) {
                 rgba_t shortcut_color = ((int32_t)i == g_hovered_item) ?
                     rgba(255, 255, 255, 180) : u32_to_rgba(COLOR_GRAY_5);
                 draw_text_alpha(item->shortcut, point_make(sx, y + 4), 
-                               font_system, shortcut_color);
+                                font_system, shortcut_color);
             }
             
             y += (int32_t)item_height;
         }
+    }
+}
+
+bool menubar_is_menu_open(void) {
+    return g_open_menu >= 0;
+}
+
+rect_t menubar_get_open_menu_bounds(void) {
+    if (g_open_menu >= 0 && g_open_menu < (int32_t)g_menu_count) {
+        return g_menus[g_open_menu].dropdown_bounds;
+    }
+    return (rect_t){0, 0, 0, 0};
+}
+
+void menubar_open_menu(int32_t idx) {
+    if (idx < 0 || idx >= (int32_t)g_menu_count) return;
+    
+    calculate_dropdown_bounds(&g_menus[idx]);
+    
+    if (g_dropdown_layer == NULL) {
+        g_dropdown_layer = compositor_create_layer(LAYER_POPUP, g_menus[idx].dropdown_bounds);
+        if (g_dropdown_layer) {
+            g_dropdown_layer->draw_callback = menubar_draw_dropdown_layer;
+            compositor_add_layer(g_dropdown_layer);
+        }
+    } else {
+        compositor_invalidate_rect(g_dropdown_layer->bounds);
+        g_dropdown_layer->bounds = g_menus[idx].dropdown_bounds;
+        compositor_invalidate_rect(g_dropdown_layer->bounds);
+    }
+    
+    g_open_menu = idx;
+    g_hovered_item = -1;
+    compositor_invalidate_layer(g_menubar_layer);
+    if (g_dropdown_layer) {
+        compositor_invalidate_layer(g_dropdown_layer);
+    }
+}
+
+void menubar_close_menu(void) {
+    if (g_open_menu >= 0) {
+        g_open_menu = -1;
+        g_hovered_item = -1;
+        if (g_dropdown_layer) {
+            compositor_destroy_layer(g_dropdown_layer);
+            g_dropdown_layer = NULL;
+        }
+        compositor_invalidate_layer(g_menubar_layer);
     }
 }
 
@@ -259,13 +326,17 @@ void menubar_draw(void) {
     
     /* Horloge à droite */
     text_bounds_t time_tb = measure_text(g_time_str, font_system);
-    int32_t time_x = (int32_t)g_screen_width - (int32_t)time_tb.width - 12;
+    int32_t time_x = (int32_t)g_screen_width - (int32_t)time_tb.width - 16;
     draw_text_alpha(g_time_str, point_make(time_x, 6), font_system, rgba(0, 0, 0, 255));
-    
-    /* Dropdown si un menu est ouvert */
-    if (g_open_menu >= 0 && g_open_menu < (int32_t)g_menu_count) {
-        draw_menu_dropdown(&g_menus[g_open_menu]);
-    }
+
+    /* Bouton direct Quitter Shell sur la barre de menu */
+    int32_t btn_w = 88;
+    int32_t btn_h = 20;
+    int32_t btn_x = time_x - btn_w - 14;
+    int32_t btn_y = (MENUBAR_HEIGHT - btn_h) / 2;
+    rect_t quit_btn_rect = {btn_x, btn_y, (uint32_t)btn_w, (uint32_t)btn_h};
+    draw_rounded_rect(quit_btn_rect, 4, 0xFFFF3B30);
+    draw_text_alpha(">_ Shell", point_make(btn_x + 12, btn_y + 2), font_system, rgba(255, 255, 255, 255));
 }
 
 static int32_t find_menu_at(point_t pos) {
@@ -302,12 +373,15 @@ void menubar_handle_mouse_move(point_t pos) {
     int32_t old_hovered = g_hovered_menu;
     int32_t old_item = g_hovered_item;
     
-    g_hovered_menu = find_menu_at(pos);
-    
-    /* Si un menu est ouvert et on survole un autre, ouvre celui-ci */
-    if (g_open_menu >= 0 && g_hovered_menu >= 0 && g_hovered_menu != g_open_menu) {
-        g_open_menu = g_hovered_menu;
-        g_hovered_item = -1;
+    if (pos.y < MENUBAR_HEIGHT) {
+        g_hovered_menu = find_menu_at(pos);
+        /* Si un menu est ouvert et on survole un autre menu, ouvrir celui-ci */
+        if (g_open_menu >= 0 && g_hovered_menu >= 0 && g_hovered_menu != g_open_menu) {
+            menubar_open_menu(g_hovered_menu);
+            return;
+        }
+    } else {
+        g_hovered_menu = -1;
     }
     
     /* Survol des items du dropdown */
@@ -315,42 +389,66 @@ void menubar_handle_mouse_move(point_t pos) {
         g_hovered_item = find_item_at(&g_menus[g_open_menu], pos);
     }
     
-    if (old_hovered != g_hovered_menu || old_item != g_hovered_item) {
+    if (old_hovered != g_hovered_menu) {
         compositor_invalidate_layer(g_menubar_layer);
+    }
+    if (old_item != g_hovered_item && g_dropdown_layer) {
+        compositor_invalidate_layer(g_dropdown_layer);
     }
 }
 
 void menubar_handle_mouse_down(point_t pos) {
-    int32_t menu_idx = find_menu_at(pos);
-    
-    if (menu_idx >= 0) {
-        /* Toggle le menu */
-        if (g_open_menu == menu_idx) {
-            g_open_menu = -1;
-        } else {
-            g_open_menu = menu_idx;
-        }
-        g_hovered_item = -1;
-        compositor_invalidate_layer(g_menubar_layer);
+    /* 1. Bouton direct Quitter Shell */
+    text_bounds_t time_tb = measure_text(g_time_str, font_system);
+    int32_t time_x = (int32_t)g_screen_width - (int32_t)time_tb.width - 16;
+    int32_t btn_w = 88;
+    int32_t btn_h = 20;
+    int32_t btn_x = time_x - btn_w - 14;
+    int32_t btn_y = (MENUBAR_HEIGHT - btn_h) / 2;
+    rect_t quit_btn_rect = {btn_x, btn_y, (uint32_t)btn_w, (uint32_t)btn_h};
+
+    if (point_in_rect(pos, quit_btn_rect)) {
+        menubar_close_menu();
+        gui_request_quit();
         return;
     }
+
+    /* 2. Clic sur la menubar (titres des menus) */
+    if (pos.y < MENUBAR_HEIGHT) {
+        int32_t menu_idx = find_menu_at(pos);
+        if (menu_idx >= 0) {
+            if (g_open_menu == menu_idx) {
+                menubar_close_menu();
+            } else {
+                menubar_open_menu(menu_idx);
+            }
+            return;
+        } else {
+            menubar_close_menu();
+            return;
+        }
+    }
     
-    /* Clic sur un item du dropdown */
+    /* 3. Clic sur un item du dropdown */
     if (g_open_menu >= 0) {
         menu_t* menu = &g_menus[g_open_menu];
         int32_t item_idx = find_item_at(menu, pos);
         
         if (item_idx >= 0) {
             menu_item_t* item = &menu->items[item_idx];
-            if (item->enabled && item->on_click) {
-                item->on_click();
+            void (*cb)(void) = item->on_click;
+            bool enabled = item->enabled;
+
+            menubar_close_menu();
+
+            if (enabled && cb) {
+                cb();
             }
+            return;
         }
         
-        /* Ferme le menu */
-        g_open_menu = -1;
-        g_hovered_item = -1;
-        compositor_invalidate_layer(g_menubar_layer);
+        /* Clic hors des items */
+        menubar_close_menu();
     }
 }
 

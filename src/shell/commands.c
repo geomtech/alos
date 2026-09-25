@@ -30,6 +30,7 @@ static int cmd_tasks(int argc, char **argv);
 static int cmd_ps(int argc, char **argv);
 static int cmd_usermode(int argc, char **argv);
 static int cmd_exec(int argc, char **argv);
+static int cmd_gui(int argc, char **argv);
 static int cmd_elfinfo(int argc, char **argv);
 static int cmd_netinfo(int argc, char **argv);
 static int cmd_keymap(int argc, char **argv);
@@ -74,6 +75,7 @@ static shell_command_t commands[] = {
     {"ps", "List running processes", cmd_ps},
     {"usermode", "Test User Mode (Ring 3) - EXPERIMENTAL", cmd_usermode},
     {"exec", "Execute an ELF program", cmd_exec},
+    {"gui", "Start the graphical user interface", cmd_gui},
     {"elfinfo", "Display ELF file information", cmd_elfinfo},
     {"netinfo", "Display network configuration", cmd_netinfo},
     {"keymap", "Set keyboard layout (qwerty, azerty)", cmd_keymap},
@@ -106,55 +108,74 @@ static shell_command_t commands[] = {
 
 void commands_init(void) { /* Rien à initialiser pour l'instant */ }
 
+const shell_command_t* commands_get_table(void) {
+  return commands;
+}
+
 int command_execute(int argc, char **argv) {
   if (argc == 0 || argv[0] == NULL) {
     return -1;
   }
 
-  /* Chercher la commande */
+  /* 1. Commandes internes prioritaires (builtins essentiels) */
+  if (strcmp(argv[0], "cd") == 0) {
+    return cmd_cd(argc, argv);
+  } else if (strcmp(argv[0], "help") == 0) {
+    return cmd_help(argc, argv);
+  } else if (strcmp(argv[0], "clear") == 0) {
+    return cmd_clear(argc, argv);
+  }
+
+  /* 2. Recherche et exécution d'un programme externe (/bin/ ou chemin explicite) */
+  char bin_path[256];
+
+  if (argv[0][0] == '/') {
+    /* Chemin absolu */
+    strncpy(bin_path, argv[0], sizeof(bin_path) - 1);
+    bin_path[sizeof(bin_path) - 1] = '\0';
+  } else if (argv[0][0] == '.' && (argv[0][1] == '/' || (argv[0][1] == '.' && argv[0][2] == '/'))) {
+    /* Chemin relatif explicite (./prog ou ../prog) */
+    if (shell_resolve_path(argv[0], bin_path, sizeof(bin_path)) != 0) {
+      bin_path[0] = '\0';
+    }
+  } else {
+    /* Recherche dans /bin/ (PATH) */
+    strcpy(bin_path, "/bin/");
+    strncpy(bin_path + 5, argv[0], sizeof(bin_path) - 6);
+    bin_path[sizeof(bin_path) - 1] = '\0';
+  }
+
+  /* Vérifier si le binaire externe existe */
+  if (bin_path[0] != '\0') {
+    vfs_node_t *node = vfs_resolve_path(bin_path);
+    if (node != NULL && (node->type & VFS_FILE)) {
+      /* Exécuter le programme externe */
+      int result = process_exec_and_wait(bin_path, argc, argv);
+
+      if (result >= 128) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("[Shell] Process terminated by signal/crash (exit code ");
+        console_put_dec((uint32_t)result);
+        console_puts(")\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      } else if (result < 0) {
+        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+        console_puts("Failed to execute program.\n");
+        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+      }
+
+      return result;
+    }
+  }
+
+  /* 3. Repli sur les commandes internes (fallback builtins) */
   for (int i = 0; commands[i].name != NULL; i++) {
     if (strcmp(argv[0], commands[i].name) == 0) {
       return commands[i].handler(argc, argv);
     }
   }
 
-  /* Commande non trouvée - essayer d'exécuter un ELF dans /bin/ */
-  char bin_path[256];
-
-  /* Si la commande commence par '/', c'est un chemin absolu */
-  if (argv[0][0] == '/') {
-    strncpy(bin_path, argv[0], sizeof(bin_path) - 1);
-    bin_path[sizeof(bin_path) - 1] = '\0';
-  } else {
-    /* Sinon, chercher dans /bin/ */
-    strcpy(bin_path, "/bin/");
-    strncpy(bin_path + 5, argv[0], sizeof(bin_path) - 6);
-    bin_path[sizeof(bin_path) - 1] = '\0';
-  }
-
-  /* Vérifier si le fichier existe dans le VFS */
-  vfs_node_t *node = vfs_resolve_path(bin_path);
-  if (node != NULL && (node->type & VFS_FILE)) {
-    /* Fichier trouvé - l'exécuter */
-    console_puts("\n");
-    console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
-    console_puts("=== Executing ELF Program ===");
-    console_puts("\n");
-    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-
-    /* Passer tous les arguments au programme */
-    int result = process_exec_and_wait(bin_path, argc, argv);
-
-    if (result < 0) {
-      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      console_puts("Failed to execute program.\n");
-      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-    }
-
-    return result;
-  }
-
-  /* Commande vraiment non trouvée */
+  /* 4. Commande introuvable */
   console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
   console_puts("Unknown command: ");
   console_puts(argv[0]);
@@ -648,9 +669,54 @@ static int cmd_exec(int argc, char **argv) {
   /* Exécuter le programme (bloquant) avec ses arguments */
   int result = process_exec_and_wait(filename, prog_argc, prog_argv);
 
-  if (result < 0) {
+  if (result >= 128) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("[Shell] Process terminated by signal/crash (exit code ");
+    console_put_dec((uint32_t)result);
+    console_puts(")\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  } else if (result < 0) {
     console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
     console_puts("Failed to execute program.\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  }
+
+  return result;
+}
+
+/**
+ * Commande: gui
+ * Lance l'interface graphique (GUI style macOS).
+ */
+static int cmd_gui(int argc, char **argv) {
+  const char *gui_path = "/bin/gui";
+
+  /* Vérifier si le binaire existe */
+  vfs_node_t *node = vfs_resolve_path(gui_path);
+  if (!node) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("Error: GUI executable /bin/gui not found.\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+    return -1;
+  }
+
+  console_puts("\n");
+  console_set_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
+  console_puts("=== Starting ALOS Graphical User Interface ===\n");
+  console_set_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+  console_puts("Tips: Press ESC, 'q', Ctrl+Q, or click '>_ Shell' to return.\n");
+  console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+
+  int result = process_exec_and_wait(gui_path, argc, argv);
+  if (result >= 128) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("[Shell] GUI process terminated by signal/crash (exit code ");
+    console_put_dec((uint32_t)result);
+    console_puts(")\n");
+    console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
+  } else if (result < 0) {
+    console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
+    console_puts("Failed to run GUI.\n");
     console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
   }
 

@@ -63,6 +63,13 @@ int input_pop_event(input_event_t *event) {
   return 1;
 }
 
+void input_clear_events(void) {
+  uint64_t flags = spinlock_irqsave(&g_input_lock);
+  g_head = 0;
+  g_tail = 0;
+  spinlock_irqrestore(&g_input_lock, flags);
+}
+
 int input_wait_event(input_event_t *event, uint32_t timeout_ms) {
   if (!event)
     return -1;

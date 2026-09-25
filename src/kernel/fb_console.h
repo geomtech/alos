@@ -6,10 +6,14 @@
 #include <stdbool.h>
 #include "../include/limine.h"
 
-/* Console dimensions (in characters) */
-#define FB_CONSOLE_COLS     80
-#define FB_CONSOLE_ROWS     25
-#define FB_CONSOLE_BUFFER_LINES 100
+/* Console maximum dimensions (in characters) */
+#define FB_CONSOLE_MAX_COLS     320
+#define FB_CONSOLE_MAX_ROWS     120
+#define FB_CONSOLE_BUFFER_LINES 250
+
+/* Fallback / compatibility dynamic macros */
+#define FB_CONSOLE_COLS         fb_console_get_cols()
+#define FB_CONSOLE_ROWS         fb_console_get_rows()
 
 /* Font dimensions (8x16 VGA font) */
 #define FONT_WIDTH          8
@@ -47,6 +51,16 @@ int fb_console_init(struct limine_framebuffer *fb);
  * Check if framebuffer console is available.
  */
 bool fb_console_available(void);
+
+/**
+ * Get the current number of columns (width in characters).
+ */
+int fb_console_get_cols(void);
+
+/**
+ * Get the current number of rows (height in characters).
+ */
+int fb_console_get_rows(void);
 
 /**
  * Clear the screen with a background color.

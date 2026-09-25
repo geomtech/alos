@@ -471,8 +471,20 @@ void kmain(void) {
     KLOG_INFO_DEC("STARTUP", "Startup script not found or returned: ", (uint32_t)script_res);
   }
 
-  KLOG_INFO("KERNEL", "Starting shell_run...");
-  shell_run();
+  /* Lancer le shell utilisateur (/bin/sh) si disponible, sinon fallback sur le shell kernel */
+  vfs_node_t *sh_node = vfs_resolve_path("/bin/sh");
+  if (sh_node != NULL && (sh_node->type & VFS_FILE)) {
+    KLOG_INFO("KERNEL", "Starting userland shell (/bin/sh)...");
+    char *sh_argv[] = {"/bin/sh", NULL};
+    while (1) {
+      int ret = process_exec_and_wait("/bin/sh", 1, sh_argv);
+      KLOG_INFO_DEC("KERNEL", "/bin/sh exited with code: ", (uint32_t)ret);
+      console_puts("\n[KERNEL] Shell exited. Restarting /bin/sh...\n");
+    }
+  } else {
+    KLOG_INFO("KERNEL", "/bin/sh not found, falling back to kernel shell_run...");
+    shell_run();
+  }
 
   /* Ne devrait jamais arriver */
   hcf();

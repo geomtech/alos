@@ -157,6 +157,11 @@ int main(int argc, char **argv) {
       syscall1(SYS_SLEEP, 1);
     }
 
+    /* Traiter immédiatement les événements et vérifier si la sortie est demandée */
+    events_process();
+    if (g_quit_requested)
+      break;
+
     wm_check_queued_resizes();
 
     if (events_processed || g_needs_redraw || compositor_has_damage())
@@ -207,16 +212,24 @@ void gui_process_event(input_event_t *event) {
     events_mouse_scroll(event->data.mouse.dy);
     break;
 
-  case INPUT_EVENT_KEY_PRESS:
-    /* data.key.scancode = scancode, data.key.key = character */
-    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, true,
-               MOD_NONE /* TODO: track mods */);
+  case INPUT_EVENT_KEY_PRESS: {
+    /* Extraire les modificateurs depuis event->data.key.flags */
+    key_modifier_t mods = MOD_NONE;
+    if (event->data.key.flags & 0x01) mods |= MOD_CTRL;
+    if (event->data.key.flags & 0x02) mods |= MOD_SHIFT;
+    if (event->data.key.flags & 0x04) mods |= MOD_ALT;
+    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, true, mods);
     break;
+  }
 
-  case INPUT_EVENT_KEY_RELEASE:
-    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, false,
-               MOD_NONE);
+  case INPUT_EVENT_KEY_RELEASE: {
+    key_modifier_t mods = MOD_NONE;
+    if (event->data.key.flags & 0x01) mods |= MOD_CTRL;
+    if (event->data.key.flags & 0x02) mods |= MOD_SHIFT;
+    if (event->data.key.flags & 0x04) mods |= MOD_ALT;
+    events_key((uint8_t)event->data.key.scancode, (char)event->data.key.key, false, mods);
     break;
+  }
   }
 }
 
@@ -437,6 +450,33 @@ static void test_button_clicked(gui_button_t* button) {
   printf("Bouton cliqué!\n");
 }
 
+/* Callbacks pour quitter vers le shell */
+static void exit_button_clicked(gui_button_t* button) {
+  (void)button;
+  gui_request_quit();
+}
+
+static void crash_button_clicked(gui_button_t* button) {
+  (void)button;
+  /* Test volontaire de déréférencement NULL en Ring 3 pour valider la récupération */
+  printf("[GUI] Triggering voluntary NULL dereference crash test...\n");
+  *(volatile int *)0 = 42;
+}
+
+static void main_window_on_close(window_t *win) {
+  (void)win;
+  gui_request_quit();
+}
+
+static void menu_quit(void) {
+  gui_request_quit();
+}
+
+static void menu_test_crash(void) {
+  printf("[GUI] Triggering voluntary crash from menu...\n");
+  *(volatile int *)0 = 42;
+}
+
 /* Callback de dessin pour la fenêtre de test des composants */
 static void components_test_window_draw(window_t *win)
 {
@@ -455,6 +495,9 @@ window_t *gui_create_components_test_window(void)
   if (!win)
     return NULL;
 
+  /* Quitter la GUI si on ferme la fenêtre principale */
+  win->on_close = main_window_on_close;
+
   /* --- 1. Création du Panel Principal (Root) --- */
   /* Les bounds doivent être relatifs à la fenêtre (0,0 = coin supérieur gauche du content area) */
   gui_panel_t *panel = panel_create((rect_t){0, 0, win->content_bounds.width, win->content_bounds.height});
@@ -471,17 +514,25 @@ window_t *gui_create_components_test_window(void)
   if (title_label)
     label_set_align(title_label, LABEL_ALIGN_CENTER);
 
-  gui_button_t *btn_blue = button_create((rect_t){50, 80, 120, 35}, "Confirmer");
+  gui_button_t *btn_blue = button_create((rect_t){30, 80, 110, 35}, "Confirmer");
   if (btn_blue) {
     button_set_bg_color(btn_blue, BUTTON_STATE_NORMAL, rgba(0, 122, 255, 255));
     button_set_text_color(btn_blue, rgba(255, 255, 255, 255));
     button_set_on_click(btn_blue, test_button_clicked);
   }
 
-  gui_button_t *btn_red = button_create((rect_t){190, 80, 120, 35}, "Annuler");
+  gui_button_t *btn_red = button_create((rect_t){150, 80, 140, 35}, "Quitter Shell");
   if (btn_red) {
     button_set_bg_color(btn_red, BUTTON_STATE_NORMAL, rgba(255, 59, 48, 255));
     button_set_text_color(btn_red, rgba(255, 255, 255, 255));
+    button_set_on_click(btn_red, exit_button_clicked);
+  }
+
+  gui_button_t *btn_crash = button_create((rect_t){300, 80, 140, 35}, "Crash Test");
+  if (btn_crash) {
+    button_set_bg_color(btn_crash, BUTTON_STATE_NORMAL, rgba(142, 142, 147, 255));
+    button_set_text_color(btn_crash, rgba(255, 255, 255, 255));
+    button_set_on_click(btn_crash, crash_button_clicked);
   }
 
   gui_panel_t *sub_panel = panel_create((rect_t){50, 150, 400, 100});
@@ -499,6 +550,13 @@ window_t *gui_create_components_test_window(void)
 
   gui_button_t *sub_btn = button_create((rect_t){140, 50, 120, 30}, "Click Me");
 
+  /* Label d'aide pour revenir au shell */
+  gui_label_t *help_label = label_create((rect_t){20, 270, 460, 25},
+                                         "Pour revenir au shell : Echap, Q, Ctrl+Q, ou le bouton rouge",
+                                         rgba(90, 90, 90, 255));
+  if (help_label)
+    label_set_align(help_label, LABEL_ALIGN_CENTER);
+
   /* --- 3. Construction de l'Arbre (Hierarchy) --- */
 
   /* Remplissage du sous-panel */
@@ -511,7 +569,9 @@ window_t *gui_create_components_test_window(void)
   if (title_label) component_add_child((gui_component_t *)panel, (gui_component_t *)title_label);
   if (btn_blue) component_add_child((gui_component_t *)panel, (gui_component_t *)btn_blue);
   if (btn_red) component_add_child((gui_component_t *)panel, (gui_component_t *)btn_red);
+  if (btn_crash) component_add_child((gui_component_t *)panel, (gui_component_t *)btn_crash);
   if (sub_panel) component_add_child((gui_component_t *)panel, (gui_component_t *)sub_panel);
+  if (help_label) component_add_child((gui_component_t *)panel, (gui_component_t *)help_label);
 
   /* --- 4. Attachement à la fenêtre via la nouvelle API --- */
   wm_set_root_component(win, (gui_component_t *)panel);
@@ -525,7 +585,12 @@ void gui_setup_demo_dock(void) {
   if (finder)
     finder->is_running = true;
 
-  dock_add_app("Terminal", NULL);
+  dock_item_t *terminal = dock_add_app("Terminal", NULL);
+  if (terminal) {
+    terminal->is_running = true;
+    terminal->on_click = menu_quit; /* Clic sur Terminal dans le Dock -> Retour au Shell */
+  }
+
   dock_add_app("Safari", NULL);
   dock_add_app("Mail", NULL);
   dock_add_app("Music", NULL);
@@ -538,8 +603,6 @@ static void menu_about(void) {
   gui_create_components_test_window();
 }
 
-static void menu_quit(void) { gui_request_quit(); }
-
 void gui_setup_demo_menus(void) {
   menubar_set_app_name("Finder");
 
@@ -550,7 +613,10 @@ void gui_setup_demo_menus(void) {
     menubar_add_separator(alos_menu);
     menubar_add_item(alos_menu, "Preferences...", "Cmd+,", NULL);
     menubar_add_separator(alos_menu);
-    menubar_add_item(alos_menu, "Quitter", "Cmd+Q", menu_quit);
+    menubar_add_item(alos_menu, "Test Crash (SIGSEGV)", NULL, menu_test_crash);
+    menubar_add_separator(alos_menu);
+    menubar_add_item(alos_menu, "Retour au Shell", "Esc / Q", menu_quit);
+    menubar_add_item(alos_menu, "Quitter ALOS", "Ctrl+Q", menu_quit);
   }
 
   /* Menu File */
@@ -559,7 +625,9 @@ void gui_setup_demo_menus(void) {
     menubar_add_item(file_menu, "Nouvelle fenetre", "Cmd+N", NULL);
     menubar_add_item(file_menu, "Ouvrir...", "Cmd+O", NULL);
     menubar_add_separator(file_menu);
-    menubar_add_item(file_menu, "Fermer", "Cmd+W", NULL);
+    menubar_add_item(file_menu, "Fermer la fenetre", "Cmd+W", NULL);
+    menubar_add_separator(file_menu);
+    menubar_add_item(file_menu, "Quitter vers le Shell", "Esc", menu_quit);
   }
 
   /* Menu Edit */
