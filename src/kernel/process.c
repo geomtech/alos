@@ -1227,11 +1227,19 @@ int process_fork(const interrupt_frame_t *frame) {
   child->heap_brk = parent->heap_brk;
   process_inherit_cwd(child, parent);
   file_table_init(child->fd_table, parent->fd_table);
+  if (shm_clone_process_mappings(parent, child) != 0) {
+    file_table_destroy(child->fd_table);
+    kfree(kernel_stack);
+    vmm_free_directory(child_dir);
+    kfree(child);
+    return -1;
+  }
   wait_queue_init(&child->wait_queue);
 
   thread_t *thread = thread_create_user_from_frame(
       child, child->name, frame, kernel_stack, KERNEL_STACK_SIZE);
   if (thread == NULL) {
+    shm_cleanup_process(child);
     file_table_destroy(child->fd_table);
     kfree(kernel_stack);
     vmm_free_directory(child_dir);
@@ -1311,6 +1319,8 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
     KLOG_ERROR("EXEC", "Failed to activate replacement address space");
     return -1;
   }
+  file_table_close_on_exec(proc->fd_table);
+  shm_cleanup_process(proc);
   vmm_free_directory(old_dir);
 
   memcpy(frame, &new_frame, sizeof(*frame));
@@ -1470,7 +1480,8 @@ static bool process_child_waitable(void *context) {
 
 int process_waitpid(int pid, int *status, int options) {
   process_t *parent = process_current();
-  if (parent == NULL || (pid == 0 || pid < -1) || options != 0) {
+  if (parent == NULL || (pid == 0 || pid < -1) ||
+      (options != 0 && options != 1)) {
     return -1;
   }
 
@@ -1482,8 +1493,15 @@ int process_waitpid(int pid, int *status, int options) {
     return -1;
   }
 
+  if (options == 1 &&
+      process_find_waitable_child(parent, pid) == NULL) {
+    return 0;
+  }
+
   process_wait_context_t wait = {.parent = parent, .pid = pid};
-  wait_queue_wait(&parent->wait_queue, process_child_waitable, &wait);
+  if (options == 0) {
+    wait_queue_wait(&parent->wait_queue, process_child_waitable, &wait);
+  }
 
   child = process_find_waitable_child(parent, pid);
   if (child == NULL) {

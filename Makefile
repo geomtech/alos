@@ -45,8 +45,8 @@ ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupt
 ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o
 
 # Kernel core
-KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o
+KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c src/kernel/uaccess.c src/kernel/shared_memory.c src/kernel/ipc.c src/kernel/display.c
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o src/kernel/uaccess.o src/kernel/shared_memory.o src/kernel/ipc.o src/kernel/display.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
@@ -122,7 +122,7 @@ limine-update:
 	$(MAKE) $(LIMINE_DIR)/limine
 
 # Créer une image ISO bootable avec Limine
-iso: alos.elf $(LIMINE_DIR)/limine disk.img
+iso: alos.elf $(LIMINE_DIR)/limine disk.img verify-gui-image
 	@echo "=== Creating bootable ISO ==="
 	@mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
 	cp -v alos.elf iso_root/boot/
@@ -212,6 +212,7 @@ clean:
 	rm -f src/fs/*.o src/shell/*.o src/config/*.o
 	rm -f alos.elf alos.iso
 	rm -rf iso_root
+	$(MAKE) -C src/userland clean
 
 # Nettoyage complet (inclut Limine)
 distclean: clean
@@ -350,7 +351,9 @@ fs_root: disk_structure userland
 	@cp -v src/userland/threads-test fs_root/bin/
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
-	@cp -v src/userland/gui_app fs_root/bin/gui
+	@cp -v src/userland/gui-test fs_root/bin/gui-test
+	@cp -v src/userland/desktop_app fs_root/bin/gui
+	@cp -v src/userland/gui-demo fs_root/bin/gui-demo
 	@cp -v src/userland/sh fs_root/bin/sh
 	@cp -v src/userland/ls fs_root/bin/ls
 	@cp -v src/userland/cat fs_root/bin/cat
@@ -359,6 +362,13 @@ fs_root: disk_structure userland
 	@cp -v src/userland/rm fs_root/bin/rm
 	@cp -v src/userland/rmdir fs_root/bin/rmdir
 	@cp -v src/userland/meminfo fs_root/bin/meminfo
+
+verify-gui-staging: fs_root
+	@cmp -s src/userland/desktop_app fs_root/bin/gui || \
+		(echo "ERROR: fs_root/bin/gui is not the official desktop ELF"; exit 1)
+	@! cmp -s fs_root/bin/gui fs_root/bin/gui-test || \
+		(echo "ERROR: /bin/gui incorrectly contains the legacy gui-test ELF"; exit 1)
+	@echo "=== GUI staging verified: /bin/gui=desktop, /bin/gui-test=legacy ==="
 
 # Créer une image de disque à partir de fs_root
 disk.img: fs_root
@@ -373,7 +383,20 @@ disk.img: fs_root
 	@chmod 644 disk.img
 	@echo "=== Disk image created: disk.img (EXT2) ==="
 
+verify-gui-image: disk.img verify-gui-staging
+	@tmp_gui=$$(mktemp); tmp_test=$$(mktemp); \
+		trap 'rm -f "$$tmp_gui" "$$tmp_test"' EXIT; \
+		debugfs -R "dump /bin/gui $$tmp_gui" disk.img >/dev/null 2>&1; \
+		debugfs -R "dump /bin/gui-test $$tmp_test" disk.img >/dev/null 2>&1; \
+		cmp -s src/userland/desktop_app "$$tmp_gui" || \
+			(echo "ERROR: disk.img /bin/gui is not the official desktop ELF"; exit 1); \
+		! cmp -s "$$tmp_gui" "$$tmp_test" || \
+			(echo "ERROR: disk.img /bin/gui incorrectly contains gui-test"; exit 1)
+	@echo "=== GUI disk image verified ==="
+
 # Debug avec QEMU (attend GDB sur port 1234)
 debug: iso
 	qemu-system-x86_64 -cdrom alos.iso -m 1024M -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -s -S &
 	@echo "QEMU lancé. Connectez GDB avec: target remote localhost:1234"
+
+.PHONY: userland fs_root verify-gui-staging verify-gui-image

@@ -2,7 +2,7 @@
 # Userland Makefile
 CC = gcc
 LD = ld
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Ilibc/include -Igui/freetype/include -DFT2_BUILD_LIBRARY
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Ilibc/include -Ilibgui/include -Igui/freetype/include -DFT2_BUILD_LIBRARY
 LDFLAGS = -static -nostdlib
 
 LIBC_DIR = libc
@@ -44,7 +44,11 @@ FREETYPE_SRC = $(FREETYPE_BASE) $(FREETYPE_TRUETYPE) $(FREETYPE_SMOOTH) $(FREETY
 # Tous les objets GUI
 GUI_OBJ = $(GUI_SRC:.c=.o) $(COMPONENTS_SRC:.c=.o) $(FREETYPE_SRC:.c=.o)
 
-all: threads-test fork-test exec-test gui_app sh ls cat mkdir touch rm rmdir meminfo
+LIBGUI_OBJ = libgui/gui.o libgui/draw.o
+LIBGUI = libgui/libgui.a
+DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
+
+all: threads-test fork-test exec-test gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo
 
 
 # Force libc build
@@ -86,14 +90,23 @@ rmdir: libc_build rmdir.o
 meminfo: libc_build meminfo.o
 	$(LD) -T linker.ld -o meminfo $(CRT0) meminfo.o $(LIBC)
 
-gui_app: libc_build $(GUI_OBJ)
-	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
+gui-test: libc_build $(GUI_OBJ)
+	$(LD) -T linker.ld -o gui-test $(CRT0) $(GUI_OBJ) $(LIBC)
+
+$(LIBGUI): $(LIBGUI_OBJ)
+	ar rcs $@ $^
+
+desktop_app: libc_build $(DESKTOP_OBJ)
+	$(LD) -T linker.ld -o desktop_app $(CRT0) $(DESKTOP_OBJ) $(LIBC)
+
+gui-demo: libc_build gui-demo.o $(LIBGUI)
+	$(LD) -T linker.ld -o gui-demo $(CRT0) gui-demo.o $(LIBGUI) $(LIBC)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o threads-test fork-test exec-test sh ls cat mkdir touch rm rmdir meminfo gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -f *.o threads-test fork-test exec-test sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo gui/*.o gui/fonts/*.o gui/components/*.o desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 

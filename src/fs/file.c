@@ -5,6 +5,8 @@
 #include "../net/core/net.h"
 #include "../net/l4/tcp.h"
 #include "../include/string.h"
+#include "../kernel/ipc.h"
+#include "../kernel/shared_memory.h"
 
 static open_file_description_t console_stdin = {
     FILE_TYPE_CONSOLE, O_RDONLY, 0, {.vfs_node = NULL}, 0};
@@ -38,6 +40,12 @@ void file_description_release(open_file_description_t *description) {
     net_lock();
     tcp_close(description->socket);
     net_unlock();
+  } else if (description->type == FILE_TYPE_IPC &&
+             description->ipc_endpoint != NULL) {
+    ipc_endpoint_release(description->ipc_endpoint);
+  } else if (description->type == FILE_TYPE_SHM &&
+             description->shm_object != NULL) {
+    shm_release(description->shm_object);
   }
 
   if (description->type != FILE_TYPE_CONSOLE) {
@@ -85,6 +93,14 @@ void file_table_init(file_descriptor_t table[MAX_FD],
 void file_table_destroy(file_descriptor_t table[MAX_FD]) {
   for (int fd = 0; fd < MAX_FD; fd++) {
     file_table_close(table, fd);
+  }
+}
+
+void file_table_close_on_exec(file_descriptor_t table[MAX_FD]) {
+  for (int fd = 0; fd < MAX_FD; fd++) {
+    if ((table[fd].descriptor_flags & FD_CLOEXEC) != 0) {
+      file_table_close(table, fd);
+    }
   }
 }
 

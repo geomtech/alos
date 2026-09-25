@@ -116,6 +116,11 @@ void vmm_map_page(uint64_t phys, uint64_t virt, uint64_t flags);
 void vmm_unmap_page(uint64_t virt);
 
 /**
+ * Retire une page d'un espace d'adressage explicite.
+ */
+void vmm_unmap_page_in_dir(page_directory_t *dir, uint64_t virt);
+
+/**
  * Change le PML4 actif (switch de contexte).
  * 
  * @param dir  Nouveau Page Directory

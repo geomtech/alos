@@ -1,5 +1,6 @@
 /* src/kernel/thread.c - Thread Management Implementation */
 #include "thread.h"
+#include "display.h"
 #include "../arch/x86_64/gdt.h"
 #include "../arch/x86_64/idt.h"
 #include "../include/string.h"
@@ -1753,11 +1754,13 @@ static void reaper_thread_func(void *arg) {
          * attente (process_join/waitpid), pour qu'ils voient un état cohérent
          * dès leur réveil. */
         proc->state = PROCESS_STATE_ZOMBIE;
+        display_release_if_owner(proc->pid);
 
         /* Chaque processus possède sa table, mais les descriptions ouvertes
          * héritées sont partagées et ne ferment la ressource qu'à la dernière
          * référence. */
         file_table_destroy(proc->fd_table);
+        shm_cleanup_process(proc);
 
         /* Libérer le Page Directory si ce n'est pas le kernel directory */
         if (proc->pml4 &&

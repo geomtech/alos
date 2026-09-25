@@ -16,6 +16,7 @@ static bool g_quit_requested = false;
 #include <stdlib.h>
 #include <string.h>
 #include <sys/framebuffer.h>
+#include <sys/display.h>
 #include <sys/syscall.h>
 
 #include "compositor.h"
@@ -54,6 +55,10 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 
+  if (display_acquire() != 0) {
+    return 1;
+  }
+
   /* Test heap/brk - silent check */
   void *current_brk = (void *)syscall1(120, 0); 
   void *new_brk = (void *)((uint64_t)current_brk + 4096);
@@ -65,6 +70,7 @@ int main(int argc, char **argv) {
   long fb_result = syscall1(SYS_GET_FRAMEBUFFER, (long)&fb_info);
 
   if (fb_result != 0) {
+    display_release();
     return 1;
   }
 
@@ -164,6 +170,7 @@ int main(int argc, char **argv) {
   }
 
   gui_shutdown();
+  display_release();
   return 0;
 }
 

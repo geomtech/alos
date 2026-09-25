@@ -59,6 +59,19 @@
 #define SYS_GET_MICROSECONDS 163 /* Obtenir le temps en microsecondes */
 #define SYS_SLEEP_MICROS 164     /* Dormir pendant un temps spécifié en microsecondes */
 
+/* IPC local, memoire partagee et serveur d'affichage */
+#define SYS_IPC_LISTEN 202
+#define SYS_IPC_CONNECT 203
+#define SYS_IPC_ACCEPT 204
+#define SYS_IPC_SEND 205
+#define SYS_IPC_RECV 206
+#define SYS_SHM_CREATE 207
+#define SYS_SHM_MAP 208
+#define SYS_SHM_UNMAP 209
+#define SYS_DISPLAY_ACQUIRE 210
+#define SYS_DISPLAY_RELEASE 211
+#define SYS_SHM_SIZE 212
+
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256
 

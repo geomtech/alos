@@ -12,12 +12,16 @@
 #include "../net/l4/tcp.h"
 #include "../shell/shell.h"
 #include "console.h"
+#include "display.h"
+#include "ipc.h"
 #include "keyboard.h"
 #include "klog.h"
 #include "process.h"
 #include "sync.h"
+#include "shared_memory.h"
 #include "thread.h"
 #include "timer.h"
+#include "uaccess.h"
 
 /* Macro pour activer/désactiver les interruptions */
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
@@ -528,8 +532,10 @@ extern struct limine_framebuffer *kernel_get_primary_framebuffer(void);
  * @param info  Pointeur vers la structure framebuffer_info_t
  * @return 0 si succès, -1 si erreur
  */
-static int sys_get_framebuffer(framebuffer_info_t *info) {
-  if (info == NULL) {
+static int sys_get_framebuffer(framebuffer_info_t *user_info) {
+  process_t *proc = process_current();
+  if (user_info == NULL || proc == NULL || !display_is_owner(proc->pid) ||
+      !user_range_valid(user_info, sizeof(*user_info), true)) {
     return -1;
   }
 
@@ -557,7 +563,7 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   uint64_t pages = (page_offset + size + PAGE_SIZE - 1) / PAGE_SIZE;
 
   /* Adresse virtuelle cible pour le framebuffer en userland. */
-  uint64_t vaddr_base = 0x60000000ULL;
+  uint64_t vaddr_base = USER_FRAMEBUFFER_BASE;
 
   uint8_t base_pat_index = vmm_mapping_pat_index(&fb_mapping);
 
@@ -579,7 +585,6 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   KLOG_INFO_DEC("SYSCALL", "Framebuffer user pages: ", (uint32_t)pages);
 
   /* Get the current process's page directory */
-  process_t *proc = process_current();
   if (!proc || !proc->pml4) {
     KLOG_ERROR("SYSCALL", "sys_get_framebuffer: no process or pml4");
     return -1;
@@ -624,19 +629,20 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
   }
 
   /* Remplir la structure */
-  info->addr = vaddr_base + page_offset;
-  info->width = (uint32_t)fb->width;
-  info->height = (uint32_t)fb->height;
-  info->pitch = (uint32_t)fb->pitch;
-  info->bpp = (uint16_t)fb->bpp;
-  info->red_mask_size = fb->red_mask_size;
-  info->red_mask_shift = fb->red_mask_shift;
-  info->green_mask_size = fb->green_mask_size;
-  info->green_mask_shift = fb->green_mask_shift;
-  info->blue_mask_size = fb->blue_mask_size;
-  info->blue_mask_shift = fb->blue_mask_shift;
+  framebuffer_info_t info;
+  info.addr = vaddr_base + page_offset;
+  info.width = (uint32_t)fb->width;
+  info.height = (uint32_t)fb->height;
+  info.pitch = (uint32_t)fb->pitch;
+  info.bpp = (uint16_t)fb->bpp;
+  info.red_mask_size = fb->red_mask_size;
+  info.red_mask_shift = fb->red_mask_shift;
+  info.green_mask_size = fb->green_mask_size;
+  info.green_mask_shift = fb->green_mask_shift;
+  info.blue_mask_size = fb->blue_mask_size;
+  info.blue_mask_shift = fb->blue_mask_shift;
 
-  return 0;
+  return copy_to_user(user_info, &info, sizeof(info));
 }
 
 #include "input.h"
@@ -645,20 +651,159 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
  * SYS_GET_EVENT (111) - Obtenir un événement d'entrée
  * @return 1 si événement trouvé, 0 sinon
  */
-static int sys_get_event(input_event_t *event) {
-  if (event == NULL)
+static int sys_get_event(input_event_t *user_event) {
+  process_t *proc = process_current();
+  if (user_event == NULL || proc == NULL || !display_is_owner(proc->pid))
     return -1;
-  return input_pop_event(event);
+  input_event_t event;
+  int result = input_pop_event(&event);
+  if (result == 1 && copy_to_user(user_event, &event, sizeof(event)) != 0) {
+    return -1;
+  }
+  return result;
 }
 
 /**
  * SYS_WAIT_EVENT (112) - Attend un événement sans polling.
  * timeout_ms == 0 signifie attente infinie.
  */
-static int sys_wait_event(input_event_t *event, uint32_t timeout_ms) {
-  if (event == NULL)
+static int sys_wait_event(input_event_t *user_event, uint32_t timeout_ms) {
+  process_t *proc = process_current();
+  if (user_event == NULL || proc == NULL || !display_is_owner(proc->pid))
     return -1;
-  return input_wait_event(event, timeout_ms);
+  input_event_t event;
+  int result = input_wait_event(&event, timeout_ms);
+  if (result == 1 && copy_to_user(user_event, &event, sizeof(event)) != 0) {
+    return -1;
+  }
+  return result;
+}
+
+static int install_resource(file_type_t type, void *resource) {
+  open_file_description_t *description =
+      file_description_create(type, O_RDWR, resource);
+  if (description == NULL) {
+    return -1;
+  }
+  int fd = file_table_install(current_fd_table(), description);
+  if (fd < 0) {
+    file_description_release(description);
+  } else if (type == FILE_TYPE_IPC || type == FILE_TYPE_SHM) {
+    current_fd_table()[fd].descriptor_flags = FD_CLOEXEC;
+  }
+  return fd;
+}
+
+static int sys_ipc_listen(const char *user_name) {
+  char name[IPC_NAME_MAX + 1];
+  if (copy_string_from_user(name, user_name, sizeof(name)) != 0) {
+    return -1;
+  }
+  ipc_endpoint_t *endpoint = ipc_listen(name);
+  return endpoint != NULL ? install_resource(FILE_TYPE_IPC, endpoint) : -1;
+}
+
+static int sys_ipc_connect(const char *user_name) {
+  char name[IPC_NAME_MAX + 1];
+  if (copy_string_from_user(name, user_name, sizeof(name)) != 0) {
+    return -1;
+  }
+  ipc_endpoint_t *endpoint = ipc_connect(name);
+  return endpoint != NULL ? install_resource(FILE_TYPE_IPC, endpoint) : -1;
+}
+
+static int sys_ipc_accept(int fd, uint32_t timeout_ms) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_IPC) {
+    return -1;
+  }
+  ipc_endpoint_t *endpoint =
+      ipc_accept(description->ipc_endpoint, timeout_ms);
+  return endpoint != NULL ? install_resource(FILE_TYPE_IPC, endpoint) : -1;
+}
+
+static int sys_ipc_send(int fd, const ipc_user_message_t *user_message) {
+  open_file_description_t *description = current_fd_get(fd);
+  ipc_user_message_t message;
+  if (description == NULL || description->type != FILE_TYPE_IPC ||
+      copy_from_user(&message, user_message, sizeof(message)) != 0 ||
+      message.length == 0 || message.length > IPC_MAX_PAYLOAD) {
+    return -1;
+  }
+
+  shm_object_t *attachment = NULL;
+  if (message.attachment_fd >= 0) {
+    open_file_description_t *attached =
+        current_fd_get(message.attachment_fd);
+    if (attached == NULL || attached->type != FILE_TYPE_SHM) {
+      return -1;
+    }
+    attachment = attached->shm_object;
+  }
+  return ipc_send(description->ipc_endpoint, message.data, message.length,
+                  attachment);
+}
+
+static int sys_ipc_recv(int fd, ipc_user_message_t *user_message,
+                        uint32_t timeout_ms) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_IPC ||
+      !user_range_valid(user_message, sizeof(*user_message), true)) {
+    return -1;
+  }
+
+  ipc_user_message_t message;
+  memset(&message, 0, sizeof(message));
+  message.attachment_fd = -1;
+  shm_object_t *attachment = NULL;
+  int result = ipc_receive(description->ipc_endpoint, message.data,
+                           sizeof(message.data), &message.length, &attachment,
+                           timeout_ms);
+  if (result != 1) {
+    return result;
+  }
+
+  message.connection_id = ipc_endpoint_id(description->ipc_endpoint);
+  if (attachment != NULL) {
+    message.attachment_fd = install_resource(FILE_TYPE_SHM, attachment);
+    if (message.attachment_fd < 0) {
+      shm_release(attachment);
+      return -1;
+    }
+  }
+  if (copy_to_user(user_message, &message, sizeof(message)) != 0) {
+    if (message.attachment_fd >= 0) {
+      file_table_close(current_fd_table(), message.attachment_fd);
+    }
+    return -1;
+  }
+  return 1;
+}
+
+static int sys_shm_create(uint64_t size) {
+  shm_object_t *object = shm_create((size_t)size);
+  return object != NULL ? install_resource(FILE_TYPE_SHM, object) : -1;
+}
+
+static void *sys_shm_map(int fd) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SHM) {
+    return (void *)-1;
+  }
+  return shm_map_process(process_current(), description->shm_object);
+}
+
+static int sys_shm_unmap(void *address) {
+  return shm_unmap_process(process_current(), address);
+}
+
+static int sys_shm_size(int fd) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SHM) {
+    return -1;
+  }
+  size_t size = shm_size(description->shm_object);
+  return size <= 0x7FFFFFFFU ? (int)size : -1;
 }
 
 /* ========================================
@@ -1049,7 +1194,7 @@ static void *sys_brk(void *addr) {
         uint64_t virt = old_page_aligned + (i * PAGE_SIZE);
 
         /* Check safety limit (e.g. dont overwrite stack 2GB limit) */
-        if (virt >= USER_STACK_TOP - USER_STACK_SIZE) {
+        if (virt >= USER_FRAMEBUFFER_BASE) {
           KLOG_ERROR("SYSCALL", "sys_brk: Heap/Stack collision");
           return (void *)-1;
         }
@@ -1277,6 +1422,42 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_wait_event((input_event_t *)regs->rdi, (uint32_t)regs->rsi);
     break;
 
+  case SYS_IPC_LISTEN:
+    result = sys_ipc_listen((const char *)regs->rdi);
+    break;
+  case SYS_IPC_CONNECT:
+    result = sys_ipc_connect((const char *)regs->rdi);
+    break;
+  case SYS_IPC_ACCEPT:
+    result = sys_ipc_accept((int)regs->rdi, (uint32_t)regs->rsi);
+    break;
+  case SYS_IPC_SEND:
+    result = sys_ipc_send((int)regs->rdi,
+                          (const ipc_user_message_t *)regs->rsi);
+    break;
+  case SYS_IPC_RECV:
+    result = sys_ipc_recv((int)regs->rdi, (ipc_user_message_t *)regs->rsi,
+                          (uint32_t)regs->rdx);
+    break;
+  case SYS_SHM_CREATE:
+    result = sys_shm_create(regs->rdi);
+    break;
+  case SYS_SHM_MAP:
+    regs->rax = (uint64_t)sys_shm_map((int)regs->rdi);
+    return;
+  case SYS_SHM_UNMAP:
+    result = sys_shm_unmap((void *)regs->rdi);
+    break;
+  case SYS_DISPLAY_ACQUIRE:
+    result = display_acquire(getpid());
+    break;
+  case SYS_DISPLAY_RELEASE:
+    result = display_release(getpid());
+    break;
+  case SYS_SHM_SIZE:
+    result = sys_shm_size((int)regs->rdi);
+    break;
+
   /* Process syscalls - forward declarations */
   case SYS_FORK:
     result = sys_fork(regs);
@@ -1382,6 +1563,8 @@ void syscall_init(void) {
   idt_set_gate(0x80, (uint64_t)syscall_handler_asm, 0x08, 0xEE, 0);
 
   KLOG_INFO("SYSCALL", "INT 0x80 registered (DPL=3)");
+  ipc_init();
+  display_init();
   KLOG_INFO("SYSCALL", "Syscall interface ready!");
 }
 
