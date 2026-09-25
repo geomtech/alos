@@ -23,102 +23,14 @@
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
 static inline void disable_interrupts(void) { __asm__ volatile("cli"); }
 
-/* ========================================
- * File Descriptor Table (per-process, simplifié)
- * Pour V1, on utilise une table globale allouée dynamiquement
- * ======================================== */
-
-static file_descriptor_t *fd_table = NULL;
-static int fd_table_initialized = 0;
-
-/* Socket serveur global pour contourner le bug fd_table */
-static tcp_socket_t *g_server_socket = NULL;
-static int g_server_fd = -1;
-static int g_server_closing = 0; /* Flag pour fermeture demandée par CTRL+D */
-
-/**
- * Initialise la table des file descriptors.
- */
-static void fd_table_init(void) {
-  if (fd_table_initialized && fd_table != NULL)
-    return;
-
-  /* Allouer la table dynamiquement pour éviter les problèmes de .bss */
-  if (fd_table == NULL) {
-    extern void *kmalloc(size_t size);
-    fd_table = (file_descriptor_t *)kmalloc(sizeof(file_descriptor_t) * MAX_FD);
-    if (fd_table == NULL) {
-      console_puts("[SYSCALL] FATAL: Cannot allocate fd_table!\n");
-      return;
-    }
-
-    KLOG_INFO_HEX("SYSCALL", "fd_table allocated at address: ",
-                  (uint32_t)(uintptr_t)fd_table);
-
-    /* Forcer le rechargement du TLB pour être sûr que les nouveaux mappings
-     * sont visibles */
-    __asm__ volatile("mov %%cr3, %%rax; mov %%rax, %%cr3"
-                     :
-                     :
-                     : "rax", "memory");
-  }
-
-  for (int i = 0; i < MAX_FD; i++) {
-    fd_table[i].type = FILE_TYPE_NONE;
-    fd_table[i].flags = 0;
-    fd_table[i].position = 0;
-    fd_table[i].socket = NULL;
-    fd_table[i].ref_count = 0;
-  }
-
-  /* Réserver stdin, stdout, stderr comme console */
-  fd_table[FD_STDIN].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDIN].flags = O_RDONLY;
-  fd_table[FD_STDIN].ref_count = 1;
-
-  fd_table[FD_STDOUT].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDOUT].flags = O_WRONLY;
-  fd_table[FD_STDOUT].ref_count = 1;
-
-  fd_table[FD_STDERR].type = FILE_TYPE_CONSOLE;
-  fd_table[FD_STDERR].flags = O_WRONLY;
-  fd_table[FD_STDERR].ref_count = 1;
-
-  fd_table_initialized = 1;
+static file_descriptor_t *current_fd_table(void) {
+  process_t *proc = process_current();
+  return proc != NULL ? proc->fd_table : NULL;
 }
 
-/**
- * Alloue un nouveau file descriptor.
- * @return FD number, ou -1 si plus de place
- */
-static int fd_alloc(void) {
-  fd_table_init();
-
-  /* Commencer à 3 (après stdin/stdout/stderr) */
-  for (int i = 3; i < MAX_FD; i++) {
-    if (fd_table[i].type == FILE_TYPE_NONE) {
-      fd_table[i].ref_count = 1;
-      KLOG_DEBUG_DEC("SYSCALL", "fd_alloc: found free fd ", i);
-      return i;
-    }
-  }
-  return -1;
-}
-
-/**
- * Libère un file descriptor.
- */
-static void fd_free(int fd) {
-  if (fd < 0 || fd >= MAX_FD)
-    return;
-  if (fd < 3)
-    return; /* Ne pas libérer stdin/stdout/stderr */
-
-  fd_table[fd].type = FILE_TYPE_NONE;
-  fd_table[fd].flags = 0;
-  fd_table[fd].position = 0;
-  fd_table[fd].socket = NULL;
-  fd_table[fd].ref_count = 0;
+static open_file_description_t *current_fd_get(int fd) {
+  file_descriptor_t *table = current_fd_table();
+  return table != NULL ? file_table_get(table, fd) : NULL;
 }
 
 /* ========================================
@@ -234,8 +146,9 @@ static int sys_sleep_micros(uint32_t microseconds) {
  * @param count   Nombre de caractères (dans ECX), 0 = null-terminated
  */
 static int sys_write(int fd, const char *buf, uint64_t count) {
-  /* For now, only support stdout (fd=1) and stderr (fd=2) */
-  if (fd != 1 && fd != 2) {
+  open_file_description_t *description = current_fd_get(fd);
+  if ((fd != FD_STDOUT && fd != FD_STDERR) || description == NULL ||
+      description->type != FILE_TYPE_CONSOLE) {
     return -1; /* Invalid file descriptor */
   }
 
@@ -358,14 +271,16 @@ const char *syscall_get_cwd(void) {
  * @return File descriptor, ou -1 si erreur
  */
 static int sys_open(const char *path, int flags) {
-  fd_table_init();
-
   if (path == NULL) {
     return -1;
   }
 
   char resolved[VFS_MAX_PATH];
+<<<<<<< HEAD
   if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+=======
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
+>>>>>>> 6c6816634b11661cad2b0a0e0989cb1173cc6628
     return -1;
   }
 
@@ -380,19 +295,20 @@ static int sys_open(const char *path, int flags) {
     return -1;
   }
 
-  /* Allouer un file descriptor */
-  int fd = fd_alloc();
-  if (fd < 0) {
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_FILE, flags, node);
+  if (description == NULL) {
     vfs_close(node);
-    KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
     return -1;
   }
 
-  /* Configurer le FD */
-  fd_table[fd].type = FILE_TYPE_FILE;
-  fd_table[fd].flags = flags;
-  fd_table[fd].position = 0;
-  fd_table[fd].vfs_node = node;
+  file_descriptor_t *table = current_fd_table();
+  int fd = table != NULL ? file_table_install(table, description) : -1;
+  if (fd < 0) {
+    file_description_release(description);
+    KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
+    return -1;
+  }
 
   KLOG_INFO_DEC("SYSCALL", "[SYSCALL] open: fd=", fd);
   KLOG_INFO_DEC("SYSCALL", "file size=", node->size);
@@ -409,45 +325,55 @@ static int sys_open(const char *path, int flags) {
  * @return Nombre de bytes lus, ou -1 si erreur
  */
 static int sys_read(int fd, void *buf, uint64_t count) {
-  fd_table_init();
-
   if (buf == NULL || fd < 0 || fd >= MAX_FD) {
     return -1;
   }
 
-  if (fd_table[fd].type == FILE_TYPE_NONE) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL) {
     return -1;
   }
 
   /* Lecture depuis un fichier VFS */
-  if (fd_table[fd].type == FILE_TYPE_FILE) {
-    vfs_node_t *node = (vfs_node_t *)fd_table[fd].vfs_node;
+  if (description->type == FILE_TYPE_FILE) {
+    vfs_node_t *node = (vfs_node_t *)description->vfs_node;
     if (node == NULL) {
       return -1;
     }
 
     /* Lire depuis la position courante */
     int bytes_read =
-        vfs_read(node, fd_table[fd].position, count, (uint8_t *)buf);
+        vfs_read(node, description->position, count, (uint8_t *)buf);
     if (bytes_read > 0) {
-      fd_table[fd].position += bytes_read;
+      description->position += bytes_read;
     }
 
     return bytes_read;
   }
 
-  /* Lecture depuis la console (stdin) */
-  if (fd_table[fd].type == FILE_TYPE_CONSOLE) {
+
+
+
+
+  /* Lecture depuis la console (stdin) - bloquant via clavier */
+  if (description->type == FILE_TYPE_CONSOLE) {
     if (count == 0) {
       return 0;
     }
-    char *cbuf = (char *)buf;
-    cbuf[0] = keyboard_getchar();
-    uint64_t bytes_read = 1;
-    while (bytes_read < count && keyboard_has_char()) {
-      cbuf[bytes_read++] = keyboard_getchar_nonblock();
+
+    uint64_t total = 0;
+    uint8_t *out = (uint8_t *)buf;
+    while (total < count) {
+      char c = keyboard_getchar(); /* Bloquant (sémaphore) */
+      out[total++] = (uint8_t)c;
+      /* On s'arrête après un seul caractère : le shell userland lit
+       * caractère par caractère (comme un terminal en mode canonique
+       * simplifié). */
+      break;
     }
-    return (int)bytes_read;
+
+    return (int)total;
+
   }
 
   return -1;
@@ -482,17 +408,23 @@ static int sys_kbhit(void) { return (int)keyboard_getchar_nonblock(); }
  * @return 0 si succès, -1 si erreur
  */
 static int sys_getcwd(char *buf, uint64_t size) {
-  if (buf == NULL || size == 0) {
+  process_t *proc = process_current();
+  if (proc == NULL || buf == NULL || size == 0) {
     return -1;
   }
 
-  uint32_t len = (uint32_t)strlen(current_working_dir);
-  if (len >= size) {
+  uint32_t len = 0;
+  while (proc->cwd[len] != '\0' && len < PROCESS_CWD_MAX) {
+    len++;
+  }
+
+  if (len == PROCESS_CWD_MAX || len >= size) {
     return -1; /* Buffer trop petit */
   }
 
-  strncpy(buf, current_working_dir, size - 1);
-  buf[size - 1] = '\0';
+  for (uint32_t i = 0; i <= len; i++) {
+    buf[i] = proc->cwd[i];
+  }
   return 0;
 }
 
@@ -503,17 +435,18 @@ static int sys_getcwd(char *buf, uint64_t size) {
  * @return 0 si succès, -1 si erreur
  */
 static int sys_chdir(const char *path) {
-  if (path == NULL) {
+  process_t *proc = process_current();
+  if (proc == NULL || path == NULL) {
     return -1;
   }
 
-  char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  char new_path[VFS_MAX_PATH];
+  if (process_resolve_path(path, new_path, sizeof(new_path)) != 0) {
     return -1;
   }
 
   /* Vérifier que le répertoire existe */
-  vfs_node_t *node = vfs_resolve_path(resolved);
+  vfs_node_t *node = vfs_resolve_path(new_path);
   if (node == NULL) {
     return -1;
   }
@@ -523,7 +456,13 @@ static int sys_chdir(const char *path) {
   }
 
   /* Mettre à jour le cwd */
-  strncpy(current_working_dir, resolved, sizeof(current_working_dir) - 1);
+  uint32_t i = 0;
+  while (new_path[i] != '\0' && i < PROCESS_CWD_MAX - 1) {
+    proc->cwd[i] = new_path[i];
+    i++;
+  }
+  proc->cwd[i] = '\0';
+  strncpy(current_working_dir, proc->cwd, sizeof(current_working_dir) - 1);
   current_working_dir[sizeof(current_working_dir) - 1] = '\0';
 
   return 0;
@@ -553,7 +492,7 @@ static int sys_readdir(const char *path, uint32_t index,
   }
 
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
 
@@ -603,10 +542,9 @@ static int sys_mkdir(const char *path) {
   }
 
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
-
   return vfs_mkdir(resolved);
 }
 
@@ -622,7 +560,7 @@ static int sys_create(const char *path) {
   }
 
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
 
@@ -638,7 +576,7 @@ static int sys_unlink(const char *path) {
   }
 
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
 
@@ -654,11 +592,11 @@ static int sys_rmdir(const char *path) {
   }
 
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
 
-  return vfs_unlink(resolved);
+  return vfs_rmdir(resolved);
 }
 
 /**
@@ -725,7 +663,7 @@ extern int http_download_file(const char *url, const char *dest_path);
 static int sys_wget(const char *url, const char *dest_path) {
   if (!url || !dest_path) return -1;
   char resolved[VFS_MAX_PATH];
-  if (resolve_user_path(dest_path, resolved, sizeof(resolved)) != 0) {
+  if (process_resolve_path(dest_path, resolved, sizeof(resolved)) != 0) {
     return -1;
   }
   return http_download_file(url, resolved);
@@ -978,30 +916,22 @@ static int sys_socket(int domain, int type, int protocol) {
     return -1;
   }
 
-  /* Allouer un file descriptor */
-  int fd = fd_alloc();
-  if (fd < 0) {
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_SOCKET, O_RDWR, sock);
+  if (description == NULL) {
     tcp_close(sock);
+    return -1;
+  }
+
+  file_descriptor_t *table = current_fd_table();
+  int fd = table != NULL ? file_table_install(table, description) : -1;
+  if (fd < 0) {
+    file_description_release(description);
     KLOG_ERROR("SYSCALL", "sys_socket: no free file descriptors");
     return -1;
   }
 
-  KLOG_DEBUG("SYSCALL", "sys_socket: fd allocated, setting up table...");
-
-  /* Associer le socket au FD */
-  fd_table[fd].type = FILE_TYPE_SOCKET;
-  fd_table[fd].flags = O_RDWR;
-  fd_table[fd].socket = sock;
-
-  KLOG_DEBUG("SYSCALL", "sys_socket: table entry set");
-
-  /* Sauvegarder globalement pour contourner le bug fd_table */
-  g_server_socket = sock;
-  g_server_fd = fd;
-  g_server_closing = 0; /* Reset du flag de fermeture */
-
-  KLOG_DEBUG_DEC("SYSCALL", "sys_socket: created fd (global socket saved) ",
-                 fd);
+  KLOG_DEBUG_DEC("SYSCALL", "sys_socket: created fd ", fd);
 
   return fd;
 }
@@ -1017,8 +947,6 @@ static int sys_socket(int domain, int type, int protocol) {
 static int sys_bind(int fd, sockaddr_in_t *addr, int len) {
   (void)len;
 
-  fd_table_init(); /* S'assurer que la table est initialisée */
-
   KLOG_INFO("SYSCALL", "sys_bind called");
   KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
   KLOG_INFO_HEX("SYSCALL", "  addr: ", (uint32_t)addr);
@@ -1029,15 +957,13 @@ static int sys_bind(int fd, sockaddr_in_t *addr, int len) {
     return -1;
   }
 
-  KLOG_DEBUG_DEC("SYSCALL",
-                 "sys_bind: fd_table[fd].type = ", fd_table[fd].type);
-
-  if (fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     KLOG_ERROR("SYSCALL", "sys_bind: not a socket");
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     KLOG_ERROR("SYSCALL", "sys_bind: socket is NULL");
     return -1;
@@ -1079,12 +1005,13 @@ static int sys_listen(int fd, int backlog) {
     return -1;
   }
 
-  if (fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     KLOG_ERROR("SYSCALL", "sys_listen: not a socket");
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     return -1;
   }
@@ -1133,11 +1060,12 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
   (void)len;
 
   /* Vérifier le FD du socket serveur */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *listen_sock = fd_table[fd].socket;
+  tcp_socket_t *listen_sock = description->socket;
   if (listen_sock == NULL || listen_sock->state != TCP_STATE_LISTEN) {
     return -1;
   }
@@ -1166,9 +1094,9 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
     }
   }
 
-  /* Allouer un nouveau FD pour le socket client */
-  int client_fd = fd_alloc();
-  if (client_fd < 0) {
+  open_file_description_t *client_description =
+      file_description_create(FILE_TYPE_SOCKET, O_RDWR, client_sock);
+  if (client_description == NULL) {
     KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
     net_lock();
     tcp_close(client_sock);
@@ -1176,10 +1104,14 @@ static int sys_accept(int fd, sockaddr_in_t *addr, int *len) {
     return -1;
   }
 
-  /* Configurer le FD */
-  fd_table[client_fd].type = FILE_TYPE_SOCKET;
-  fd_table[client_fd].socket = client_sock;
-  fd_table[client_fd].flags = O_RDWR;
+  file_descriptor_t *table = current_fd_table();
+  int client_fd =
+      table != NULL ? file_table_install(table, client_description) : -1;
+  if (client_fd < 0) {
+    file_description_release(client_description);
+    KLOG_ERROR("SYSCALL", "sys_accept: no free fd");
+    return -1;
+  }
 
   /* Remplir l'adresse du client si demandé */
   if (addr != NULL) {
@@ -1205,11 +1137,12 @@ static int sys_recv(int fd, uint8_t *buf, int len, int flags) {
   (void)flags;
 
   /* Vérifier le FD */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL || sock->state != TCP_STATE_ESTABLISHED) {
     return 0;
   }
@@ -1242,11 +1175,12 @@ static int sys_send(int fd, const uint8_t *buf, int len, int flags) {
   (void)flags;
 
   /* Vérifier le FD */
-  if (fd < 0 || fd >= MAX_FD || fd_table[fd].type != FILE_TYPE_SOCKET) {
+  open_file_description_t *description = current_fd_get(fd);
+  if (description == NULL || description->type != FILE_TYPE_SOCKET) {
     return -1;
   }
 
-  tcp_socket_t *sock = fd_table[fd].socket;
+  tcp_socket_t *sock = description->socket;
   if (sock == NULL) {
     return -1;
   }
@@ -1269,64 +1203,22 @@ static int sys_close(int fd) {
     return -1;
   }
 
-  /* Ne pas fermer stdin/stdout/stderr */
-  if (fd < 3) {
+  file_descriptor_t *table = current_fd_table();
+  if (table == NULL) {
     return -1;
   }
-
-  if (fd_table == NULL || fd_table[fd].type == FILE_TYPE_NONE) {
-    return -1;
-  }
-
-  /* Si c'est le socket serveur global - fermeture CTRL+D uniquement */
-  if (fd == g_server_fd && g_server_socket != NULL && g_server_closing) {
-    /* Libérer complètement le socket pour permettre un nouveau bind */
-    tcp_close(g_server_socket);
-    g_server_socket = NULL;
-    g_server_fd = -1;
-    g_server_closing = 0;
-    fd_free(fd);
-    return 0;
-  }
-
-  /* Si c'est un socket client (créé par accept) ou le serveur après connexion
-   */
-  if (fd_table[fd].type == FILE_TYPE_SOCKET && fd_table[fd].socket != NULL) {
-    tcp_socket_t *sock = fd_table[fd].socket;
-    uint16_t port = sock->local_port;
-
-    /* Vérifier si c'est le socket serveur (même socket que g_server_socket) */
-    if (sock == g_server_socket) {
-      /* Socket serveur : fermer connexion et remettre en LISTEN */
-      tcp_close_and_relisten(sock, port);
-      /* Ne pas libérer le FD ni le socket - on le réutilise */
-      return 0;
-    } else {
-      /* Socket client séparé : fermement et libérer */
-      tcp_close(sock);
-      fd_free(fd);
-      return 0;
-    }
-  }
-
-  /* Si c'est un fichier VFS, le fermer */
-  if (fd_table[fd].type == FILE_TYPE_FILE && fd_table[fd].vfs_node != NULL) {
-    vfs_close((vfs_node_t *)fd_table[fd].vfs_node);
-  }
-
-  /* Libérer le FD */
-  fd_free(fd);
-
-  return 0;
+  return file_table_close(table, fd);
 }
 
 /* ========================================
  * Forward declarations for new syscalls
  * ======================================== */
-static int sys_fork(void);
-static int sys_execve(const char *filename, char **argv, char **envp);
+static int sys_fork(syscall_regs_t *regs);
+static int sys_execve(syscall_regs_t *regs, const char *filename, char **argv,
+                      char **envp);
 static int sys_waitpid(int pid, int *status, int options);
 static int sys_create_thread(void *entry, void *stack, void *arg);
+static int sys_spawn_wait(const char *path, int argc, char **argv);
 
 /* ========================================
  * Memory Management Syscalls
@@ -1390,7 +1282,8 @@ static void *sys_brk(void *addr) {
 
         /* Map page in the PROCESS's page directory, not kernel's */
         if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, phys, virt,
-                                PAGE_USER | PAGE_RW | PAGE_PRESENT) != 0) {
+                                PAGE_USER | PAGE_RW | PAGE_PRESENT |
+                                    PAGE_OWNED) != 0) {
           KLOG_ERROR("SYSCALL", "sys_brk: Failed to map page");
           pmm_free_block(phys_virt);
           return (void *)-1;
@@ -1581,6 +1474,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_close((int)regs->rdi);
     break;
 
+  case SYS_UNLINK:
+    result = sys_unlink((const char *)regs->rdi);
+    break;
+
   case SYS_KBHIT:
     result = sys_kbhit();
     break;
@@ -1603,6 +1500,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_mkdir((const char *)regs->rdi);
     break;
 
+  case SYS_RMDIR:
+    result = sys_rmdir((const char *)regs->rdi);
+    break;
+
   case SYS_CREATE:
     result = sys_create((const char *)regs->rdi);
     break;
@@ -1611,9 +1512,6 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     result = sys_unlink((const char *)regs->rdi);
     break;
 
-  case SYS_RMDIR:
-    result = sys_rmdir((const char *)regs->rdi);
-    break;
 
   /* System syscalls */
   case SYS_CLEAR:
@@ -1667,11 +1565,11 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   /* Process syscalls - forward declarations */
   case SYS_FORK:
-    result = sys_fork();
+    result = sys_fork(regs);
     break;
 
   case SYS_EXECVE:
-    result = sys_execve((const char *)regs->rdi, (char **)regs->rsi,
+    result = sys_execve(regs, (const char *)regs->rdi, (char **)regs->rsi,
                         (char **)regs->rdx);
     break;
 
@@ -1782,39 +1680,9 @@ void syscall_init(void) {
  *
  * @return PID du processus fils, ou -1 si erreur
  */
-static int sys_fork(void) {
+static int sys_fork(syscall_regs_t *regs) {
   KLOG_INFO("SYSCALL", "sys_fork called");
-
-  /* Obtenir le processus courant */
-  process_t *parent = current_process;
-  if (parent == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_fork: no current process");
-    return -1;
-  }
-
-  /* Créer un nouveau processus en copiant le processus courant */
-  process_t *child = process_create_kernel(parent->name, NULL, NULL, 0);
-  if (child == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_fork: failed to create child process");
-    return -1;
-  }
-
-  /* Configurer la relation parent-enfant */
-  child->parent = parent;
-  child->sibling_next = parent->first_child;
-  if (parent->first_child) {
-    parent->first_child->sibling_prev = child;
-  }
-  parent->first_child = child;
-
-  /* Copier les informations de base */
-  child->state = PROCESS_STATE_READY;
-  child->should_terminate = 0;
-  child->exit_status = 0;
-
-  /* Retourner le PID du processus fils */
-  KLOG_INFO_DEC("SYSCALL", "sys_fork: created child PID ", child->pid);
-  return child->pid;
+  return process_fork((const interrupt_frame_t *)regs);
 }
 
 /**
@@ -1825,22 +1693,17 @@ static int sys_fork(void) {
  * @param envp      Tableau d'environnement
  * @return 0 si succès, -1 si erreur
  */
-static int sys_execve(const char *filename, char **argv, char **envp) {
-  (void)argv; /* Unused parameter */
-  (void)envp; /* Unused parameter */
-
+static int sys_execve(syscall_regs_t *regs, const char *filename, char **argv,
+                      char **envp) {
   KLOG_INFO("SYSCALL", "sys_execve called");
-  KLOG_INFO("SYSCALL", filename);
+  if (filename != NULL) {
+    KLOG_INFO("SYSCALL", filename);
+  }
 
-  /* Pour l'instant, utiliser process_execute qui est déjà implémenté */
-  int result = process_execute(filename);
-  if (result < 0) {
+  if (process_execve((interrupt_frame_t *)regs, filename, argv, envp) != 0) {
     KLOG_ERROR("SYSCALL", "sys_execve: failed to execute program");
     return -1;
   }
-
-  /* Note: process_execute retourne le PID, mais execve devrait retourner 0 en
-   * cas de succès */
   return 0;
 }
 
@@ -1869,78 +1732,40 @@ static bool has_zombie_child(void *context) {
  */
 static int sys_waitpid(int pid, int *status, int options) {
   KLOG_INFO("SYSCALL", "sys_waitpid called");
-  KLOG_INFO_DEC("SYSCALL", "  pid: ", (uint32_t)pid);
+  KLOG_INFO_DEC("SYSCALL", "  pid: ", pid);
+  return process_waitpid(pid, status, options);
+}
 
-  /* Obtenir le processus courant */
-  process_t *parent = current_process;
-  if (parent == NULL) {
-    KLOG_ERROR("SYSCALL", "sys_waitpid: no current process");
+/**
+ * SYS_SPAWN_WAIT (201) - Lancer un programme ELF et attendre sa terminaison
+ *
+ * Syscall "tout-en-un" utilisé par le shell userland (/bin/sh) pour lancer
+ * une commande externe et bloquer jusqu'à ce qu'elle se termine, sans avoir
+ * à gérer fork()/execve() séparément.
+ *
+ * @param path  Chemin du fichier ELF à exécuter
+ * @param argc  Nombre d'arguments
+ * @param argv  Tableau d'arguments (pointeurs user space)
+ * @return Code de sortie du programme, ou -1 si erreur
+ */
+static int sys_spawn_wait(const char *path, int argc, char **argv) {
+  if (path == NULL) {
     return -1;
   }
 
-  /* Si pid = -1, attendre n'importe quel processus fils */
-  if (pid == -1) {
-    if (!parent->first_child) {
-      KLOG_INFO("SYSCALL", "sys_waitpid: no children");
-      return -1;
-    }
+  KLOG_INFO("SYSCALL", "sys_spawn_wait called");
+  KLOG_INFO("SYSCALL", path);
 
-    while (1) {
-      process_t *child = parent->first_child;
-      while (child) {
-        if (child->state == PROCESS_STATE_ZOMBIE ||
-            child->state == PROCESS_STATE_TERMINATED) {
-          int child_pid = (int)child->pid;
-          int exit_code = process_join(child);
-          if (status) {
-            *status = exit_code;
-          }
-          KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", (uint32_t)child_pid);
-          return child_pid;
-        }
-        child = child->sibling_next;
-      }
-
-      /* Si options & 1 (WNOHANG), ne pas bloquer */
-      if (options & 1) {
-        return 0;
-      }
-
-      if (!parent->first_child) {
-        return -1;
-      }
-
-      /* Attendre qu'un enfant se termine via wait queue du parent */
-      wait_queue_wait(&parent->wait_queue, has_zombie_child, parent);
-    }
-  }
-
-  /* Attendre un processus fils spécifique */
-  process_t *child = parent->first_child;
-  while (child && child->pid != (uint32_t)pid) {
-    child = child->sibling_next;
-  }
-
-  if (!child) {
-    KLOG_ERROR("SYSCALL", "sys_waitpid: child not found");
+  process_t *child = process_spawn(path, argc, argv);
+  if (child == NULL) {
+    KLOG_ERROR("SYSCALL", "sys_spawn_wait: failed to spawn process");
     return -1;
   }
 
-  /* Si options & 1 (WNOHANG) et le fils n'est pas terminé, ne pas bloquer */
-  if ((options & 1) &&
-      child->state != PROCESS_STATE_ZOMBIE &&
-      child->state != PROCESS_STATE_TERMINATED) {
-    return 0;
-  }
+  /* Bloque (via wait_queue) jusqu'à la terminaison du processus fils */
+  int exit_status = process_join(child);
 
-  /* Attente bloquante via process_join quand options == 0 */
-  int child_pid = (int)child->pid;
-  int exit_code = process_join(child);
-  if (status) {
-    *status = exit_code;
-  }
-  KLOG_INFO_DEC("SYSCALL", "sys_waitpid: reaped child PID ", (uint32_t)child_pid);
-  return child_pid;
+  return exit_status;
 }
 
 /**

@@ -112,6 +112,8 @@ function Invoke-Run {
         "-netdev", "user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp::8080-:80",
         "-device", "virtio-net-pci,netdev=net0",
         "-drive", "file=$(Join-Path $PROJECT_DIR 'disk.img'),format=raw,index=0,media=disk",
+        "-vga", "none",
+        "-device", "bochs-display",
         "-serial", "file:$serial_log",
         "-no-reboot",
         "-no-shutdown"

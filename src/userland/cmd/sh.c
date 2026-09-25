@@ -1,4 +1,5 @@
 /* src/userland/cmd/sh.c - ALOS Userland Shell */
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -438,15 +439,120 @@ static int parse_args(char *line, char **argv, int max_args) {
   return argc;
 }
 
+static int execute_line(char *line) {
+  /* Ignorer les lignes vides ou contenant uniquement des espaces */
+  char *trimmed = line;
+  while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r' || *trimmed == '\n') {
+    trimmed++;
+  }
+  if (*trimmed == '\0' || *trimmed == '#' || *trimmed == ';') {
+    return 0;
+  }
+
+  /* Découper les arguments */
+  char *cmd_argv[SHELL_MAX_ARGS];
+  int cmd_argc = parse_args(trimmed, cmd_argv, SHELL_MAX_ARGS);
+  if (cmd_argc == 0) {
+    return 0;
+  }
+
+  /* 1. Commandes internes (builtins) */
+  if (strcmp(cmd_argv[0], "cd") == 0) {
+    const char *path = (cmd_argc > 1) ? cmd_argv[1] : "/";
+    if (strcmp(path, "~") == 0) {
+      path = "/";
+    }
+    if (chdir(path) != 0) {
+      printf("cd: %s: No such file or directory\n", path);
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd_argv[0], "pwd") == 0) {
+    char cwd_buf[256];
+    if (getcwd(cwd_buf, sizeof(cwd_buf)) != NULL) {
+      printf("%s\n", cwd_buf);
+    } else {
+      printf("pwd: error retrieving current directory\n");
+    }
+    return 0;
+  }
+
+  if (strcmp(cmd_argv[0], "clear") == 0) {
+    syscall0(SYS_CLEAR);
+    return 0;
+  }
+
+  if (strcmp(cmd_argv[0], "exit") == 0) {
+    int exit_code = (cmd_argc > 1) ? atoi(cmd_argv[1]) : 0;
+    exit(exit_code);
+  }
+
+  if (strcmp(cmd_argv[0], "help") == 0) {
+    printf("ALOS Userland Shell Built-in Commands:\n");
+    printf("  cd <path>    Change current working directory\n");
+    printf("  pwd          Print current working directory\n");
+    printf("  clear        Clear screen\n");
+    printf("  exit [code]  Exit the shell\n");
+    printf("  help         Display this help message\n\n");
+    printf("External commands available in /bin:\n");
+    printf("  ls, cat, echo, mkdir, touch, rm, rmdir,\n");
+    printf("  meminfo, ps, ping, wget, httpd, etc.\n");
+    return 0;
+  }
+
+  /* 2. Exécution d'un programme externe via SYS_SPAWN_WAIT */
+  int ret = spawn_wait(cmd_argv[0], cmd_argc, cmd_argv);
+  if (ret < 0) {
+    if (cmd_argv[0][0] == '/' || cmd_argv[0][0] == '.') {
+      printf("sh: %s: No such file or directory\n", cmd_argv[0]);
+    } else {
+      printf("sh: %s: command not found\n", cmd_argv[0]);
+    }
+  } else if (ret >= 128) {
+    printf("sh: %s terminated by signal (exit code %d)\n", cmd_argv[0], ret);
+  }
+  return ret;
+}
+
+static int run_script(const char *path) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) {
+    printf("sh: %s: no such file or directory\n", path);
+    return 127;
+  }
+
+  char buf[SHELL_LINE_MAX];
+  int pos = 0;
+  char c;
+  while (read(fd, &c, 1) > 0) {
+    if (c == '\n') {
+      buf[pos] = '\0';
+      execute_line(buf);
+      pos = 0;
+    } else if (c != '\r') {
+      if (pos < SHELL_LINE_MAX - 1) {
+        buf[pos++] = c;
+      }
+    }
+  }
+  if (pos > 0) {
+    buf[pos] = '\0';
+    execute_line(buf);
+  }
+  close(fd);
+  return 0;
+}
+
 int main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
+  if (argc >= 2) {
+    return run_script(argv[1]);
+  }
 
   printf("\n=== ALOS Userland Shell (/bin/sh) ===\n");
   printf("Type 'help' for builtins or run commands from /bin.\n\n");
 
   char line[SHELL_LINE_MAX];
-  char *cmd_argv[SHELL_MAX_ARGS];
 
   while (1) {
     print_prompt();
@@ -462,7 +568,6 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    /* Ignorer les lignes vides ou contenant uniquement des espaces */
     char *trimmed = line;
     while (*trimmed == ' ' || *trimmed == '\t') {
       trimmed++;
@@ -472,69 +577,7 @@ int main(int argc, char **argv) {
     }
 
     history_add(trimmed);
-
-    /* Découper les arguments */
-    int cmd_argc = parse_args(line, cmd_argv, SHELL_MAX_ARGS);
-    if (cmd_argc == 0) {
-      continue;
-    }
-
-    /* 1. Commandes internes (builtins) */
-    if (strcmp(cmd_argv[0], "cd") == 0) {
-      const char *path = (cmd_argc > 1) ? cmd_argv[1] : "/";
-      if (strcmp(path, "~") == 0) {
-        path = "/";
-      }
-      if (chdir(path) != 0) {
-        printf("cd: %s: No such file or directory\n", path);
-      }
-      continue;
-    }
-
-    if (strcmp(cmd_argv[0], "pwd") == 0) {
-      char cwd_buf[256];
-      if (getcwd(cwd_buf, sizeof(cwd_buf)) != NULL) {
-        printf("%s\n", cwd_buf);
-      } else {
-        printf("pwd: error retrieving current directory\n");
-      }
-      continue;
-    }
-
-    if (strcmp(cmd_argv[0], "clear") == 0) {
-      syscall0(SYS_CLEAR);
-      continue;
-    }
-
-    if (strcmp(cmd_argv[0], "exit") == 0) {
-      int exit_code = (cmd_argc > 1) ? atoi(cmd_argv[1]) : 0;
-      exit(exit_code);
-    }
-
-    if (strcmp(cmd_argv[0], "help") == 0) {
-      printf("ALOS Userland Shell Built-in Commands:\n");
-      printf("  cd <path>    Change current working directory\n");
-      printf("  pwd          Print current working directory\n");
-      printf("  clear        Clear screen\n");
-      printf("  exit [code]  Exit the shell\n");
-      printf("  help         Display this help message\n\n");
-      printf("External commands available in /bin:\n");
-      printf("  ls, cat, echo, mkdir, touch, rm, rmdir,\n");
-      printf("  meminfo, ps, ping, wget, httpd, etc.\n");
-      continue;
-    }
-
-    /* 2. Exécution d'un programme externe via SYS_SPAWN_WAIT */
-    int ret = spawn_wait(cmd_argv[0], cmd_argc, cmd_argv);
-    if (ret < 0) {
-      if (cmd_argv[0][0] == '/' || cmd_argv[0][0] == '.') {
-        printf("sh: %s: No such file or directory\n", cmd_argv[0]);
-      } else {
-        printf("sh: %s: command not found\n", cmd_argv[0]);
-      }
-    } else if (ret >= 128) {
-      printf("sh: %s terminated by signal (exit code %d)\n", cmd_argv[0], ret);
-    }
+    execute_line(line);
   }
 
   return 0;

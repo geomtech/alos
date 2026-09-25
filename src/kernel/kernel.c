@@ -463,26 +463,51 @@ void kmain(void) {
   timer_enable_scheduling();
   KLOG_INFO("KERNEL", "Preemption enabled");
 
-  KLOG_INFO("KERNEL", "Checking startup script...");
-  int script_res = config_run_startup_script();
-  if (script_res == 0) {
-    KLOG_INFO("STARTUP", "Startup script executed successfully");
-  } else {
-    KLOG_INFO_DEC("STARTUP", "Startup script not found or returned: ", (uint32_t)script_res);
-  }
-
-  /* Lancer le shell utilisateur (/bin/sh) si disponible, sinon fallback sur le shell kernel */
+  /* ============================================ */
+  /* Shell : essayer /bin/sh (userland) en priorité */
+  /* ============================================ */
   vfs_node_t *sh_node = vfs_resolve_path("/bin/sh");
   if (sh_node != NULL && (sh_node->type & VFS_FILE)) {
-    KLOG_INFO("KERNEL", "Starting userland shell (/bin/sh)...");
-    char *sh_argv[] = {"/bin/sh", NULL};
+    KLOG_INFO("KERNEL", "Launching /bin/sh (userland shell)...");
+
+    /* /config/startup.sh doit s'exécuter EXACTEMENT une fois au boot, via
+     * le MÊME /bin/sh userland (pas via l'ancien command_execute() kernel),
+     * avant la boucle interactive. On ne le relance jamais, même si le shell
+     * interactif est ensuite quitté puis respawné (cf. boucle ci-dessous). */
+    KLOG_INFO("KERNEL", "Checking startup script...");
+    vfs_node_t *startup_node = vfs_resolve_path(CONFIG_STARTUP_SCRIPT);
+    if (startup_node != NULL && (startup_node->type & VFS_FILE)) {
+      KLOG_INFO("KERNEL", "Running startup script through userland /bin/sh...");
+      char *startup_argv[] = {"/bin/sh", CONFIG_STARTUP_SCRIPT, NULL};
+      int startup_status = process_exec_and_wait("/bin/sh", 2, startup_argv);
+      KLOG_INFO_DEC("STARTUP",
+                    "Startup script (userland) exited with status: ",
+                    (uint32_t)startup_status);
+    } else {
+      KLOG_INFO("KERNEL",
+               "No startup script found, skipping (this is not an error)");
+    }
+
     while (1) {
+      char *sh_argv[] = {"/bin/sh", NULL};
       int ret = process_exec_and_wait("/bin/sh", 1, sh_argv);
       KLOG_INFO_DEC("KERNEL", "/bin/sh exited with code: ", (uint32_t)ret);
       console_puts("\n[KERNEL] Shell exited. Restarting /bin/sh...\n");
     }
   } else {
-    KLOG_INFO("KERNEL", "/bin/sh not found, falling back to kernel shell_run...");
+    KLOG_INFO("KERNEL",
+             "No /bin/sh found on disk, falling back to kernel shell");
+
+    /* Fallback d'urgence uniquement : sans /bin/sh, on ne peut pas exécuter
+     * le startup script en userland, donc on retombe sur l'ancien parseur
+     * kernel (config_run_startup_script() -> command_execute()). */
+    KLOG_INFO("KERNEL", "Checking startup script (legacy kernel fallback)...");
+    int script_res = config_run_startup_script();
+    if (script_res == 0) {
+      KLOG_INFO("STARTUP", "Startup script executed successfully");
+    } else {
+      KLOG_INFO_DEC("STARTUP", "Startup script not found or returned: ", (uint32_t)script_res);
+    }
     shell_run();
   }
 

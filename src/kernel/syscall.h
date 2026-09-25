@@ -23,14 +23,15 @@
 #define SYS_CLONE 56   /* Créer un thread/processus */
 #define SYS_GETTID 186 /* Obtenir le Thread ID */
 #define SYS_TKILL 200  /* Terminer un thread spécifique */
-#define SYS_SPAWN_WAIT 201 /* Spawner un processus fils et attendre sa fin */
+#define SYS_SPAWN_WAIT 201 /* Lancer un programme et attendre sa terminaison (shell userland) */
+
 
 /* Filesystem syscalls */
 #define SYS_CLOSE 6    /* Fermer un file descriptor */
 #define SYS_UNLINK 10  /* Supprimer un fichier */
 #define SYS_CHDIR 12   /* Changer de répertoire */
 #define SYS_MKDIR 39   /* Créer un répertoire */
-#define SYS_RMDIR 40   /* Supprimer un répertoire */
+#define SYS_RMDIR 40   /* Supprimer un répertoire vide */
 #define SYS_READDIR 89 /* Lire une entrée de répertoire */
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */

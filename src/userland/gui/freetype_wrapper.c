@@ -101,16 +101,6 @@ static void glyph_cache_clear(void) {
     g_glyph_cache_misses = 0;
 }
 
-static void glyph_cache_maybe_print_stats(void) {
-    uint32_t total = g_glyph_cache_hits + g_glyph_cache_misses;
-    if (total == 0 || (total & 2047U) != 0)
-        return;
-
-    uint32_t hit_rate = (g_glyph_cache_hits * 100U) / total;
-    printf("FONT PERF: cache=%u%% hits=%u misses=%u\n",
-           hit_rate, g_glyph_cache_hits, g_glyph_cache_misses);
-}
-
 static ft_cached_glyph_t* glyph_cache_load(ft_font_t* font,
                                             uint32_t unicode) {
     if (!font || !font->face)
@@ -127,13 +117,11 @@ static ft_cached_glyph_t* glyph_cache_load(ft_font_t* font,
             entry->font_size == font->size) {
             entry->last_used = ++g_glyph_cache_clock;
             g_glyph_cache_hits++;
-            glyph_cache_maybe_print_stats();
             return entry;
         }
     }
 
     g_glyph_cache_misses++;
-    glyph_cache_maybe_print_stats();
 
     FT_UInt glyph_index = FT_Get_Char_Index(font->face, unicode);
     if (glyph_index == 0)

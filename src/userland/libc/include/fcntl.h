@@ -19,4 +19,12 @@
 
 int open(const char *pathname, int flags, ...);
 
+/**
+ * creat() - Crée un fichier vide via SYS_CREATE.
+ *
+ * `mode` est accepté pour compatibilité avec la signature POSIX standard
+ * mais ignoré (pas de permissions implémentées).
+ */
+int creat(const char *pathname, int mode);
+
 #endif

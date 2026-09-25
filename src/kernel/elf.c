@@ -191,7 +191,7 @@ int elf_load_file(const char *filename, process_t *proc,
         uint64_t page_phys = pmm_virt_to_phys(page_virt);
 
         /* Déterminer les flags de la page */
-        uint64_t page_flags = PAGE_PRESENT | PAGE_USER;
+        uint64_t page_flags = PAGE_PRESENT | PAGE_USER | PAGE_OWNED;
         if (phdr->p_flags & PF_W) {
           page_flags |= PAGE_RW;
         }

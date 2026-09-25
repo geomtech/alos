@@ -8,6 +8,13 @@ FILE *stdin = (FILE *)0;
 FILE *stdout = (FILE *)1;
 FILE *stderr = (FILE *)2;
 
+int getchar(void) {
+  unsigned char c;
+  if (read(STDIN_FILENO, &c, 1) == 1)
+    return c;
+  return -1;
+}
+
 int putchar(int c) {
   char ch = (char)c;
   if (write(STDOUT_FILENO, &ch, 1) != 1)
@@ -23,12 +30,6 @@ int puts(const char *s) {
   return 1;
 }
 
-int getchar(void) {
-  char c;
-  if (read(STDIN_FILENO, &c, 1) <= 0)
-    return -1;
-  return (unsigned char)c;
-}
 
 int printf(const char *format, ...) {
   va_list args;

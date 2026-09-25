@@ -61,6 +61,150 @@ static void safe_strcpy(char *dest, const char *src, uint32_t max_len) {
   dest[i] = '\0';
 }
 
+static void process_inherit_cwd(process_t *proc, const process_t *parent) {
+  const char *cwd =
+      (parent != NULL && parent->cwd[0] == '/') ? parent->cwd : "/";
+  safe_strcpy(proc->cwd, cwd, sizeof(proc->cwd));
+}
+
+static uint64_t process_lock(void) {
+  uint64_t flags;
+  asm volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+  return flags;
+}
+
+static void process_unlock(uint64_t flags) {
+  asm volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
+}
+
+static void process_link(process_t *parent, process_t *proc) {
+  uint64_t flags = process_lock();
+
+  proc->next = parent->next;
+  proc->prev = parent;
+  parent->next->prev = proc;
+  parent->next = proc;
+
+  proc->parent = parent;
+  proc->sibling_prev = NULL;
+  proc->sibling_next = parent->first_child;
+  if (parent->first_child != NULL) {
+    parent->first_child->sibling_prev = proc;
+  }
+  parent->first_child = proc;
+
+  process_unlock(flags);
+}
+
+static void process_unlink(process_t *proc) {
+  if (proc->parent != NULL) {
+    if (proc->sibling_prev != NULL) {
+      proc->sibling_prev->sibling_next = proc->sibling_next;
+    } else {
+      proc->parent->first_child = proc->sibling_next;
+    }
+    if (proc->sibling_next != NULL) {
+      proc->sibling_next->sibling_prev = proc->sibling_prev;
+    }
+  }
+
+  if (proc->next != NULL && proc->prev != NULL) {
+    proc->prev->next = proc->next;
+    proc->next->prev = proc->prev;
+    if (process_list == proc) {
+      process_list = proc->next != proc ? proc->next : NULL;
+    }
+  }
+
+  proc->parent = NULL;
+  proc->sibling_next = NULL;
+  proc->sibling_prev = NULL;
+  proc->next = NULL;
+  proc->prev = NULL;
+}
+
+int process_resolve_path(const char *path, char *resolved, size_t size) {
+  if (path == NULL || resolved == NULL || size < 2 || path[0] == '\0') {
+    return -1;
+  }
+
+  size_t out_len = 1;
+  resolved[0] = '/';
+  resolved[1] = '\0';
+
+  if (path[0] != '/') {
+    process_t *proc = process_current();
+    if (proc == NULL || proc->cwd[0] != '/') {
+      return -1;
+    }
+
+    size_t cwd_len = 0;
+    while (cwd_len < PROCESS_CWD_MAX && proc->cwd[cwd_len] != '\0') {
+      cwd_len++;
+    }
+    if (cwd_len == PROCESS_CWD_MAX || cwd_len >= size) {
+      return -1;
+    }
+
+    for (size_t i = 0; i <= cwd_len; i++) {
+      resolved[i] = proc->cwd[i];
+    }
+    out_len = cwd_len;
+  }
+
+  size_t pos = 0;
+  while (pos < PROCESS_CWD_MAX) {
+    while (pos < PROCESS_CWD_MAX && path[pos] == '/') {
+      pos++;
+    }
+    if (pos == PROCESS_CWD_MAX) {
+      return -1;
+    }
+    if (path[pos] == '\0') {
+      resolved[out_len] = '\0';
+      return 0;
+    }
+
+    size_t component_start = pos;
+    while (pos < PROCESS_CWD_MAX && path[pos] != '/' && path[pos] != '\0') {
+      pos++;
+    }
+    if (pos == PROCESS_CWD_MAX) {
+      return -1;
+    }
+
+    size_t component_len = pos - component_start;
+    if (component_len == 1 && path[component_start] == '.') {
+      continue;
+    }
+    if (component_len == 2 && path[component_start] == '.' &&
+        path[component_start + 1] == '.') {
+      while (out_len > 1 && resolved[out_len - 1] != '/') {
+        out_len--;
+      }
+      if (out_len > 1) {
+        out_len--;
+      }
+      resolved[out_len] = '\0';
+      continue;
+    }
+
+    size_t separator_len = (out_len > 1) ? 1 : 0;
+    if (out_len + separator_len + component_len >= size) {
+      return -1;
+    }
+    if (separator_len != 0) {
+      resolved[out_len++] = '/';
+    }
+    for (size_t i = 0; i < component_len; i++) {
+      resolved[out_len++] = path[component_start + i];
+    }
+    resolved[out_len] = '\0';
+  }
+
+  return -1;
+}
+
 /* ========================================
  * Implémentation
  * ======================================== */
@@ -96,6 +240,8 @@ void init_multitasking(void) {
       (uint64_t)idle_process->pml4; /* Adresse physique pour CR3 */
   idle_process->heap_start = 0;
   idle_process->heap_brk = 0;
+  process_inherit_cwd(idle_process, NULL);
+  file_table_init(idle_process->fd_table, NULL);
 
   /* Pas de stack allouée (on utilise la stack du kernel) */
   idle_process->stack_base = NULL;
@@ -168,6 +314,8 @@ process_t *create_kernel_thread(void (*function)(void), const char *name) {
   safe_strcpy(proc->name, name, sizeof(proc->name));
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
+  process_inherit_cwd(proc, current_process);
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   /* Page Directory (partagé avec le kernel pour les threads kernel) */
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
@@ -600,105 +748,6 @@ void proc_log_final_reap(uint32_t pid) {
   KLOG_INFO("PROC", buf);
 }
 
-/**
- * Nettoyage final d'un processus zombie :
- * - reparentage des orphelins éventuels vers idle_process
- * - détachement de la hiérarchie parent / siblings
- * - détachement de la liste circulaire process_list
- * - libération des ressources résiduelles
- * - kfree(proc)
- */
-void process_reap(process_t *proc) {
-  if (!proc)
-    return;
-
-  asm volatile("cli");
-  if (proc->state == PROCESS_STATE_TERMINATED) {
-    asm volatile("sti");
-    return;
-  }
-  proc->state = PROCESS_STATE_TERMINATED;
-
-  /* Reparenter les éventuels enfants orphelins vers idle_process */
-  if (proc->first_child && idle_process) {
-    process_t *child = proc->first_child;
-    while (child) {
-      child->parent = idle_process;
-      if (!child->sibling_next) {
-        child->sibling_next = idle_process->first_child;
-        if (idle_process->first_child) {
-          idle_process->first_child->sibling_prev = child;
-        }
-        break;
-      }
-      child = child->sibling_next;
-    }
-    idle_process->first_child = proc->first_child;
-    proc->first_child = NULL;
-  }
-
-  /* Détacher du parent et des siblings */
-  if (proc->parent) {
-    if (proc->parent->first_child == proc) {
-      proc->parent->first_child = proc->sibling_next;
-    }
-  }
-  if (proc->sibling_prev) {
-    proc->sibling_prev->sibling_next = proc->sibling_next;
-  }
-  if (proc->sibling_next) {
-    proc->sibling_next->sibling_prev = proc->sibling_prev;
-  }
-  proc->sibling_next = NULL;
-  proc->sibling_prev = NULL;
-  proc->parent = NULL;
-
-  /* Détacher de la liste circulaire process_list */
-  if (proc->next && proc->prev) {
-    if (proc->next == proc) {
-      if (process_list == proc) {
-        process_list = NULL;
-      }
-    } else {
-      if (process_list == proc) {
-        process_list = proc->next;
-      }
-      proc->prev->next = proc->next;
-      proc->next->prev = proc->prev;
-    }
-    proc->next = NULL;
-    proc->prev = NULL;
-  }
-  asm volatile("sti");
-
-  /* Libérer les ressources restantes (si pas déjà fait par le reaper) */
-  if (proc->pml4 && proc->pml4 != (uint64_t *)vmm_get_kernel_directory()) {
-    vmm_free_directory((page_directory_t *)proc->pml4);
-    proc->pml4 = NULL;
-  }
-
-  if (proc->stack_base) {
-    kfree(proc->stack_base);
-    proc->stack_base = NULL;
-  }
-
-  uint32_t pid = proc->pid;
-  bool was_gui = proc->uses_framebuffer;
-  proc_log_final_reap(pid);
-
-  /* Libérer la structure du processus.
-   * Aucune utilisation du pointeur proc après ce kfree !
-   */
-  kfree(proc);
-
-  if (was_gui && !console_is_enabled()) {
-    keyboard_clear_buffer();
-    console_set_enabled(true);
-    console_clear(VGA_COLOR_BLACK);
-    console_refresh();
-  }
-}
-
 /* ========================================
  * Exécution de programmes ELF (User Mode)
  * ======================================== */
@@ -713,6 +762,26 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
     KLOG_ERROR("EXEC", "Multitasking not initialized!");
     return NULL;
   }
+
+  char resolved_filename[PROCESS_CWD_MAX];
+  if (process_resolve_path(filename, resolved_filename,
+                           sizeof(resolved_filename)) != 0) {
+    if (filename[0] != '/' && filename[0] != '.') {
+      char bin_path[PROCESS_CWD_MAX];
+      safe_strcpy(bin_path, "/bin/", sizeof(bin_path));
+      uint32_t blen = 5;
+      for (uint32_t i = 0; filename[i] && blen < sizeof(bin_path) - 1; i++) {
+        bin_path[blen++] = filename[i];
+      }
+      bin_path[blen] = '\0';
+      if (process_resolve_path(bin_path, resolved_filename, sizeof(resolved_filename)) != 0) {
+        return NULL;
+      }
+    } else {
+      return NULL;
+    }
+  }
+  filename = resolved_filename;
 
   KLOG_INFO("EXEC", "=== Spawning Program ===");
   KLOG_INFO("EXEC", filename);
@@ -766,6 +835,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   proc->exit_status = 0;
+  process_inherit_cwd(proc, current_process);
 
   /* Créer un nouveau Page Directory pour l'isolation mémoire */
   page_directory_t *dir = vmm_create_directory();
@@ -831,7 +901,8 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
       }
       uint64_t page_phys = pmm_virt_to_phys(page_virt);
       if (vmm_map_page_in_dir((page_directory_t *)proc->pml4, page_phys, addr,
-                              PAGE_PRESENT | PAGE_RW | PAGE_USER) != 0) {
+                              PAGE_PRESENT | PAGE_RW | PAGE_USER |
+                                  PAGE_OWNED) != 0) {
         KLOG_ERROR("EXEC", "Failed to map user stack page!");
         console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
         console_puts("Error: Failed to map user stack page\n");
@@ -862,6 +933,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
       return NULL;
     }
   } else {
+    /* Allouer un buffer pour la stack utilisateur dans le kernel */
     uint64_t stack_buffer_size = 1024;
     uint8_t *stack_buffer = (uint8_t *)kmalloc(stack_buffer_size);
     if (stack_buffer == NULL) {
@@ -901,18 +973,18 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
       argv_ptrs[i] = string_ptr;
     }
 
+    /* Aligner sur 8 octets */
     string_ptr = (char *)((uint64_t)string_ptr & ~7ULL);
     uint64_t *stack_ptr = (uint64_t *)string_ptr;
-    stack_ptr--;
-    *stack_ptr = 0; /* NULL terminator for argv */
+    stack_ptr--; /* argv[argc] = NULL */
+    *stack_ptr = 0;
 
     for (int i = argc - 1; i >= 0; i--) {
       stack_ptr--;
       *stack_ptr = (uint64_t)argv_ptrs[i];
     }
 
-    uint64_t *argv_table = stack_ptr;
-
+    /* Pousser argc. crt0.s fait `pop rdi` (argc) puis `mov rsi, rsp` (argv). */
     stack_ptr--;
     *stack_ptr = (uint64_t)argc;
 
@@ -922,10 +994,11 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
     user_rsp = USER_STACK_TOP - data_size;
     user_rsp &= ~0xFULL;
 
-    /* Relocate argv string pointers to user virtual address space */
-    for (int i = 0; i < argc && i < 16; i++) {
-      uint64_t offset = (uint8_t *)argv_ptrs[i] - (uint8_t *)stack_ptr;
-      argv_table[i] = user_rsp + offset;
+    /* Reloger les adresses argv pour l'espace utilisateur */
+    int64_t reloc_offset = (int64_t)user_rsp - (int64_t)(uintptr_t)stack_ptr;
+    uint64_t *argv_array = stack_ptr + 1;
+    for (int i = 0; i < argc; i++) {
+      argv_array[i] = (uint64_t)((int64_t)argv_array[i] + reloc_offset);
     }
 
     if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, stack_ptr,
@@ -959,32 +1032,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   proc->first_child = NULL;
   proc->sibling_next = NULL;
   proc->sibling_prev = NULL;
-
-  asm volatile("cli");
-
-  /* Ajouter comme premier enfant du parent */
-  if (proc->parent) {
-    proc->sibling_next = proc->parent->first_child;
-    proc->sibling_prev = NULL;
-    if (proc->parent->first_child) {
-      proc->parent->first_child->sibling_prev = proc;
-    }
-    proc->parent->first_child = proc;
-  }
-
-  /* Ajouter à la liste circulaire des processus */
-  if (process_list) {
-    proc->next = process_list->next;
-    proc->prev = process_list;
-    process_list->next->prev = proc;
-    process_list->next = proc;
-  } else {
-    proc->next = proc;
-    proc->prev = proc;
-    process_list = proc;
-  }
-
-  asm volatile("sti");
+  file_table_init(proc->fd_table, current_process->fd_table);
 
   /* Créer le thread user mode */
   thread_t *main_thread = thread_create_user(
@@ -995,7 +1043,10 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   if (main_thread == NULL) {
     KLOG_ERROR("EXEC", "Failed to create user thread!");
-    process_reap(proc);
+    file_table_destroy(proc->fd_table);
+    vmm_free_directory((page_directory_t *)proc->pml4);
+    kfree(kernel_stack);
+    kfree(proc);
     return NULL;
   }
 
@@ -1005,6 +1056,8 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   /* Ne pas libérer kernel_stack ici, il appartient au thread */
   proc->stack_base = NULL;
+
+  process_link(current_process, proc);
 
   KLOG_INFO_DEC("EXEC", "Process created with PID: ", proc->pid);
   KLOG_INFO_DEC("EXEC", "Main thread TID: ", main_thread->tid);
@@ -1025,6 +1078,134 @@ int process_execute(const char *filename) {
   }
   thread_yield();
   return (int)proc->pid;
+}
+
+int process_fork(const interrupt_frame_t *frame) {
+  process_t *parent = process_current();
+  if (parent == NULL || parent == idle_process || frame == NULL ||
+      parent->thread_count != 1 || parent->pml4 == NULL) {
+    return -1;
+  }
+
+  process_t *child = (process_t *)kmalloc(sizeof(*child));
+  if (child == NULL) {
+    return -1;
+  }
+  memset(child, 0, sizeof(*child));
+
+  page_directory_t *child_dir =
+      vmm_clone_directory((page_directory_t *)parent->pml4);
+  if (child_dir == NULL) {
+    kfree(child);
+    return -1;
+  }
+
+  void *kernel_stack = kmalloc(KERNEL_STACK_SIZE);
+  if (kernel_stack == NULL) {
+    vmm_free_directory(child_dir);
+    kfree(child);
+    return -1;
+  }
+  memset(kernel_stack, 0, KERNEL_STACK_SIZE);
+
+  child->pid = next_pid++;
+  safe_strcpy(child->name, parent->name, sizeof(child->name));
+  child->state = PROCESS_STATE_READY;
+  child->pml4 = (uint64_t *)child_dir;
+  child->cr3 = child_dir->pml4_phys;
+  child->heap_start = parent->heap_start;
+  child->heap_brk = parent->heap_brk;
+  process_inherit_cwd(child, parent);
+  file_table_init(child->fd_table, parent->fd_table);
+  wait_queue_init(&child->wait_queue);
+
+  thread_t *thread = thread_create_user_from_frame(
+      child, child->name, frame, kernel_stack, KERNEL_STACK_SIZE);
+  if (thread == NULL) {
+    file_table_destroy(child->fd_table);
+    kfree(kernel_stack);
+    vmm_free_directory(child_dir);
+    kfree(child);
+    return -1;
+  }
+
+  child->main_thread = thread;
+  child->thread_list = thread;
+  child->thread_count = 1;
+  process_link(parent, child);
+
+  KLOG_INFO_DEC("PROC", "Forked child PID: ", child->pid);
+  return (int)child->pid;
+}
+
+int process_execve(interrupt_frame_t *frame, const char *filename,
+                   char *const argv[], char *const envp[]) {
+  process_t *proc = process_current();
+  thread_t *thread = thread_current();
+  if (proc == NULL || proc == idle_process || thread == NULL || frame == NULL ||
+      filename == NULL || proc->thread_count != 1) {
+    return -1;
+  }
+  if (envp != NULL && envp[0] != NULL) {
+    return -1;
+  }
+
+  int argc = 0;
+  if (argv != NULL) {
+    while (argc < 16 && argv[argc] != NULL) {
+      argc++;
+    }
+    if (argc == 16) {
+      return -1;
+    }
+  }
+
+  char *default_argv[2] = {(char *)filename, NULL};
+  if (argv == NULL || argc == 0) {
+    argv = default_argv;
+    argc = 1;
+  }
+
+  process_t *image = process_spawn(filename, argc, (char **)argv);
+  if (image == NULL || image->main_thread == NULL || image->pml4 == NULL) {
+    return -1;
+  }
+
+  thread_t *image_thread = image->main_thread;
+  interrupt_frame_t new_frame =
+      *(interrupt_frame_t *)(uintptr_t)image_thread->rsp;
+  page_directory_t *old_dir = (page_directory_t *)proc->pml4;
+  page_directory_t *new_dir = (page_directory_t *)image->pml4;
+
+  scheduler_dequeue(image_thread);
+  uint64_t flags = process_lock();
+  process_unlink(image);
+  process_unlock(flags);
+
+  file_table_destroy(image->fd_table);
+  safe_strcpy(proc->name, image->name, sizeof(proc->name));
+  safe_strcpy(thread->name, image->name, sizeof(thread->name));
+  proc->pml4 = image->pml4;
+  proc->cr3 = image->cr3;
+  proc->heap_start = image->heap_start;
+  proc->heap_brk = image->heap_brk;
+
+  image->pml4 = NULL;
+  image_thread->owner = NULL;
+  kfree(image_thread->stack_base);
+  image_thread->stack_base = NULL;
+  kfree(image_thread);
+  kfree(image);
+
+  if (vmm_switch_directory(new_dir) != 0) {
+    KLOG_ERROR("EXEC", "Failed to activate replacement address space");
+    return -1;
+  }
+  vmm_free_directory(old_dir);
+
+  memcpy(frame, &new_frame, sizeof(*frame));
+  frame->rax = 0;
+  return 0;
 }
 
 /**
@@ -1072,6 +1253,8 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   proc->should_terminate = 0;
   proc->exit_status = 0;
   proc->uses_framebuffer = false;
+  process_inherit_cwd(proc, current_process);
+  file_table_init(proc->fd_table, current_process ? current_process->fd_table : NULL);
 
   proc->pml4 = (uint64_t *)vmm_get_kernel_directory();
   proc->cr3 = (uint64_t)proc->pml4;
@@ -1096,6 +1279,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
       proc, name, entry, arg, stack_size, THREAD_PRIORITY_NORMAL);
   if (!main_thread) {
     KLOG_ERROR("PROC", "Failed to create main thread");
+    file_table_destroy(proc->fd_table);
     kfree(proc);
     return NULL;
   }
@@ -1159,6 +1343,111 @@ int process_join(process_t *proc) {
   process_reap(proc);
 
   return status;
+}
+
+typedef struct {
+  process_t *parent;
+  int pid;
+} process_wait_context_t;
+
+static process_t *process_find_waitable_child(process_t *parent, int pid) {
+  process_t *child = parent->first_child;
+  while (child != NULL) {
+    if ((pid == -1 || child->pid == (uint32_t)pid) &&
+        (child->state == PROCESS_STATE_ZOMBIE ||
+         child->state == PROCESS_STATE_TERMINATED)) {
+      return child;
+    }
+    child = child->sibling_next;
+  }
+  return NULL;
+}
+
+static bool process_child_waitable(void *context) {
+  process_wait_context_t *wait = (process_wait_context_t *)context;
+  return process_find_waitable_child(wait->parent, wait->pid) != NULL;
+}
+
+int process_waitpid(int pid, int *status, int options) {
+  process_t *parent = process_current();
+  if (parent == NULL || (pid == 0 || pid < -1) || options != 0) {
+    return -1;
+  }
+
+  process_t *child = parent->first_child;
+  while (child != NULL && (pid != -1 && child->pid != (uint32_t)pid)) {
+    child = child->sibling_next;
+  }
+  if (child == NULL) {
+    return -1;
+  }
+
+  process_wait_context_t wait = {.parent = parent, .pid = pid};
+  wait_queue_wait(&parent->wait_queue, process_child_waitable, &wait);
+
+  child = process_find_waitable_child(parent, pid);
+  if (child == NULL) {
+    return -1;
+  }
+
+  int child_pid = (int)child->pid;
+  if (status != NULL) {
+    *status = child->exit_status;
+  }
+  process_reap(child);
+  return child_pid;
+}
+
+bool process_complete_exit(process_t *proc) {
+  if (proc == NULL || proc == idle_process) {
+    return false;
+  }
+
+  uint64_t flags = process_lock();
+  process_t *child = proc->first_child;
+  proc->first_child = NULL;
+  while (child != NULL) {
+    process_t *next = child->sibling_next;
+    child->parent = idle_process;
+    child->sibling_prev = NULL;
+    child->sibling_next = idle_process->first_child;
+    if (idle_process->first_child != NULL) {
+      idle_process->first_child->sibling_prev = child;
+    }
+    idle_process->first_child = child;
+    child = next;
+  }
+  process_t *parent = proc->parent;
+  bool orphan = parent == NULL || parent == idle_process;
+  process_unlock(flags);
+
+  wait_queue_wake_all(&proc->wait_queue);
+  if (parent != NULL) {
+    wait_queue_wake_all(&parent->wait_queue);
+  }
+  return orphan;
+}
+
+void process_reap(process_t *proc) {
+  if (proc == NULL || proc == idle_process) {
+    return;
+  }
+
+  uint32_t pid = proc->pid;
+  bool was_gui = proc->uses_framebuffer;
+  proc_log_final_reap(pid);
+
+  uint64_t flags = process_lock();
+  process_unlink(proc);
+  process_unlock(flags);
+  kfree(proc);
+
+  if (was_gui && !console_is_enabled()) {
+    keyboard_clear_buffer();
+    console_set_enabled(true);
+    console_clear(VGA_COLOR_BLACK);
+    console_refresh();
+  }
 }
 
 void process_kill(process_t *proc) {

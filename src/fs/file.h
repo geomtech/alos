@@ -43,22 +43,41 @@ typedef enum {
  * Structure File Descriptor
  * ======================================== */
 
-/**
- * Représente un descripteur de fichier ouvert.
- * Peut pointer vers la console, un fichier VFS, ou un socket.
- */
-typedef struct file_descriptor {
+typedef struct open_file_description {
     file_type_t type;           /* Type of file */
     uint32_t    flags;          /* Open flags (O_RDONLY, etc.) */
-    uint32_t    position;       /* Current read/write position (for files) */
+    uint32_t    position;       /* Shared offset after fork() */
     
     union {
         void*               vfs_node;   /* VFS node (for FILE_TYPE_FILE) */
         struct tcp_socket*  socket;     /* TCP socket (for FILE_TYPE_SOCKET) */
     };
     
-    int         ref_count;      /* Reference count (for dup/fork) */
+    volatile int ref_count;     /* Descriptor-table references */
+} open_file_description_t;
+
+/**
+ * Entrée d'une table de descripteurs propre à un processus.
+ * Plusieurs entrées/processus peuvent référencer la même description ouverte.
+ */
+typedef struct file_descriptor {
+    open_file_description_t* description;
+    uint32_t descriptor_flags; /* Réservé pour FD_CLOEXEC */
 } file_descriptor_t;
+
+void file_table_init(file_descriptor_t table[MAX_FD],
+                     const file_descriptor_t parent[MAX_FD]);
+void file_table_destroy(file_descriptor_t table[MAX_FD]);
+int file_table_install(file_descriptor_t table[MAX_FD],
+                       open_file_description_t* description);
+open_file_description_t* file_table_get(file_descriptor_t table[MAX_FD],
+                                        int fd);
+int file_table_close(file_descriptor_t table[MAX_FD], int fd);
+open_file_description_t* file_description_create(file_type_t type,
+                                                 uint32_t flags,
+                                                 void* resource);
+void file_description_retain(open_file_description_t* description);
+void file_description_release(open_file_description_t* description);
 
 /* ========================================
  * Socket Address Structures (BSD-like)

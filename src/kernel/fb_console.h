@@ -6,7 +6,11 @@
 #include <stdbool.h>
 #include "../include/limine.h"
 
-/* Console maximum dimensions (in characters) */
+/* Console dimensions (in characters).
+ * FB_CONSOLE_COLS/ROWS are computed at runtime from the actual framebuffer
+ * resolution (see fb_console_init) so the console fills the whole screen
+ * instead of a fixed 80x25 (640x400px) region. FB_CONSOLE_MAX_COLS/ROWS are
+ * the static buffer capacities the computed values are clamped to. */
 #define FB_CONSOLE_MAX_COLS     320
 #define FB_CONSOLE_MAX_ROWS     120
 #define FB_CONSOLE_BUFFER_LINES 250

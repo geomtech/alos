@@ -646,6 +646,27 @@ thread_t *thread_create_user(process_t *proc, const char *name,
   return thread;
 }
 
+thread_t *thread_create_user_from_frame(process_t *proc, const char *name,
+                                        const interrupt_frame_t *frame,
+                                        void *kernel_stack,
+                                        uint64_t kernel_stack_size) {
+  if (frame == NULL) {
+    return NULL;
+  }
+
+  thread_t *thread =
+      thread_create_user(proc, name, frame->rip, frame->rsp, NULL,
+                         kernel_stack, kernel_stack_size);
+  if (thread == NULL) {
+    return NULL;
+  }
+
+  interrupt_frame_t *child_frame = (interrupt_frame_t *)thread->rsp;
+  memcpy(child_frame, frame, sizeof(*child_frame));
+  child_frame->rax = 0;
+  return thread;
+}
+
 /* ========================================
  * Thread Control
  * ======================================== */
@@ -1718,6 +1739,7 @@ static void reaper_thread_func(void *arg) {
     KLOG_INFO("REAPER", zombie->name);
 
     /* Si le thread a un processus owner, vérifier s'il faut le nettoyer */
+    process_t *orphan_process = NULL;
     if (zombie->owner) {
       process_t *proc = zombie->owner;
 
@@ -1731,13 +1753,21 @@ static void reaper_thread_func(void *arg) {
 
         proc_log_last_thread_exited(proc->pid);
 
+        /* Marquer le processus comme zombie AVANT de réveiller les threads en
+         * attente (process_join/waitpid), pour qu'ils voient un état cohérent
+         * dès leur réveil. */
+        proc->state = PROCESS_STATE_ZOMBIE;
+
+        /* Chaque processus possède sa table, mais les descriptions ouvertes
+         * héritées sont partagées et ne ferment la ressource qu'à la dernière
+         * référence. */
+        file_table_destroy(proc->fd_table);
+
         /* Conserver exit_status (fourni par sys_exit ou par ce thread) */
         if (proc->exit_status == 0 && zombie->exit_status != 0) {
           proc->exit_status = zombie->exit_status;
         }
 
-        /* Transition vers ZOMBIE avant tout réveil */
-        proc->state = PROCESS_STATE_ZOMBIE;
         proc_log_zombie(proc->pid, proc->exit_status);
 
         /* Libérer les ressources lourdes si possible (Page Directory et stack kernel) */
@@ -1753,16 +1783,10 @@ static void reaper_thread_func(void *arg) {
           proc->stack_base = NULL;
         }
 
-        /* Réveiller les threads en attente sur ce processus (process_join / waitpid) */
         proc_log_waking_parent(proc->pid);
-        wait_queue_wake_all(&proc->wait_queue);
-        if (proc->parent) {
-          wait_queue_wake_all(&proc->parent->wait_queue);
+        if (process_complete_exit(proc)) {
+          orphan_process = proc;
         }
-
-        /* IMPORTANT: Ne PAS kfree(proc) ici !
-         * Le process_t zombie doit rester valide jusqu'au wait/reap du parent.
-         */
       }
 
       zombie->owner = NULL;
@@ -1777,6 +1801,10 @@ static void reaper_thread_func(void *arg) {
     /* Don't free the main thread structure (it's static) */
     if (zombie != &g_main_thread_struct) {
       kfree(zombie);
+    }
+
+    if (orphan_process != NULL) {
+      process_reap(orphan_process);
     }
   }
 }

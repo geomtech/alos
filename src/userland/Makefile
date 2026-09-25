@@ -49,7 +49,7 @@ CMDS = sh echo pwd cd cat ls mkdir touch rm rmdir meminfo ps ping wget httpd
 BIN_DIR = bin
 CMD_BINS = $(addprefix $(BIN_DIR)/, $(CMDS))
 
-all: libc_build threads-test crash-test gui_app $(CMD_BINS)
+all: libc_build threads-test crash-test fork-test exec-test gui_app $(CMD_BINS)
 
 # Force libc build
 .PHONY: libc_build
@@ -69,6 +69,12 @@ threads-test: libc_build threads-test.o
 crash-test: libc_build crash-test.o
 	$(LD) -T linker.ld -o crash-test $(CRT0) crash-test.o $(LIBC)
 
+fork-test: libc_build fork-test.o
+	$(LD) -T linker.ld -o fork-test $(CRT0) fork-test.o $(LIBC)
+
+exec-test: libc_build exec-test.o
+	$(LD) -T linker.ld -o exec-test $(CRT0) exec-test.o $(LIBC)
+
 gui_app: libc_build $(GUI_OBJ)
 	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
 
@@ -79,7 +85,7 @@ cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf bin cmd/*.o *.o threads-test crash-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 

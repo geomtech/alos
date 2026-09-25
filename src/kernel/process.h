@@ -3,6 +3,7 @@
 #define PROCESS_H
 
 #include "thread.h" /* Include du nouveau système de threads */
+#include "../fs/file.h"
 #include "../include/memlayout.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -16,6 +17,7 @@
   32768                     /* Taille de la stack kernel par thread (32 KiB) */
 #define MAX_PROCESSES 64    /* Nombre max de processus */
 #define PROCESS_NAME_MAX 32 /* Longueur max du nom de processus */
+#define PROCESS_CWD_MAX 4096 /* Doit rester compatible avec VFS_MAX_PATH */
 
 /* User stack layout is centralized in ../include/memlayout.h */
 
@@ -78,6 +80,8 @@ typedef struct process {
   uint64_t *pml4;      /* PML4 (Page Map Level 4) */
   uint64_t heap_start; /* Start of heap (initial program break) */
   uint64_t heap_brk;   /* Current program break */
+  char cwd[PROCESS_CWD_MAX]; /* Répertoire courant, canonique et absolu */
+  file_descriptor_t fd_table[MAX_FD]; /* Table privée, descriptions partageables */
 
   /* ===== Stack ===== */
   void *stack_base;    /* Base de la stack allouée (pour kfree) */
@@ -205,17 +209,41 @@ int process_execute(const char *filename);
 int process_exec_and_wait(const char *filename, int argc, char **argv);
 
 /**
- * Crée et démarre un processus user mode à partir d'un fichier ELF.
+ * Charge et démarre un programme ELF comme processus User Mode, sans
+ * attendre sa terminaison. Utilisé par process_exec_and_wait() et par
+ * sys_spawn_wait() (qui attend ensuite via process_join()).
  *
  * @param filename  Chemin du fichier ELF à exécuter
  * @param argc      Nombre d'arguments
  * @param argv      Tableau d'arguments
- * @return          Pointeur vers le nouveau process, ou NULL si erreur
+ * @return          Pointeur vers le processus créé, ou NULL si erreur
  */
 process_t *process_spawn(const char *filename, int argc, char **argv);
 
 /**
- * Nettoyage final d'un processus zombie (libération mémoire et détachement).
+ * Duplique le processus user courant et son contexte d'exécution.
+ */
+int process_fork(const interrupt_frame_t *frame);
+
+/**
+ * Remplace transactionnellement l'image du processus user courant.
+ */
+int process_execve(interrupt_frame_t *frame, const char *filename,
+                   char *const argv[], char *const envp[]);
+
+/**
+ * Attend et reap un enfant du processus courant.
+ */
+int process_waitpid(int pid, int *status, int options);
+
+/**
+ * Notifie le parent et adopte les enfants à la terminaison d'un processus.
+ * Retourne vrai si le processus terminé est un orphelin auto-reapable.
+ */
+bool process_complete_exit(process_t *proc);
+
+/**
+ * Détache et libère une structure de processus déjà nettoyée par le reaper.
  */
 void process_reap(process_t *proc);
 
@@ -226,7 +254,6 @@ void proc_log_zombie(uint32_t pid, int status);
 void proc_log_waking_parent(uint32_t pid);
 void proc_log_wait_completed(uint32_t pid, int status);
 void proc_log_final_reap(uint32_t pid);
-
 /* ========================================
  * Nouvelles fonctions Multithreading
  * ======================================== */
@@ -267,6 +294,12 @@ void process_kill_tree(process_t *proc);
  * Retourne le processus courant.
  */
 process_t *process_current(void);
+
+/**
+ * Résout un chemin absolu ou relatif au cwd du processus courant.
+ * Canonicalise les séparateurs, "." et ".." sans remonter au-dessus de "/".
+ */
+int process_resolve_path(const char *path, char *resolved, size_t size);
 
 /**
  * Vérifie si un processus est zombie.

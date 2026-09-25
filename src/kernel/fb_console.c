@@ -301,6 +301,15 @@ static void fb_scroll_buffer(void) {
 /* Cursor functions                             */
 /* ============================================ */
 
+/* Position where the cursor was last drawn, so it can be erased (by
+ * repainting the real buffered character there) before being redrawn at its
+ * new position. Without this, moving the cursor leaves a permanent white
+ * block behind at every previous position (e.g. end of every printed line),
+ * since a solid cursor block is painted directly on raw pixels and nothing
+ * else ever repaints that exact cell afterwards. */
+static int g_last_cursor_col = -1;
+static int g_last_cursor_row = -1;
+
 static void fb_erase_cursor(void) {
     if (!g_initialized || !g_enabled) return;
     if (g_cursor_col < 0 || g_cursor_col >= g_cols || g_cursor_row < 0 || g_cursor_row >= g_rows) return;
@@ -314,6 +323,17 @@ static void fb_erase_cursor(void) {
 static void fb_draw_cursor(void) {
     if (!g_initialized || !g_enabled) return;
     if (g_cursor_col < 0 || g_cursor_col >= g_cols || g_cursor_row < 0 || g_cursor_row >= g_rows) return;
+
+    /* Erase the previous cursor position by repainting the actual buffered
+     * character (if any) that belongs there. */
+    if (g_last_cursor_col >= 0 && g_last_cursor_row >= 0 &&
+        (g_last_cursor_col != g_cursor_col || g_last_cursor_row != g_cursor_row)) {
+        int buffer_row = g_view_start + g_last_cursor_row;
+        if (buffer_row >= 0 && buffer_row < FB_CONSOLE_BUFFER_LINES) {
+            fb_char_t *ch = &g_buffer[buffer_row][g_last_cursor_col];
+            fb_draw_char(g_last_cursor_col, g_last_cursor_row, ch->c, ch->fg, ch->bg);
+        }
+    }
 
     uint32_t x_start = g_cursor_col * FONT_WIDTH;
     uint32_t y_start = g_cursor_row * FONT_HEIGHT;
@@ -329,6 +349,9 @@ static void fb_draw_cursor(void) {
             }
         }
     }
+
+    g_last_cursor_col = g_cursor_col;
+    g_last_cursor_row = g_cursor_row;
 }
 
 
@@ -384,20 +407,14 @@ int fb_console_init(struct limine_framebuffer *fb) {
         return -1;
     }
     
-    /* Calculate dynamic columns and rows to fill full screen */
-    g_cols = g_fb_width / FONT_WIDTH;
-    g_rows = g_fb_height / FONT_HEIGHT;
-
-    if (g_cols > FB_CONSOLE_MAX_COLS) {
-        g_cols = FB_CONSOLE_MAX_COLS;
-    }
-    if (g_rows > FB_CONSOLE_MAX_ROWS) {
-        g_rows = FB_CONSOLE_MAX_ROWS;
-    }
-    if (g_rows > FB_CONSOLE_BUFFER_LINES) {
-        g_rows = FB_CONSOLE_BUFFER_LINES;
-    }
+    /* Compute console dimensions from the actual framebuffer resolution so
+     * the console fills the whole screen instead of a fixed 80x25 region.
+     * Clamp to the static buffer capacity. */
+    g_cols = (int)(g_fb_width / FONT_WIDTH);
+    if (g_cols > FB_CONSOLE_MAX_COLS) g_cols = FB_CONSOLE_MAX_COLS;
     if (g_cols < 1) g_cols = 1;
+    g_rows = (int)(g_fb_height / FONT_HEIGHT);
+    if (g_rows > FB_CONSOLE_BUFFER_LINES) g_rows = FB_CONSOLE_BUFFER_LINES;
     if (g_rows < 1) g_rows = 1;
 
     serial_str("[FB] Console geometry: ");
@@ -405,7 +422,6 @@ int fb_console_init(struct limine_framebuffer *fb) {
     serial_str(" cols x ");
     serial_hex((uint64_t)g_rows);
     serial_str(" rows\n");
-
     /* Initialize buffer */
     for (int row = 0; row < FB_CONSOLE_BUFFER_LINES; row++) {
         for (int col = 0; col < FB_CONSOLE_MAX_COLS; col++) {
@@ -452,7 +468,7 @@ void fb_console_clear(uint32_t bg_color) {
     
     /* Clear buffer */
     for (int row = 0; row < FB_CONSOLE_BUFFER_LINES; row++) {
-        for (int col = 0; col < g_cols; col++) {
+        for (int col = 0; col < FB_CONSOLE_MAX_COLS; col++) {
             g_buffer[row][col].c = ' ';
             g_buffer[row][col].fg = g_fg_color;
             g_buffer[row][col].bg = bg_color;

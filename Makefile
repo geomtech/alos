@@ -74,8 +74,8 @@ NET_CORE_SRC = src/net/core/net.c src/net/core/netdev.c
 NET_CORE_OBJ = src/net/core/net.o src/net/core/netdev.o
 
 # Filesystem (VFS + drivers)
-FS_SRC = src/fs/vfs.c src/fs/ext2.c
-FS_OBJ = src/fs/vfs.o src/fs/ext2.o
+FS_SRC = src/fs/vfs.c src/fs/ext2.c src/fs/file.c
+FS_OBJ = src/fs/vfs.o src/fs/ext2.o src/fs/file.o
 
 
 # Shell
@@ -349,6 +349,8 @@ fs_root: disk_structure userland
 	@mkdir -p fs_root/bin
 	@cp -v src/userland/threads-test fs_root/bin/
 	@cp -v src/userland/crash-test fs_root/bin/
+	@cp -v src/userland/fork-test fs_root/bin/
+	@cp -v src/userland/exec-test fs_root/bin/
 	@cp -v src/userland/gui_app fs_root/bin/gui
 	@cp -v src/userland/bin/* fs_root/bin/
 
