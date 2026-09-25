@@ -70,6 +70,21 @@ typedef struct {
   uint64_t rsp;
 } proc_info_t;
 
+/* Structure pour SYS_READDIR */
+typedef struct {
+  char name[256];
+  uint32_t type;
+  uint32_t size;
+} userspace_dirent_t;
+
+/* Structure pour SYS_MEMINFO */
+typedef struct {
+  uint32_t total_size;
+  uint32_t free_size;
+  uint32_t block_count;
+  uint32_t free_block_count;
+} meminfo_t;
+
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256
 

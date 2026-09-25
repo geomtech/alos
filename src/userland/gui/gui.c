@@ -376,7 +376,10 @@ void gui_render(void) {
   }
 }
 
-void gui_request_quit(void) { g_quit_requested = true; }
+void gui_request_quit(void) {
+  printf("[GUI] Exit requested -> shutting down GUI\n");
+  g_quit_requested = true;
+}
 
 void gui_set_wallpaper_color(uint32_t color) {
   compositor_set_background_color(color);
@@ -453,6 +456,7 @@ static void test_button_clicked(gui_button_t* button) {
 /* Callbacks pour quitter vers le shell */
 static void exit_button_clicked(gui_button_t* button) {
   (void)button;
+  printf("[GUI] Exit requested: Red button clicked\n");
   gui_request_quit();
 }
 
@@ -465,10 +469,12 @@ static void crash_button_clicked(gui_button_t* button) {
 
 static void main_window_on_close(window_t *win) {
   (void)win;
+  printf("[GUI] Exit requested: Main window close button clicked\n");
   gui_request_quit();
 }
 
 static void menu_quit(void) {
+  printf("[GUI] Exit requested: Menu quit clicked\n");
   gui_request_quit();
 }
 
@@ -552,7 +558,7 @@ window_t *gui_create_components_test_window(void)
 
   /* Label d'aide pour revenir au shell */
   gui_label_t *help_label = label_create((rect_t){20, 270, 460, 25},
-                                         "Pour revenir au shell : Echap, Q, Ctrl+Q, ou le bouton rouge",
+                                         "Pour revenir au shell : Echap, Ctrl+Q, ou le bouton rouge",
                                          rgba(90, 90, 90, 255));
   if (help_label)
     label_set_align(help_label, LABEL_ALIGN_CENTER);
@@ -615,7 +621,7 @@ void gui_setup_demo_menus(void) {
     menubar_add_separator(alos_menu);
     menubar_add_item(alos_menu, "Test Crash (SIGSEGV)", NULL, menu_test_crash);
     menubar_add_separator(alos_menu);
-    menubar_add_item(alos_menu, "Retour au Shell", "Esc / Q", menu_quit);
+    menubar_add_item(alos_menu, "Retour au Shell", "Esc", menu_quit);
     menubar_add_item(alos_menu, "Quitter ALOS", "Ctrl+Q", menu_quit);
   }
 

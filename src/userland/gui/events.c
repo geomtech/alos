@@ -7,6 +7,8 @@
 #include "compositor.h"
 #include "gui.h"
 #include <string.h>
+#include <stdio.h>
+#include <sys/syscall.h>
 
 /* File d'événements circulaire */
 static event_t g_event_queue[EVENT_QUEUE_SIZE];
@@ -33,6 +35,13 @@ int events_init(void) {
     g_mouse_buttons = MOUSE_BUTTON_NONE;
     g_modifiers = MOD_NONE;
     g_timestamp = 0;
+
+    /* Vider les événements résiduels éventuels du kernel */
+    input_event_t dummy;
+    while (syscall1(SYS_GET_EVENT, (long)&dummy) == 1) {
+        /* drain */
+    }
+
     return 0;
 }
 
@@ -147,17 +156,12 @@ void events_dispatch(event_t* event) {
 
             /* Raccourcis pour quitter la GUI et revenir au shell :
              * 1. Touche Échap (Escape) : scancode 0x01 ou ASCII 27
-             * 2. Touche 'q' ou 'Q'
-             * 3. Ctrl+C : ASCII 3 ou scancode 0x2E avec MOD_CTRL
-             * 4. Ctrl+Q : ASCII 17 ou scancode 0x10 avec MOD_CTRL
-             * 5. Alt+F4 : scancode 0x3E avec MOD_ALT
+             * 2. Ctrl+C : ASCII 3 ou scancode 0x2E avec MOD_CTRL
+             * 3. Ctrl+Q : ASCII 17 ou scancode 0x10 avec MOD_CTRL
+             * 4. Alt+F4 : scancode 0x3E avec MOD_ALT
              */
             if (event->key.scancode == 0x01 || event->key.character == 27) {
-                gui_request_quit();
-                break;
-            }
-
-            if (event->key.character == 'q' || event->key.character == 'Q') {
+                printf("[GUI] Exit shortcut: Escape key pressed\n");
                 gui_request_quit();
                 break;
             }
@@ -165,6 +169,7 @@ void events_dispatch(event_t* event) {
             if (((g_modifiers & MOD_CTRL) || (event->key.mods & MOD_CTRL)) &&
                 (event->key.character == 'c' || event->key.character == 'C' ||
                  event->key.character == 3 || event->key.scancode == 0x2E)) {
+                printf("[GUI] Exit shortcut: Ctrl+C pressed\n");
                 gui_request_quit();
                 break;
             }
@@ -172,11 +177,13 @@ void events_dispatch(event_t* event) {
             if (((g_modifiers & MOD_CTRL) || (event->key.mods & MOD_CTRL)) &&
                 (event->key.character == 'q' || event->key.character == 'Q' ||
                  event->key.character == 17 || event->key.scancode == 0x10)) {
+                printf("[GUI] Exit shortcut: Ctrl+Q pressed\n");
                 gui_request_quit();
                 break;
             }
 
             if (((g_modifiers & MOD_ALT) || (event->key.mods & MOD_ALT)) && event->key.scancode == 0x3E) {
+                printf("[GUI] Exit shortcut: Alt+F4 pressed\n");
                 gui_request_quit();
                 break;
             }

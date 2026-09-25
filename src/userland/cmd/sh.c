@@ -503,6 +503,14 @@ static int execute_line(char *line) {
 
   /* 2. Exécution d'un programme externe via SYS_SPAWN_WAIT */
   int ret = spawn_wait(cmd_argv[0], cmd_argc, cmd_argv);
+  if (ret < 0 && strchr(cmd_argv[0], '/') == NULL) {
+    char bin_path[256];
+    strncpy(bin_path, "/bin/", sizeof(bin_path) - 1);
+    bin_path[sizeof(bin_path) - 1] = '\0';
+    strncat(bin_path, cmd_argv[0], sizeof(bin_path) - strlen(bin_path) - 1);
+    ret = spawn_wait(bin_path, cmd_argc, cmd_argv);
+  }
+
   if (ret < 0) {
     if (cmd_argv[0][0] == '/' || cmd_argv[0][0] == '.') {
       printf("sh: %s: No such file or directory\n", cmd_argv[0]);

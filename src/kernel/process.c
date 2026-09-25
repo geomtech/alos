@@ -764,20 +764,38 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   }
 
   char resolved_filename[PROCESS_CWD_MAX];
-  if (process_resolve_path(filename, resolved_filename,
-                           sizeof(resolved_filename)) != 0) {
-    if (filename[0] != '/' && filename[0] != '.') {
-      char bin_path[PROCESS_CWD_MAX];
-      safe_strcpy(bin_path, "/bin/", sizeof(bin_path));
-      uint32_t blen = 5;
-      for (uint32_t i = 0; filename[i] && blen < sizeof(bin_path) - 1; i++) {
-        bin_path[blen++] = filename[i];
-      }
-      bin_path[blen] = '\0';
-      if (process_resolve_path(bin_path, resolved_filename, sizeof(resolved_filename)) != 0) {
+  bool has_slash = false;
+  for (int i = 0; filename[i] != '\0'; i++) {
+    if (filename[i] == '/') {
+      has_slash = true;
+      break;
+    }
+  }
+
+  if (!has_slash) {
+    /* Nom de commande simple sans chemin (ex: 'ls', 'echo') : tester /bin/ */
+    char bin_path[PROCESS_CWD_MAX];
+    safe_strcpy(bin_path, "/bin/", sizeof(bin_path));
+    uint32_t blen = 5;
+    for (uint32_t i = 0; filename[i] && blen < sizeof(bin_path) - 1; i++) {
+      bin_path[blen++] = filename[i];
+    }
+    bin_path[blen] = '\0';
+
+    vfs_node_t *bin_node = vfs_resolve_path(bin_path);
+    if (bin_node != NULL && (bin_node->type & VFS_FILE)) {
+      safe_strcpy(resolved_filename, bin_path, sizeof(resolved_filename));
+    } else {
+      /* Sinon tenter résolution par rapport au CWD */
+      if (process_resolve_path(filename, resolved_filename,
+                               sizeof(resolved_filename)) != 0) {
         return NULL;
       }
-    } else {
+    }
+  } else {
+    /* Chemin absolu ou relatif avec slash (ex: '/bin/ls', './test') */
+    if (process_resolve_path(filename, resolved_filename,
+                             sizeof(resolved_filename)) != 0) {
       return NULL;
     }
   }
@@ -785,6 +803,13 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   KLOG_INFO("EXEC", "=== Spawning Program ===");
   KLOG_INFO("EXEC", filename);
+
+  /* Vérifier si le fichier existe et est un fichier régulier */
+  vfs_node_t *exec_node = vfs_resolve_path(filename);
+  if (exec_node == NULL || !(exec_node->type & VFS_FILE)) {
+    KLOG_WARN("EXEC", "Executable file not found");
+    return NULL;
+  }
 
   /* Vérifier si le fichier est un ELF valide */
   if (!elf_is_valid(filename)) {

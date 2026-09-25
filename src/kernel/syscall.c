@@ -13,6 +13,7 @@
 #include "../shell/shell.h"
 #include "console.h"
 #include "keyboard.h"
+#include "input.h"
 #include "klog.h"
 #include "process.h"
 #include "sync.h"
@@ -276,11 +277,7 @@ static int sys_open(const char *path, int flags) {
   }
 
   char resolved[VFS_MAX_PATH];
-<<<<<<< HEAD
-  if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
-=======
   if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
->>>>>>> 6c6816634b11661cad2b0a0e0989cb1173cc6628
     return -1;
   }
 
@@ -468,14 +465,7 @@ static int sys_chdir(const char *path) {
   return 0;
 }
 
-/**
- * Structure pour READDIR userspace
- */
-typedef struct {
-  char name[256];
-  uint32_t type;
-  uint32_t size;
-} userspace_dirent_t;
+
 
 /**
  * SYS_READDIR (89) - Lire une entrée de répertoire
@@ -699,15 +689,7 @@ static int sys_clear(void) {
   return 0;
 }
 
-/**
- * Structure pour les infos mémoire
- */
-typedef struct {
-  uint32_t total_size;
-  uint32_t free_size;
-  uint32_t block_count;
-  uint32_t free_block_count;
-} meminfo_t;
+
 
 /**
  * SYS_MEMINFO (102) - Obtenir les informations mémoire
@@ -850,11 +832,10 @@ static int sys_get_framebuffer(framebuffer_info_t *info) {
     proc->uses_framebuffer = true;
   }
   console_set_enabled(false);
+  input_clear_events();
 
   return 0;
 }
-
-#include "input.h"
 
 /**
  * SYS_GET_EVENT (111) - Obtenir un événement d'entrée
@@ -1330,57 +1311,7 @@ static void *sys_brk(void *addr) {
   return (void *)new_brk;
 }
 
-/**
- * SYS_SPAWN_WAIT (201) - Lance un programme ELF et attend sa fin.
- *
- * @param path  Chemin du binaire ELF (absolu, relatif ou nom direct)
- * @param argc  Nombre d'arguments
- * @param argv  Tableau d'arguments
- * @return Code de sortie du processus ou -1 si introuvable / erreur
- */
-static int sys_spawn_wait(const char *path, int argc, char **argv) {
-  if (path == NULL) {
-    return -1;
-  }
 
-  char resolved[VFS_MAX_PATH];
-  if (path[0] == '/') {
-    strncpy(resolved, path, sizeof(resolved) - 1);
-    resolved[sizeof(resolved) - 1] = '\0';
-  } else if (path[0] == '.' && (path[1] == '/' || (path[1] == '.' && path[2] == '/'))) {
-    if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
-      return -1;
-    }
-  } else {
-    /* Chemin relatif simple sans ./ - essayer d'abord dans /bin/ */
-    char bin_path[VFS_MAX_PATH];
-    strncpy(bin_path, "/bin/", sizeof(bin_path) - 1);
-    bin_path[sizeof(bin_path) - 1] = '\0';
-    strncat(bin_path, path, sizeof(bin_path) - strlen(bin_path) - 1);
-    vfs_node_t *bin_node = vfs_resolve_path(bin_path);
-    if (bin_node != NULL && (bin_node->type & VFS_FILE)) {
-      strncpy(resolved, bin_path, sizeof(resolved) - 1);
-      resolved[sizeof(resolved) - 1] = '\0';
-    } else {
-      /* Sinon tenter résolution par rapport au CWD */
-      if (resolve_user_path(path, resolved, sizeof(resolved)) != 0) {
-        return -1;
-      }
-    }
-  }
-
-  vfs_node_t *node = vfs_resolve_path(resolved);
-  if (node == NULL || !(node->type & VFS_FILE)) {
-    return -1;
-  }
-
-  if (argc <= 0 || argv == NULL) {
-    char *default_argv[] = {(char *)resolved, NULL};
-    return process_exec_and_wait(resolved, 1, default_argv);
-  }
-
-  return process_exec_and_wait(resolved, argc, argv);
-}
 
 /* ========================================
  * Dispatcher principal
@@ -1506,10 +1437,6 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_CREATE:
     result = sys_create((const char *)regs->rdi);
-    break;
-
-  case SYS_UNLINK:
-    result = sys_unlink((const char *)regs->rdi);
     break;
 
 
