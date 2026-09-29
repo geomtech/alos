@@ -3,6 +3,7 @@
 #define PROCESS_H
 
 #include "thread.h" /* Include du nouveau système de threads */
+#include "shared_memory.h"
 #include "../fs/file.h"
 #include "../include/memlayout.h"
 #include <stdbool.h>
@@ -82,6 +83,7 @@ typedef struct process {
   uint64_t heap_brk;   /* Current program break */
   char cwd[PROCESS_CWD_MAX]; /* Répertoire courant, canonique et absolu */
   file_descriptor_t fd_table[MAX_FD]; /* Table privée, descriptions partageables */
+  shm_process_mapping_t shm_mappings[SHM_MAX_MAPPINGS];
 
   /* ===== Stack ===== */
   void *stack_base;    /* Base de la stack allouée (pour kfree) */

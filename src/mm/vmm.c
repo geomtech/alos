@@ -292,6 +292,18 @@ void vmm_unmap_page(uint64_t virt)
     invlpg(virt);
 }
 
+void vmm_unmap_page_in_dir(page_directory_t *dir, uint64_t virt)
+{
+    if (dir == NULL) {
+        return;
+    }
+
+    page_directory_t *saved = current_directory;
+    current_directory = dir;
+    vmm_unmap_page(virt);
+    current_directory = saved;
+}
+
 int vmm_switch_directory(page_directory_t* dir)
 {
     if (dir == NULL) {

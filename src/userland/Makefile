@@ -2,7 +2,7 @@
 # Userland Makefile
 CC = gcc
 LD = ld
-CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Ilibc/include -Igui/freetype/include -DFT2_BUILD_LIBRARY
+CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Ilibc/include -Ilibgui/include -Igui/freetype/include -DFT2_BUILD_LIBRARY
 LDFLAGS = -static -nostdlib
 
 LIBC_DIR = libc
@@ -49,13 +49,20 @@ CMDS = sh echo pwd cd cat ls mkdir touch rm rmdir meminfo ps ping wget httpd
 BIN_DIR = bin
 CMD_BINS = $(addprefix $(BIN_DIR)/, $(CMDS))
 
-all: libc_build threads-test crash-test fork-test exec-test gui_app $(CMD_BINS)
+LIBGUI_OBJ = libgui/gui.o libgui/draw.o
+LIBGUI = libgui/libgui.a
+DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
+
+all: libc_build threads-test crash-test fork-test exec-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 .PHONY: libc_build
 
 libc_build:
 	$(MAKE) -C $(LIBC_DIR)
+
+$(LIBC) $(CRT0): libc_build
+	@test -f $@
 
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
@@ -78,6 +85,42 @@ exec-test: libc_build exec-test.o
 gui_app: libc_build $(GUI_OBJ)
 	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
 
+sh: libc_build sh.o
+	$(LD) -T linker.ld -o sh $(CRT0) sh.o $(LIBC)
+
+ls: libc_build ls.o
+	$(LD) -T linker.ld -o ls $(CRT0) ls.o $(LIBC)
+
+cat: libc_build cat.o
+	$(LD) -T linker.ld -o cat $(CRT0) cat.o $(LIBC)
+
+mkdir: libc_build mkdir.o
+	$(LD) -T linker.ld -o mkdir $(CRT0) mkdir.o $(LIBC)
+
+touch: libc_build touch.o
+	$(LD) -T linker.ld -o touch $(CRT0) touch.o $(LIBC)
+
+rm: libc_build rm.o
+	$(LD) -T linker.ld -o rm $(CRT0) rm.o $(LIBC)
+
+rmdir: libc_build rmdir.o
+	$(LD) -T linker.ld -o rmdir $(CRT0) rmdir.o $(LIBC)
+
+meminfo: libc_build meminfo.o
+	$(LD) -T linker.ld -o meminfo $(CRT0) meminfo.o $(LIBC)
+
+gui-test: libc_build $(GUI_OBJ)
+	$(LD) -T linker.ld -o gui-test $(CRT0) $(GUI_OBJ) $(LIBC)
+
+$(LIBGUI): $(LIBGUI_OBJ)
+	ar rcs $@ $^
+
+desktop_app: libc_build $(DESKTOP_OBJ)
+	$(LD) -T linker.ld -o desktop_app $(CRT0) $(DESKTOP_OBJ) $(LIBC)
+
+gui-demo: libc_build gui-demo.o $(LIBGUI)
+	$(LD) -T linker.ld -o gui-demo $(CRT0) gui-demo.o $(LIBGUI) $(LIBC)
+
 cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -86,6 +129,7 @@ cmd/%.o: cmd/%.c
 
 clean:
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 

@@ -85,6 +85,19 @@ typedef struct {
   uint32_t free_block_count;
 } meminfo_t;
 
+/* IPC local, memoire partagee et serveur d'affichage */
+#define SYS_IPC_LISTEN 202
+#define SYS_IPC_CONNECT 203
+#define SYS_IPC_ACCEPT 204
+#define SYS_IPC_SEND 205
+#define SYS_IPC_RECV 206
+#define SYS_SHM_CREATE 207
+#define SYS_SHM_MAP 208
+#define SYS_SHM_UNMAP 209
+#define SYS_DISPLAY_ACQUIRE 210
+#define SYS_DISPLAY_RELEASE 211
+#define SYS_SHM_SIZE 212
+
 /* Nombre maximum de syscalls */
 #define MAX_SYSCALLS 256
 

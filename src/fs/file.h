@@ -6,6 +6,8 @@
 
 /* Forward declaration */
 struct tcp_socket;
+struct ipc_endpoint;
+struct shm_object;
 
 /* ========================================
  * Constantes
@@ -15,6 +17,7 @@ struct tcp_socket;
 #define FD_STDIN            0       /* Standard input */
 #define FD_STDOUT           1       /* Standard output */
 #define FD_STDERR           2       /* Standard error */
+#define FD_CLOEXEC          0x0001
 
 /* ========================================
  * Types de fichiers
@@ -25,7 +28,9 @@ typedef enum {
     FILE_TYPE_CONSOLE,          /* Console (stdin/stdout/stderr) */
     FILE_TYPE_FILE,             /* Regular file (VFS) */
     FILE_TYPE_SOCKET,           /* Network socket (TCP/UDP) */
-    FILE_TYPE_PIPE              /* Pipe (future) */
+    FILE_TYPE_PIPE,             /* Pipe (future) */
+    FILE_TYPE_IPC,
+    FILE_TYPE_SHM
 } file_type_t;
 
 /* ========================================
@@ -51,6 +56,8 @@ typedef struct open_file_description {
     union {
         void*               vfs_node;   /* VFS node (for FILE_TYPE_FILE) */
         struct tcp_socket*  socket;     /* TCP socket (for FILE_TYPE_SOCKET) */
+        struct ipc_endpoint* ipc_endpoint;
+        struct shm_object* shm_object;
     };
     
     volatile int ref_count;     /* Descriptor-table references */
@@ -68,6 +75,7 @@ typedef struct file_descriptor {
 void file_table_init(file_descriptor_t table[MAX_FD],
                      const file_descriptor_t parent[MAX_FD]);
 void file_table_destroy(file_descriptor_t table[MAX_FD]);
+void file_table_close_on_exec(file_descriptor_t table[MAX_FD]);
 int file_table_install(file_descriptor_t table[MAX_FD],
                        open_file_description_t* description);
 open_file_description_t* file_table_get(file_descriptor_t table[MAX_FD],

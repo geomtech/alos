@@ -108,15 +108,15 @@ Next major milestones:
 ### User Interface
 - [x] Interactive Shell with history
 - [x] Persistent history (`/config/history`)
-- [x] GUI + Mouse
-- [x] Window manager/compositor
+- [x] Multiprocess userland desktop + mouse
+- [x] Window manager/compositor with independent ELF applications
 - [ ] OpenGL support
 - [x] Framebuffer console (VESA/GOP)
 - [ ] UTF-8 string and console
 - [x] Font rendering (TrueType/FreeType)
 - [x] Damage-based compositor rendering and GUI event-loop optimizations
 - [x] Basic GUI component/widget framework
-- [ ] Desktop environment
+- [x] Desktop environment (launcher, taskbar, maximize/minimize, split screen)
 - [ ] Advanced widget toolkit (layout, theming, richer controls)
 - [ ] Multi-monitor support
 
