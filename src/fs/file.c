@@ -13,6 +13,7 @@
 #include "../kernel/native_socket.h"
 #include "../kernel/native_network_cleanup.h"
 #include "../kernel/unix_socket.h"
+#include "../kernel/native_epoll.h"
 #include "../include/errno.h"
 
 static spinlock_t table_lock;
@@ -35,6 +36,8 @@ int file_description_poll(open_file_description_t *description, short events) {
     return native_socket_poll(description, events);
   if (description->type == FILE_TYPE_UNIX_SOCKET)
     return unix_socket_poll(description, events);
+  if (description->type == FILE_TYPE_EPOLL)
+    return native_epoll_poll(description, events);
   if (description->type == FILE_TYPE_CONSOLE &&
       (description->flags & O_ACCMODE) == O_WRONLY)
     return events & 4;
@@ -88,6 +91,9 @@ void file_description_release(open_file_description_t *description) {
   } else if (description->type == FILE_TYPE_SHM &&
              description->shm_object != NULL) {
     shm_release(description->shm_object);
+  } else if (description->type == FILE_TYPE_EPOLL &&
+             description->epoll_set != NULL) {
+    native_epoll_release(description->epoll_set);
   }
 
   if (description->type != FILE_TYPE_CONSOLE) {

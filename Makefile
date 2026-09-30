@@ -55,8 +55,8 @@ KERNEL_SRC += src/kernel/native_io.c src/kernel/resource.c
 KERNEL_OBJ += src/kernel/native_io.o src/kernel/resource.o
 KERNEL_SRC += src/kernel/path_ops.c
 KERNEL_OBJ += src/kernel/path_ops.o
-KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/entropy.c src/drivers/virtio_rng.c
-KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/entropy.o src/drivers/virtio_rng.o
+KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/native_epoll.c src/kernel/entropy.c src/drivers/virtio_rng.c
+KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/native_epoll.o src/kernel/entropy.o src/drivers/virtio_rng.o
 KERNEL_SRC += src/kernel/unix_socket.c
 KERNEL_OBJ += src/kernel/unix_socket.o
 

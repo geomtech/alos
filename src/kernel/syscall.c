@@ -40,6 +40,7 @@
 #include "native_network_cleanup.h"
 #include "native_socket.h"
 #include "native_poll.h"
+#include "native_epoll.h"
 #include "posix_file.h"
 #include "entropy.h"
 
@@ -1649,6 +1650,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
   case SYS_NATIVE_POLL:
     result = native_poll((void *)regs->rdi, regs->rsi, (int)regs->rdx);
+    break;
+  case SYS_NATIVE_EPOLL:
+    result = native_epoll_call(regs->rdi, regs->rsi, regs->rdx,
+                               regs->r10, regs->r8);
     break;
   case SYS_FSYNC:
     result = posix_fsync((int)regs->rdi);

@@ -14,6 +14,7 @@ struct shm_object;
 struct wait_queue;
 struct vfs_node;
 struct unix_socket;
+struct epoll_set;
 
 /* ========================================
  * Constantes
@@ -36,7 +37,8 @@ typedef enum {
     FILE_TYPE_PIPE,             /* Bounded anonymous byte stream */
     FILE_TYPE_IPC,
     FILE_TYPE_SHM,
-    FILE_TYPE_UNIX_SOCKET
+    FILE_TYPE_UNIX_SOCKET,
+    FILE_TYPE_EPOLL
 } file_type_t;
 
 /* ========================================
@@ -58,6 +60,7 @@ typedef struct open_file_description {
         struct ipc_endpoint* ipc_endpoint;
         struct shm_object* shm_object;
         struct unix_socket* unix_socket;
+        struct epoll_set* epoll_set;
     };
     
     volatile int ref_count;     /* Descriptor-table references */
