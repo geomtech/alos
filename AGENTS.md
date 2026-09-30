@@ -252,16 +252,19 @@ QEMU Windows/regression scripts use virtio-net; other launch targets differ.
 Inspect their flags rather than assuming PCnet everywhere.
 
 The native TCP/IP stack is not a complete POSIX socket API. Passive IPv4
-sockets/poll are natively tested. Unnamed AF_UNIX stream pairs and SCM_RIGHTS
-descriptor passing are implemented for the Chromium/Mojo transport path, but
-named Unix sockets and peer credentials are not. A native active TCP connect
-SYN path exists; keep it regression-tested before treating it as established,
-and do not assume retransmission/timeout coverage that has not been observed.
-getaddrinfo now has an IPv4 A-record resolver syscall backed by the native DNS
-client; it serializes the resolver's single outstanding query and uses a wait
-queue rather than userland polling. Keep external-DNS tests separate from the
-deterministic fleet; use test-vm.ps1 -DnsOnly when the environment permits
-real DNS. IPv6 and full socket-option support remain unsupported. Authentication, permissions, sandboxing and ASLR are not complete.
+sockets/poll are natively tested. Native epoll create/ctl/wait, edge-trigger
+and one-shot behavior are covered by epoll-test and currently pass in the
+qemu64/max fleet. Unnamed AF_UNIX stream pairs and SCM_RIGHTS descriptor
+passing are implemented for the Chromium/Mojo transport path, but named Unix
+sockets and peer credentials are not. A native active TCP connect SYN path
+exists and the socket fleet currently passes under qemu64/max; do not infer
+complete retransmission/timeout coverage from that result. getaddrinfo has an
+IPv4 A-record resolver syscall backed by the native DNS client; it serializes
+the resolver's single outstanding query and uses a wait queue rather than
+userland polling. The optional live-DNS regression passes under qemu64; keep
+external-DNS tests separate from the deterministic fleet and use
+test-vm.ps1 -DnsOnly when the environment permits real DNS. IPv6 and full
+socket-option support remain unsupported. Authentication, permissions, sandboxing and ASLR are not complete.
 getentropy uses a trusted host-backed legacy VirtIO RNG,
 blocks with a bounded wait and fails closed when unavailable; native tests
 are not cryptographic health tests. See docs/entropy.md for deployment trust

@@ -17,7 +17,7 @@ suivant porte sur les services runtime manquants et l'integration upstream.
 | Fichiers | VFS/Ext2, offsets partages fork/dup, CLOEXEC, lseek/pread/pwrite/ftruncate, fcntl partiel, repertoires et stat. Stdio non bufferise : fopen/fdopen r/w/a/+ et fseek/ftell reels. Offset VFS borne a 32 bits ; advisory locks et positionnement relatif avec pushback wide restent limites. |
 | IPC | Canaux natifs nommes, attente bloquante, transfert d'objets SHM. Ce protocole n'est pas Mojo ; socketpair/sendmsg/SCM_RIGHTS generiques restent a fournir. |
 | GUI | `/bin/gui` est le desktop userland. libgui cree des fenetres, presente des surfaces SHM et recoit des evenements via l'IPC natif. C'est le point d'integration futur d'Ozone, sans X11/Wayland. |
-| Reseau | Pile Ethernet/IPv4/TCP/DNS/DHCP et outils natifs. Le dispatcher expose socket/bind/listen/accept/send/recv, pas encore connect/setsockopt/getaddrinfo POSIX complets. |
+| Reseau | Pile Ethernet/IPv4/TCP/DNS/DHCP et outils natifs. socket/bind/listen/accept/connect/send/recv, poll, un sous-ensemble epoll, AF_UNIX socketpair/SCM_RIGHTS et getaddrinfo IPv4/DNS sont disponibles ; setsockopt, IPv6 et les sockets Unix nommes restent incomplets. |
 | Temps/signaux | Horloges monotonic/realtime 64 bits, nanosleep bloquant, echeances de wait queues. Abort/assert terminent tout le processus, y compris les threads CPU-bound ; handlers POSIX de signaux non implementes. |
 | Entropie/devices | getentropy via legacy VirtIO RNG host-backed, avec prerequis de confiance du deploiement et echec ferme sans device. Pas de getrandom ni de devfs `/dev/urandom` ; aucun test de sante cryptographique/profil production etabli. |
 | C++ | Clang 18, TLS ELF statique Variant II, init/fini arrays et destructeurs globaux/TLS executes. Archives libc++/libc++abi cibles compilees avec localisation ; complex-cpp-test recompile/lie avec ce profil et execute trois fois avec succes sous QEMU max, y compris locale classique et streams narrow. |
@@ -851,6 +851,18 @@ Le test natif `unix-socket-test` couvre notamment le transfert d'un backing
 SHM entre processus, le partage d'offset de fichier, les erreurs EMFILE,
 la troncature de controle, le refus de cycles de droits et la liberation
 iterative d'une chaine acyclique de 128 transferts.
+
+Le 2026-10-01, apres ajout du chemin epoll natif, les suites
+`test-vm.ps1 -Fleet -Cpu qemu64` et `-Cpu max` terminent avec
+`ALOS VM suite PASS`, y compris `epoll-test: PASS`. La suite
+`test-vm.ps1 -DnsOnly -Cpu qemu64` termine egalement PASS avec le resolver
+getaddrinfo/DNS reel.
+
+La compilation Chromium locale sur le checkout epingle 140.0.7339.80 confirme
+zero erreur pour `base:base`, 89 actions reussies pour `alos_native:all`,
+et 94 actions reussies jusqu'au LINK final de
+`alos_mojo:mojo_ipcz_smoke`. Ces resultats ne constituent pas encore un build
+du navigateur complet ni une validation de Blink/V8/Ozone.
 
 Le smoke `mojo_ipcz_smoke` utilise le chemin Chromium default-ipcz reel :
 le parent lance un enfant, transmet l'endpoint de plateforme, envoie une
