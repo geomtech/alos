@@ -70,9 +70,9 @@ typedef struct __attribute__((packed)) {
 } dns_header_t;
 
 typedef struct {
-    char hostname[64];
+    char hostname[DNS_MAX_NAME_LEN + 1];
     uint8_t ip[4];
-    char cname[64];
+    char cname[DNS_MAX_NAME_LEN + 1];
     uint32_t ttl;
     uint32_t timestamp;
     uint8_t record_type;
@@ -81,10 +81,10 @@ typedef struct {
 
 typedef struct {
     uint16_t id;
-    char hostname[64];
+    char hostname[DNS_MAX_NAME_LEN + 1];
     uint8_t resolved_ip[4];
-    char resolved_name[64];     /* Pour PTR */
-    char cname[64];
+    char resolved_name[DNS_MAX_NAME_LEN + 1];     /* Pour PTR */
+    char cname[DNS_MAX_NAME_LEN + 1];
     dns_query_type_t type;
     bool completed;
     bool success;
@@ -104,6 +104,9 @@ bool dns_is_pending(void);
 bool dns_get_result(uint8_t* out_ip);
 bool dns_get_reverse_result(char* out_name, int max_len);
 bool dns_get_cname(char* out_cname, int max_len);
+
+/* Resolution A IPv4 serialisee. timeout_ms=0 signifie attente sans limite. */
+int dns_resolve_ipv4(const char* hostname, uint8_t out_ip[4], uint32_t timeout_ms);
 
 /* Cache DNS */
 bool dns_cache_lookup(const char* hostname, uint8_t* out_ip);

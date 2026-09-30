@@ -18,6 +18,7 @@
 #include "../mm/vm.h"
 #include "../net/core/net.h"
 #include "../net/l4/tcp.h"
+#include "../net/l4/dns.h"
 #include "../shell/shell.h"
 #include "console.h"
 #include "display.h"
@@ -1327,6 +1328,26 @@ static int sys_close(int fd) {
   return file_table_close(current_fd_table(), fd);
 }
 
+static int sys_resolve_ipv4(const char *user_hostname, uint8_t *user_address) {
+  if (!user_hostname || !user_range_valid(user_address, 4, true))
+    return -EFAULT;
+
+  char hostname[DNS_MAX_NAME_LEN + 1];
+  size_t length = 0;
+  for (; length < DNS_MAX_NAME_LEN; ++length) {
+    if (copy_from_user(&hostname[length], user_hostname + length, 1))
+      return -EFAULT;
+    if (!hostname[length]) break;
+  }
+  if (length == DNS_MAX_NAME_LEN) return -ENAMETOOLONG;
+  if (!length) return -EINVAL;
+
+  uint8_t address[4];
+  int result = dns_resolve_ipv4(hostname, address, 5000);
+  if (result) return result;
+  return copy_to_user(user_address, address, sizeof(address)) ? -EFAULT : 0;
+}
+
 static int64_t sys_lseek(int fd, int64_t offset, int whence) {
   open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
   if (!description) return -EBADF;
@@ -1759,6 +1780,9 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
   case SYS_UNAME:
     result = sys_uname((struct utsname *)regs->rdi);
+    break;
+  case SYS_RESOLVE_IPV4:
+    result = sys_resolve_ipv4((const char *)regs->rdi, (uint8_t *)regs->rsi);
     break;
 
   case SYS_GETTID:

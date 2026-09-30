@@ -149,15 +149,7 @@ int http_get(const char* host, const char* path, uint16_t port,
         /* Resolve hostname via DNS */
         KLOG_INFO("HTTP", "Resolving hostname...");
         
-        dns_send_query(host);
-        
-        /* Wait for DNS response */
-        int timeout = 500;  /* 5 seconds */
-        while (dns_is_pending() && timeout-- > 0) {
-            thread_sleep_ms(10);
-        }
-        
-        if (!dns_get_result(server_ip)) {
+        if (dns_resolve_ipv4(host, server_ip, 5000) != 0) {
             KLOG_ERROR("HTTP", "DNS resolution failed");
             return -1;
         }

@@ -4,6 +4,9 @@
 #include "../core/netdev.h"
 #include "../utils.h"
 #include "../../kernel/klog.h"
+#include "../../kernel/sync.h"
+#include "../../kernel/thread.h"
+#include "../../include/errno.h"
 #include "../../mm/kheap.h"
 
 /* ========================================
@@ -15,6 +18,9 @@ static uint8_t g_dns_server_bytes[4] = {0};
 static bool g_dns_initialized = false;
 static uint16_t g_dns_transaction_id = 0x1234;
 static dns_pending_query_t g_pending_query = {0};
+static mutex_t g_dns_query_lock = MUTEX_INIT;
+static wait_queue_t g_dns_waiters;
+static uint8_t g_dns_last_rcode = DNS_RCODE_OK;
 
 /* Cache DNS */
 static dns_cache_entry_t g_dns_cache[DNS_CACHE_SIZE];
@@ -64,6 +70,38 @@ static bool str_equal(const char* a, const char* b)
 static bool ip_equal(const uint8_t* a, const uint8_t* b)
 {
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+}
+
+static int dns_validate_hostname(const char* hostname)
+{
+    if (!hostname || !hostname[0]) return -EINVAL;
+    int label = 0;
+    int total = 0;
+    for (; hostname[total]; ++total) {
+        if (total >= DNS_MAX_NAME_LEN - 2) return -ENAMETOOLONG;
+        if (hostname[total] == '.') {
+            if (!label || label > 63) return -EINVAL;
+            label = 0;
+        } else {
+            ++label;
+            if (label > 63) return -EINVAL;
+        }
+    }
+    return label ? 0 : -EINVAL;
+}
+
+static bool dns_query_finished(void* context)
+{
+    (void)context;
+    thread_t* thread = thread_current();
+    return g_pending_query.completed || (thread && thread->should_terminate);
+}
+
+static void dns_complete(bool success)
+{
+    g_pending_query.completed = true;
+    g_pending_query.success = success;
+    wait_queue_wake_all(&g_dns_waiters);
 }
 
 /* ========================================
@@ -188,6 +226,9 @@ void dns_init(uint32_t dns_server)
     g_pending_query.completed = false;
     g_pending_query.success = false;
     g_pending_query.has_cname = false;
+    g_dns_last_rcode = DNS_RCODE_OK;
+    mutex_init(&g_dns_query_lock, MUTEX_TYPE_NORMAL);
+    wait_queue_init(&g_dns_waiters);
     
     /* Initialiser le cache */
     dns_cache_flush();
@@ -267,6 +308,11 @@ void dns_send_query(const char* hostname)
         KLOG_ERROR("DNS", "Resolver not initialized!");
         return;
     }
+    if (dns_validate_hostname(hostname)) {
+        g_dns_last_rcode = DNS_RCODE_FORMAT;
+        dns_complete(false);
+        return;
+    }
     
     /* Vérifier le cache d'abord */
     uint8_t cached_ip[4];
@@ -275,9 +321,11 @@ void dns_send_query(const char* hostname)
         g_pending_query.resolved_ip[1] = cached_ip[1];
         g_pending_query.resolved_ip[2] = cached_ip[2];
         g_pending_query.resolved_ip[3] = cached_ip[3];
-        g_pending_query.completed = true;
-        g_pending_query.success = true;
+        g_pending_query.id = 0;
+        g_pending_query.type = DNS_QUERY_A;
         str_copy(g_pending_query.hostname, hostname, sizeof(g_pending_query.hostname));
+        g_dns_last_rcode = DNS_RCODE_OK;
+        dns_complete(true);
         return;
     }
     
@@ -309,6 +357,7 @@ void dns_send_query(const char* hostname)
     g_pending_query.type = DNS_QUERY_A;
     g_pending_query.completed = false;
     g_pending_query.success = false;
+    g_dns_last_rcode = DNS_RCODE_OK;
     g_pending_query.has_cname = false;
     g_pending_query.cname[0] = '\0';
     
@@ -328,8 +377,10 @@ void dns_send_reverse_query(const uint8_t* ip)
     char cached_name[64];
     if (dns_cache_reverse_lookup(ip, cached_name, sizeof(cached_name))) {
         str_copy(g_pending_query.resolved_name, cached_name, sizeof(g_pending_query.resolved_name));
-        g_pending_query.completed = true;
-        g_pending_query.success = true;
+        g_pending_query.id = 0;
+        g_pending_query.type = DNS_QUERY_PTR;
+        g_dns_last_rcode = DNS_RCODE_OK;
+        dns_complete(true);
         return;
     }
     
@@ -393,6 +444,7 @@ void dns_send_reverse_query(const uint8_t* ip)
     g_pending_query.type = DNS_QUERY_PTR;
     g_pending_query.completed = false;
     g_pending_query.success = false;
+    g_dns_last_rcode = DNS_RCODE_OK;
     
     KLOG_INFO("DNS", "Reverse lookup");
     
@@ -451,17 +503,16 @@ void dns_handle_packet(uint8_t* data, int len)
     uint8_t rcode = flags & DNS_FLAG_RCODE;
     if (rcode != DNS_RCODE_OK) {
         KLOG_ERROR_DEC("DNS", "Error RCODE: ", rcode);
-        
-        g_pending_query.completed = true;
-        g_pending_query.success = false;
+        g_dns_last_rcode = rcode;
+        dns_complete(false);
         return;
     }
     
     KLOG_INFO_DEC("DNS", "Response answers: ", an_count);
     
     if (an_count == 0) {
-        g_pending_query.completed = true;
-        g_pending_query.success = false;
+        g_dns_last_rcode = DNS_RCODE_NXDOMAIN;
+        dns_complete(false);
         return;
     }
     
@@ -501,8 +552,8 @@ void dns_handle_packet(uint8_t* data, int len)
             g_pending_query.resolved_ip[2] = data[offset + 2];
             g_pending_query.resolved_ip[3] = data[offset + 3];
             
-            g_pending_query.completed = true;
-            g_pending_query.success = true;
+            g_dns_last_rcode = DNS_RCODE_OK;
+            dns_complete(true);
             
             /* Ajouter au cache */
             dns_cache_add(g_pending_query.hostname, g_pending_query.resolved_ip, ttl);
@@ -530,8 +581,8 @@ void dns_handle_packet(uint8_t* data, int len)
             dns_decode_name(data, offset, len, ptr_name, sizeof(ptr_name));
             str_copy(g_pending_query.resolved_name, ptr_name, sizeof(g_pending_query.resolved_name));
             
-            g_pending_query.completed = true;
-            g_pending_query.success = true;
+            g_dns_last_rcode = DNS_RCODE_OK;
+            dns_complete(true);
             
             /* Ajouter au cache */
             dns_cache_add_ptr(g_pending_query.resolved_ip, ptr_name, ttl);
@@ -546,10 +597,55 @@ void dns_handle_packet(uint8_t* data, int len)
     
     if (!g_pending_query.success) {
         KLOG_WARN("DNS", "No matching record found");
-        
-        g_pending_query.completed = true;
-        g_pending_query.success = false;
+        g_dns_last_rcode = DNS_RCODE_NXDOMAIN;
+        dns_complete(false);
     }
+}
+
+int dns_resolve_ipv4(const char* hostname, uint8_t out_ip[4], uint32_t timeout_ms)
+{
+    if (!out_ip) return -EINVAL;
+    int result = dns_validate_hostname(hostname);
+    if (result) return result;
+    if (!g_dns_initialized) return -ENETDOWN;
+    if (mutex_lock(&g_dns_query_lock)) return -EIO;
+
+    thread_t* thread = thread_current();
+    if (thread && thread->should_terminate) {
+        mutex_unlock(&g_dns_query_lock);
+        return -EINTR;
+    }
+
+    dns_send_query(hostname);
+    if (!g_pending_query.completed) {
+        uint32_t first_wait = timeout_ms && timeout_ms < 250 ? timeout_ms : 250;
+        wait_queue_wait_timeout(&g_dns_waiters, dns_query_finished, NULL, first_wait);
+        if (!g_pending_query.completed && !(thread && thread->should_terminate) &&
+            (!timeout_ms || timeout_ms > first_wait)) {
+            /* Le premier envoi peut uniquement avoir amorce ARP vers le DNS. */
+            dns_send_query(hostname);
+            uint32_t remaining = timeout_ms ? timeout_ms - first_wait : 0;
+            wait_queue_wait_timeout(&g_dns_waiters, dns_query_finished, NULL, remaining);
+        }
+    }
+
+    thread = thread_current();
+    if (thread && thread->should_terminate) {
+        result = -EINTR;
+    } else if (!g_pending_query.completed) {
+        g_pending_query.id = 0;
+        result = -ETIMEDOUT;
+    } else if (!g_pending_query.success) {
+        result = g_dns_last_rcode == DNS_RCODE_NXDOMAIN ? -ENOENT : -EIO;
+    } else {
+        out_ip[0] = g_pending_query.resolved_ip[0];
+        out_ip[1] = g_pending_query.resolved_ip[1];
+        out_ip[2] = g_pending_query.resolved_ip[2];
+        out_ip[3] = g_pending_query.resolved_ip[3];
+        result = 0;
+    }
+    mutex_unlock(&g_dns_query_lock);
+    return result;
 }
 
 bool dns_is_pending(void)

@@ -4,8 +4,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "../internal/syscall.h"
 
-/* Profil initial : adresses numeriques et localhost, pas de faux DNS. */
+/* Profil IPv4: numerique/localhost localement, DNS A via le resolver noyau. */
 int getaddrinfo(const char *node, const char *service, const struct addrinfo *hint,
                 struct addrinfo **result) {
     if (!result) return EAI_FAIL;
@@ -14,7 +15,8 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
     int type = hint ? hint->ai_socktype : 0;
     int protocol = hint ? hint->ai_protocol : 0;
     int flags = hint ? hint->ai_flags : 0;
-    if (flags & ~(AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST | AI_NUMERICSERV))
+    if (flags & ~(AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST |
+                  AI_NUMERICSERV | AI_ADDRCONFIG))
         return EAI_BADFLAGS;
     if (family != AF_UNSPEC && family != AF_INET) return EAI_FAMILY;
     if (type && type != SOCK_STREAM && type != SOCK_DGRAM) return EAI_SOCKTYPE;
@@ -38,7 +40,18 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
             ip.s_addr = htonl(INADDR_LOOPBACK);
         else {
             if (flags & AI_NUMERICHOST) return EAI_NONAME;
-            errno = ENOTSUP; return EAI_SYSTEM;
+            unsigned char resolved[4];
+            long status = syscall2(SYS_RESOLVE_IPV4, (long)node, (long)resolved);
+            if (status < 0) {
+                int error = (int)-status;
+                if (error == ENOENT || error == EINVAL || error == ENAMETOOLONG)
+                    return EAI_NONAME;
+                if (error == ETIMEDOUT || error == EAGAIN)
+                    return EAI_AGAIN;
+                errno = error;
+                return EAI_SYSTEM;
+            }
+            memcpy(&ip, resolved, sizeof(resolved));
         }
     }
     struct addrinfo **tail = result;

@@ -477,30 +477,7 @@ static bool resolve_hostname(const char* hostname, uint8_t* ip)
 {
     KLOG_INFO("PING", "Resolving hostname...");
     
-    /* Vérifier le cache DNS d'abord */
-    if (dns_cache_lookup(hostname, ip)) {
-        return true;
-    }
-    
-    /* Envoyer la requête DNS */
-    dns_send_query(hostname);
-    
-    /* Attendre la résolution */
-    int timeout = 0;
-    while (dns_is_pending() && timeout < 50) {
-        for (volatile int w = 0; w < 500000; w++);
-        asm volatile("sti");
-        asm volatile("hlt");
-        timeout++;
-        
-        /* Réessayer après quelques itérations (ARP pour le serveur DNS) */
-        if (timeout == 5 && dns_is_pending()) {
-            dns_send_query(hostname);
-        }
-    }
-    
-    /* Récupérer le résultat */
-    if (!dns_get_result(ip)) {
+    if (dns_resolve_ipv4(hostname, ip, 5000) != 0) {
         KLOG_ERROR("PING", "DNS resolution failed");
         return false;
     }
