@@ -99,8 +99,28 @@ if (-not $SkipPatch) {
         Invoke-Git -C $src apply $patch
     } else {
         & git -C $src apply --reverse --check $patch 2>$null
-        if ($LASTEXITCODE) { throw "Patch ALOS incompatible avec le checkout." }
-        Write-Host "Patch ALOS deja applique."
+        $reverseExitCode = $LASTEXITCODE
+        if ($reverseExitCode) {
+            # Un checkout deja bootstrappe peut ensuite recevoir d'autres patches
+            # ALOS qui modifient les memes fichiers. Dans ce cas le reverse-check
+            # du patch initial n'est plus fiable : verifier les marqueurs
+            # fonctionnels du bootstrap avant de conclure a une incompatibilite.
+            $buildConfig = Get-Content -Raw (Join-Path $src "build\build_config.h")
+            $gnConfig = Get-Content -Raw (Join-Path $src "build\config\BUILDCONFIG.gn")
+            $toolchain = Join-Path $src "build\toolchain\alos\BUILD.gn"
+            $bootstrapPresent =
+                $buildConfig.Contains("#define OS_ALOS 1") -and
+                $buildConfig.Contains("defined(OS_ALOS)") -and
+                $gnConfig.Contains('target_os == "alos"') -and
+                $gnConfig.Contains('current_os == "alos"') -and
+                (Test-Path -LiteralPath $toolchain)
+            if (-not $bootstrapPresent) {
+                throw "Patch ALOS incompatible avec le checkout."
+            }
+            Write-Host "Bootstrap ALOS deja present dans le checkout enrichi."
+        } else {
+            Write-Host "Patch ALOS deja applique."
+        }
     }
 }
 Write-Host "Checkout Chromium $tag pret : $src"
