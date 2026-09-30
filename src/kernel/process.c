@@ -19,6 +19,8 @@
 #include "thread.h"
 #include "workqueue.h"
 #include "input.h"
+#include "uaccess.h"
+#include "../include/errno.h"
 
 /* ========================================
  * Constantes
@@ -763,7 +765,51 @@ void proc_log_final_reap(uint32_t pid) {
  * Factorise proprement le chargement ELF, la création du Page Directory,
  * la stack user avec argc/argv, et le rattachement à la hiérarchie.
  */
-process_t *process_spawn(const char *filename, int argc, char **argv) {
+/* Limites natives partagees par argv/envp, y compris leurs terminateurs. */
+#define EXEC_VECTOR_MAX 64
+#define EXEC_STRING_BYTES 16384
+
+static int process_initial_stack(process_t *proc, int argc, char **argv,
+                                 int envc, char **envp, uint64_t *rsp) {
+  size_t total = ((size_t)argc + envc + 3) * sizeof(uint64_t);
+  for (int group = 0; group < 2; ++group) {
+    char **vector = group ? envp : argv;
+    int count = group ? envc : argc;
+    for (int i = 0; i < count; ++i) {
+      size_t length = 0;
+      while (length < EXEC_STRING_BYTES && vector[i][length]) ++length;
+      if (length == EXEC_STRING_BYTES || total > EXEC_STRING_BYTES - length - 1)
+        return -1;
+      total += length + 1;
+    }
+  }
+  uint8_t *buffer = kmalloc(total);
+  if (!buffer) return -1;
+  *rsp = (USER_STACK_TOP - total) & ~0xfULL;
+  uint64_t *words = (uint64_t *)buffer;
+  words[0] = argc;
+  size_t offset = ((size_t)argc + envc + 3) * sizeof(uint64_t);
+  size_t index = 1;
+  for (int group = 0; group < 2; ++group) {
+    char **vector = group ? envp : argv;
+    int count = group ? envc : argc;
+    for (int i = 0; i < count; ++i) {
+      size_t length = strlen(vector[i]) + 1;
+      words[index++] = *rsp + offset;
+      memcpy(buffer + offset, vector[i], length);
+      offset += length;
+    }
+    words[index++] = 0;
+  }
+  int result = vmm_copy_to_dir((page_directory_t *)proc->pml4, *rsp, buffer, total);
+  kfree(buffer);
+  return result;
+}
+
+static process_t *process_spawn_environment(const char *filename, int argc,
+                                            char **argv, int envc, char **envp) {
+  if (argc < 0 || argc > EXEC_VECTOR_MAX || envc < 0 || envc > EXEC_VECTOR_MAX ||
+      (argc && !argv) || (envc && !envp)) return NULL;
   if (!multitasking_enabled) {
     KLOG_ERROR("EXEC", "Multitasking not initialized!");
     return NULL;
@@ -867,6 +913,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   proc->exit_status = 0;
+  proc->native_exit_reason = ALOS_PROCESS_EXIT_NORMAL;
   process_inherit_cwd(proc, current_process);
 
   /* Créer un nouveau Page Directory pour l'isolation mémoire */
@@ -951,101 +998,14 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
 
   KLOG_INFO_HEX64("EXEC", "User stack top: ", USER_STACK_TOP);
 
-  /* Préparer la stack utilisateur avec ou sans arguments */
+  /* argc, argv[], NULL, envp[], NULL ; textes copies dans la meme stack. */
   uint64_t user_rsp;
-  if (argc <= 0 || argv == NULL) {
-    uint64_t user_stack_data[2] = {0, 0}; /* argc=0, argv=NULL */
-    user_rsp = USER_STACK_TOP - 16;
-    if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp,
-                        user_stack_data, sizeof(user_stack_data)) != 0) {
-      KLOG_ERROR("EXEC", "Failed to initialize user stack!");
-      vmm_free_directory((page_directory_t *)proc->pml4);
-      kfree(kernel_stack);
-      kfree(proc);
-      return NULL;
-    }
-  } else {
-    /* Allouer un buffer pour la stack utilisateur dans le kernel */
-    uint64_t stack_buffer_size = 1024;
-    uint8_t *stack_buffer = (uint8_t *)kmalloc(stack_buffer_size);
-    if (stack_buffer == NULL) {
-      KLOG_ERROR("EXEC", "Failed to allocate stack buffer!");
-      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      console_puts("Error: Failed to allocate stack buffer\n");
-      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-      vmm_free_directory((page_directory_t *)proc->pml4);
-      kfree(kernel_stack);
-      kfree(proc);
-      return NULL;
-    }
-
-    char *string_ptr = (char *)(stack_buffer + stack_buffer_size);
-    char *argv_ptrs[16];
-
-    for (int i = 0; i < argc && i < 16; i++) {
-      int len = 0;
-      while (argv[i][len])
-        len++;
-      len++;
-      string_ptr -= len;
-      if ((uint8_t *)string_ptr < stack_buffer) {
-        KLOG_ERROR("EXEC", "Arguments too large for stack buffer!");
-        console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-        console_puts("Error: Arguments too large for stack buffer\n");
-        console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-        kfree(stack_buffer);
-        vmm_free_directory((page_directory_t *)proc->pml4);
-        kfree(kernel_stack);
-        kfree(proc);
-        return NULL;
-      }
-      for (int j = 0; j < len; j++) {
-        string_ptr[j] = argv[i][j];
-      }
-      argv_ptrs[i] = string_ptr;
-    }
-
-    /* Aligner sur 8 octets */
-    string_ptr = (char *)((uint64_t)string_ptr & ~7ULL);
-    uint64_t *stack_ptr = (uint64_t *)string_ptr;
-    stack_ptr--; /* argv[argc] = NULL */
-    *stack_ptr = 0;
-
-    for (int i = argc - 1; i >= 0; i--) {
-      stack_ptr--;
-      *stack_ptr = (uint64_t)argv_ptrs[i];
-    }
-
-    /* Pousser argc. crt0.s fait `pop rdi` (argc) puis `mov rsi, rsp` (argv). */
-    stack_ptr--;
-    *stack_ptr = (uint64_t)argc;
-
-    uint64_t data_size =
-        stack_buffer_size - ((uint8_t *)stack_ptr - stack_buffer);
-
-    user_rsp = USER_STACK_TOP - data_size;
-    user_rsp &= ~0xFULL;
-
-    /* Reloger les adresses argv pour l'espace utilisateur */
-    int64_t reloc_offset = (int64_t)user_rsp - (int64_t)(uintptr_t)stack_ptr;
-    uint64_t *argv_array = stack_ptr + 1;
-    for (int i = 0; i < argc; i++) {
-      argv_array[i] = (uint64_t)((int64_t)argv_array[i] + reloc_offset);
-    }
-
-    if (vmm_copy_to_dir((page_directory_t *)proc->pml4, user_rsp, stack_ptr,
-                        data_size) != 0) {
-      KLOG_ERROR("EXEC", "Failed to initialize user stack!");
-      console_set_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK);
-      console_puts("Error: Failed to initialize user stack (copy failed)\n");
-      console_set_color(VGA_COLOR_WHITE, VGA_COLOR_BLACK);
-      kfree(stack_buffer);
-      vmm_free_directory((page_directory_t *)proc->pml4);
-      kfree(kernel_stack);
-      kfree(proc);
-      return NULL;
-    }
-    kfree(stack_buffer);
+  if (process_initial_stack(proc, argc, argv, envc, envp, &user_rsp) != 0) {
+    KLOG_ERROR("EXEC", "Failed to initialize bounded argv/envp stack");
+    vmm_free_directory((page_directory_t *)proc->pml4);
+    kfree(kernel_stack);
+    kfree(proc);
+    return NULL;
   }
 
   KLOG_INFO_HEX("EXEC", "User ESP: ", user_rsp);
@@ -1055,6 +1015,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   proc->thread_list = NULL;
   proc->thread_count = 0;
   proc->exit_status = 0;
+  proc->native_exit_reason = ALOS_PROCESS_EXIT_NORMAL;
   proc->uses_framebuffer = false;
 
   wait_queue_init(&proc->wait_queue);
@@ -1110,6 +1071,10 @@ int process_execute(const char *filename) {
   }
   thread_yield();
   return (int)proc->pid;
+}
+
+process_t *process_spawn(const char *filename, int argc, char **argv) {
+  return process_spawn_environment(filename, argc, argv, 0, NULL);
 }
 
 int process_fork(const interrupt_frame_t *frame) {
@@ -1187,6 +1152,33 @@ int process_fork(const interrupt_frame_t *frame) {
   return (int)child->pid;
 }
 
+typedef struct exec_strings {
+  char *argv[EXEC_VECTOR_MAX + 1];
+  char *envp[EXEC_VECTOR_MAX + 1];
+  char filename[PROCESS_CWD_MAX];
+  char strings[EXEC_STRING_BYTES];
+} exec_strings_t;
+
+static int exec_copy_vector(char **dest, char *const source[], char *storage,
+                             size_t *used, int *count) {
+  *count = 0;
+  if (!source) { dest[0] = NULL; return 0; }
+  for (int i = 0; i <= EXEC_VECTOR_MAX; ++i) {
+    uintptr_t address = (uintptr_t)source;
+    size_t offset = (size_t)i * sizeof(char *);
+    char *text;
+    if (address > UINT64_MAX - offset ||
+        copy_from_user(&text, (void *)(address + offset), sizeof(text))) return -1;
+    if (!text) { dest[i] = NULL; *count = i; return 0; }
+    if (i == EXEC_VECTOR_MAX || *used == EXEC_STRING_BYTES ||
+        copy_string_from_user(storage + *used, text, EXEC_STRING_BYTES - *used))
+      return -1;
+    dest[i] = storage + *used;
+    *used += strlen(dest[i]) + 1;
+  }
+  return -1;
+}
+
 int process_execve(interrupt_frame_t *frame, const char *filename,
                    char *const argv[], char *const envp[]) {
   process_t *proc = process_current();
@@ -1195,27 +1187,25 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
       filename == NULL || proc->thread_count != 1) {
     return -1;
   }
-  if (envp != NULL && envp[0] != NULL) {
+  exec_strings_t *copy = kmalloc(sizeof(*copy));
+  if (!copy) { KLOG_ERROR("EXEC", "Cannot allocate exec input snapshot"); return -1; }
+  size_t used = 0;
+  int argc, envc;
+  if (copy_string_from_user(copy->filename, filename, sizeof(copy->filename)) ||
+      exec_copy_vector(copy->argv, argv, copy->strings, &used, &argc) ||
+      exec_copy_vector(copy->envp, envp, copy->strings, &used, &envc)) {
+    KLOG_ERROR("EXEC", "Invalid or excessive exec argv/envp");
+    kfree(copy);
     return -1;
   }
-
-  int argc = 0;
-  if (argv != NULL) {
-    while (argc < 16 && argv[argc] != NULL) {
-      argc++;
-    }
-    if (argc == 16) {
-      return -1;
-    }
-  }
-
-  char *default_argv[2] = {(char *)filename, NULL};
-  if (argv == NULL || argc == 0) {
-    argv = default_argv;
+  if (!argc) {
+    copy->argv[0] = copy->filename;
+    copy->argv[1] = NULL;
     argc = 1;
   }
-
-  process_t *image = process_spawn(filename, argc, (char **)argv);
+  process_t *image = process_spawn_environment(copy->filename, argc, copy->argv,
+                                               envc, copy->envp);
+  kfree(copy);
   if (image == NULL || image->main_thread == NULL || image->pml4 == NULL) {
     return -1;
   }
@@ -1319,6 +1309,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   proc->state = PROCESS_STATE_READY;
   proc->should_terminate = 0;
   proc->exit_status = 0;
+  proc->native_exit_reason = ALOS_PROCESS_EXIT_NORMAL;
   proc->uses_framebuffer = false;
   process_inherit_cwd(proc, current_process);
   file_table_init(proc->fd_table, current_process ? current_process->fd_table : NULL);
@@ -1511,12 +1502,10 @@ void process_reap(process_t *proc) {
   uint32_t pid = proc->pid;
   bool was_gui = proc->uses_framebuffer;
   proc_log_final_reap(pid);
-
   uint64_t flags = process_lock();
   process_unlink(proc);
   process_unlock(flags);
   kfree(proc);
-
   if (was_gui && !console_is_enabled()) {
     keyboard_clear_buffer();
     console_set_enabled(true);
@@ -1524,6 +1513,150 @@ void process_reap(process_t *proc) {
     console_refresh();
   }
 }
+
+static process_t *native_find_process_locked(int pid) {
+    if (!process_list) return NULL;
+    process_t *process = process_list;
+    do {
+      if (process->pid == (uint32_t)pid) return process;
+      process = process->next;
+    } while (process && process != process_list);
+    return NULL;
+  }
+
+int process_native_query(int pid, alos_process_info_t *output) {
+    if (pid <= 0) return -EINVAL;
+    if (!user_range_valid(output, sizeof(*output), true)) return -EFAULT;
+    process_t *caller = process_current();
+    if (!caller) return -ESRCH;
+    uint64_t flags = process_lock();
+    process_t *target = native_find_process_locked(pid);
+    int result = 0;
+    alos_process_info_t information = {0};
+    if (!target || target == idle_process) result = -ESRCH;
+    else if (target != caller && target->parent != caller) result = -EPERM;
+    else {
+      information.pid = target->pid;
+      information.parent_pid = target->parent ? target->parent->pid : 0;
+      information.thread_count = target->thread_count;
+      bool live_thread = false;
+      for (thread_t *thread = target->thread_list; thread; thread = thread->proc_next)
+        if (thread->state != THREAD_STATE_ZOMBIE) live_thread = true;
+      information.state = target->state == PROCESS_STATE_ZOMBIE
+                            ? ALOS_PROCESS_ZOMBIE
+                            : (target->should_terminate || !live_thread)
+                                ? ALOS_PROCESS_EXITING : ALOS_PROCESS_ALIVE;
+      if (target->main_thread) {
+        information.main_thread_nice = thread_get_nice(target->main_thread);
+        information.has_main_thread_nice = 1;
+      }
+    }
+    process_unlock(flags);
+    if (!result && copy_to_user(output, &information, sizeof(information)))
+      result = -EFAULT;
+    return result;
+  }
+
+int process_native_terminate(int pid, int raw_status) {
+    if (pid <= 0) return -EINVAL;
+    process_t *caller = process_current();
+    if (!caller) return -ESRCH;
+    uint64_t flags = process_lock();
+    process_t *target = native_find_process_locked(pid);
+    int result = 0;
+    if (!target || target == idle_process) result = -ESRCH;
+    else if (target == caller) result = -EINVAL; /* Utiliser EXIT_GROUP pour soi. */
+    else if (target->parent != caller) result = -EPERM;
+    else if (target->state != PROCESS_STATE_ZOMBIE && !target->should_terminate) {
+      bool live_thread = false;
+      for (thread_t *thread = target->thread_list; thread; thread = thread->proc_next)
+        if (thread->state != THREAD_STATE_ZOMBIE) live_thread = true;
+      if (!live_thread) {
+        process_unlock(flags);
+        return 0;
+      }
+      target->native_exit_reason = ALOS_PROCESS_EXIT_FORCED;
+      target->exit_status = raw_status;
+      target->should_terminate = 1;
+      for (thread_t *thread = target->thread_list; thread; thread = thread->proc_next)
+        if (thread->state != THREAD_STATE_ZOMBIE) thread_kill(thread, raw_status);
+    }
+    process_unlock(flags);
+    return result;
+  }
+
+  typedef struct {
+    process_t *parent;
+    int pid;
+  } native_wait_context_t;
+
+static bool native_child_ready_or_gone(void *opaque) {
+    native_wait_context_t *context = opaque;
+    bool found = false;
+    for (process_t *child = context->parent->first_child; child;
+         child = child->sibling_next) {
+      if (context->pid == -1 || child->pid == (uint32_t)context->pid) {
+        found = true;
+        if (child->state == PROCESS_STATE_ZOMBIE && child->thread_count == 0)
+          return true;
+      }
+    }
+    return !found;
+  }
+
+int process_native_wait(int pid, alos_process_exit_t *output, uint32_t timeout_ms) {
+    if (pid == 0 || pid < -1) return -EINVAL;
+    if (!user_range_valid(output, sizeof(*output), true)) return -EFAULT;
+    process_t *parent = process_current();
+    if (!parent) return -ESRCH;
+    native_wait_context_t context = {parent, pid};
+    if (timeout_ms && !native_child_ready_or_gone(&context)) {
+      wait_queue_wait_timeout(&parent->wait_queue, native_child_ready_or_gone,
+                               &context, timeout_ms == ALOS_PROCESS_WAIT_FOREVER
+                                           ? 0 : timeout_ms);
+    }
+    uint64_t flags = process_lock();
+    bool found = false;
+    process_t *ready = NULL;
+    for (process_t *child = parent->first_child; child; child = child->sibling_next) {
+      if (pid == -1 || child->pid == (uint32_t)pid) {
+        found = true;
+        if (child->state == PROCESS_STATE_ZOMBIE && child->thread_count == 0) {
+          ready = child;
+          break;
+        }
+      }
+    }
+    if (!ready) {
+      process_unlock(flags);
+      return found ? 0 : -ECHILD;
+    }
+    if (ready->pid > INT32_MAX) {
+      process_unlock(flags);
+      return -EOVERFLOW;
+    }
+    alos_process_exit_t exit = {ready->pid, ready->exit_status,
+                                ready->native_exit_reason, 0};
+    if (copy_to_user(output, &exit, sizeof(exit))) {
+      process_unlock(flags);
+      return -EFAULT;
+    }
+    /* Consommer l'enfant sous le lock avant de le liberer : deux waiters ne
+     * doivent pas reap le meme processus. Ses ressources ont deja ete nettoyees. */
+    bool was_gui = ready->uses_framebuffer;
+    process_unlink(ready);
+    process_unlock(flags);
+    proc_log_final_reap(exit.pid);
+    kfree(ready);
+    if (was_gui && !console_is_enabled()) {
+      keyboard_clear_buffer();
+      console_set_enabled(true);
+      console_clear(VGA_COLOR_BLACK);
+      console_refresh();
+    }
+    wait_queue_wake_all(&parent->wait_queue);
+    return (int)exit.pid;
+  }
 
 void process_kill(process_t *proc) {
   if (!proc || proc == idle_process)

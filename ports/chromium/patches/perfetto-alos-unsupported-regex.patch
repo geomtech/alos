@@ -1,0 +1,96 @@
+diff --git a/src/trace_processor/util/regex.h b/src/trace_processor/util/regex.h
+index a1a77d8..2ab8aea 100644
+--- a/src/trace_processor/util/regex.h
++++ b/src/trace_processor/util/regex.h
+@@ -27,14 +27,14 @@
+ #include "perfetto/base/status.h"
+ #include "perfetto/ext/base/status_or.h"
+ 
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+ #include <regex.h>
+ #endif
+ 
+ namespace perfetto::trace_processor::regex {
+ 
+ constexpr bool IsRegexSupported() {
+-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) || defined(__ALOS__)
+   return false;
+ #else
+   return true;
+@@ -42,10 +42,10 @@ constexpr bool IsRegexSupported() {
+ }
+ 
+ // Implements regex parsing and regex search based on C library `regex.h`.
+-// Doesn't work on Windows.
++// Doesn't work on Windows or the ALOS profile without POSIX regex.
+ class Regex {
+  public:
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+   ~Regex() {
+     if (regex_) {
+       regfree(&regex_.value());
+@@ -64,14 +64,18 @@ class Regex {
+   Regex& operator=(const Regex&) = delete;
+ #endif
+ 
+-  // Parse regex pattern. Returns error if regex pattern is invalid.
++  // Returns error if the pattern is invalid or regex is unsupported on ALOS.
+   static base::StatusOr<Regex> Create(const char* pattern) {
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+     regex_t regex;
+     if (regcomp(&regex, pattern, REG_EXTENDED)) {
+       return base::ErrStatus("Regex pattern '%s' is malformed.", pattern);
+     }
+     return Regex(regex);
++#elif defined(__ALOS__)
++    base::ignore_result(pattern);
++    return base::ErrStatus(
++        "ALOS: POSIX regular expressions are not supported.");
+ #else
+     base::ignore_result(pattern);
+     PERFETTO_FATAL("Windows regex is not supported.");
+@@ -80,9 +84,12 @@ class Regex {
+ 
+   // Returns true if string matches the regex.
+   bool Search(const char* s) const {
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+     PERFETTO_CHECK(regex_);
+     return regexec(&regex_.value(), s, 0, nullptr, 0) == 0;
++#elif defined(__ALOS__)
++    base::ignore_result(s);
++    PERFETTO_FATAL("ALOS: cannot search with an unsupported regex.");
+ #else
+     base::ignore_result(s);
+     PERFETTO_FATAL("Windows regex is not supported.");
+@@ -94,7 +101,7 @@ class Regex {
+   // subexpressions.
+   // Returns nullopt if there is no match.
+   void Submatch(const char* s, std::vector<std::string_view>& out) {
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+     PERFETTO_CHECK(regex_);
+     const auto& rgx = regex_.value();
+     size_t nmatch = rgx.re_nsub + 1;
+@@ -114,13 +121,16 @@ class Regex {
+             static_cast<size_t>(pmatch_[i].rm_eo - pmatch_[i].rm_so));
+       }
+     }
++#elif defined(__ALOS__)
++    base::ignore_result(s, out);
++    PERFETTO_FATAL("ALOS: cannot extract submatches with an unsupported regex.");
+ #else
+     base::ignore_result(s);
+     PERFETTO_FATAL("Windows regex is not supported.");
+ #endif
+   }
+ 
+-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && !defined(__ALOS__)
+  private:
+   explicit Regex(regex_t regex) : regex_(regex) {}
+ 

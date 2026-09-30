@@ -40,6 +40,15 @@ int madvise(void *address, size_t length, int advice) {
   return (int)memory_result(syscall3(SYS_MADVISE, (long)address, length, advice));
 }
 
+int mincore(void *address, size_t length, unsigned char *vector) {
+  return (int)memory_result(syscall3(SYS_MINCORE, (long)address, length,
+                                     (long)vector));
+}
+
+int msync(void *address, size_t length, int flags) {
+  return (int)memory_result(syscall3(SYS_MSYNC, (long)address, length, flags));
+}
+
 int vminfo(vm_info_t *info) {
   return (int)memory_result(syscall1(SYS_VMINFO, (long)info));
 }

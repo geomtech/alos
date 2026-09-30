@@ -9,6 +9,7 @@
 #include "../include/string.h"
 #include "../kernel/process.h"
 #include "../kernel/klog.h"
+#include "../kernel/uaccess.h"
 #include "../fs/vfs.h"
 
 typedef struct vm_area {
@@ -16,6 +17,7 @@ typedef struct vm_area {
   uint64_t end;
   uint64_t offset;
   int prot;
+  int max_prot;
   int flags;
   open_file_description_t *file;
   shm_object_t *shared;
@@ -51,6 +53,88 @@ static vm_area_t *find_area(const process_t *process, uint64_t address) {
     if (address < area->end) return area;
   }
   return NULL;
+}
+
+static int page_residency(process_t *process, uint64_t address) {
+  page_directory_t *directory = (page_directory_t *)process->pml4;
+  vmm_mapping_info_t mapping;
+  if (!vmm_query_mapping(directory, address, &mapping) &&
+      (mapping.raw_entry & PAGE_USER)) return 1;
+  uint64_t entry = vmm_get_page_entry(directory, address);
+  /* PROT_NONE garde le frame mais retire PAGE_PRESENT. */
+  if ((entry & PAGE_USER) && (entry & PAGE_FRAME_MASK)) return 1;
+  return find_area(process, address) ? 0 : -ENOMEM;
+}
+
+int vm_msync(process_t *process, uint64_t address, uint64_t length, int flags) {
+  if ((address & (PAGE_SIZE - 1)) ||
+      (flags & ~(MS_ASYNC | MS_SYNC | MS_INVALIDATE)) ||
+      ((flags & MS_ASYNC) && (flags & MS_SYNC)) ||
+      !(flags & (MS_ASYNC | MS_SYNC))) return -EINVAL;
+  if (!length) return 0;
+  uint64_t pages = length / PAGE_SIZE + !!(length % PAGE_SIZE);
+  if (!process || !process->pml4 || !is_user_address(address) ||
+      pages > (UINT64_MAX - address) / PAGE_SIZE ||
+      !is_user_address(address + pages * PAGE_SIZE - 1)) return -ENOMEM;
+  uint64_t end = address + pages * PAGE_SIZE;
+  for (uint64_t cursor = address; cursor < end;) {
+    vm_area_t *area = find_area(process, cursor);
+    if (area) {
+      /* Aucun page-cache/writeback de fichier partage n'existe dans ALOS.
+       * Les SHM sont des frames coherents ; les fichiers prives ne s'ecrivent
+       * pas vers le backing. Leur invalidation n'est pas implemente ici. */
+      if (area->file && ((area->flags & MAP_SHARED) ||
+                         (flags & MS_INVALIDATE))) return -ENOTSUP;
+      cursor = area->end < end ? area->end : end;
+    } else {
+      if (page_residency(process, cursor) < 0) return -ENOMEM;
+      bool legacy_shared = false;
+      for (unsigned i = 0; i < SHM_MAX_MAPPINGS; ++i) {
+        const shm_process_mapping_t *mapping = &process->shm_mappings[i];
+        if (mapping->object && cursor >= mapping->address &&
+            cursor - mapping->address < mapping->size) {
+          uint64_t mapping_end = mapping->address + mapping->size;
+          cursor = mapping_end < end ? mapping_end : end;
+          legacy_shared = true;
+          break;
+        }
+      }
+      /* Une PTE user ne prouve pas un backing RAM coherent : les mappings
+       * externes peuvent notamment etre du framebuffer ou MMIO. */
+      if (!legacy_shared) return -ENOTSUP;
+    }
+  }
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);
+  return 0;
+}
+
+int vm_mincore(process_t *process, uint64_t address, uint64_t length,
+                unsigned char *vector) {
+  if (address & (PAGE_SIZE - 1)) return -EINVAL;
+  if (!length) return 0;
+  uint64_t pages = length / PAGE_SIZE + !!(length % PAGE_SIZE);
+  if (!process || !process->pml4 || !is_user_address(address) ||
+      pages > (UINT64_MAX - address) / PAGE_SIZE ||
+      !is_user_address(address + pages * PAGE_SIZE - 1)) return -ENOMEM;
+  if (!user_range_valid(vector, pages, true)) return -EFAULT;
+
+  /* Ring 0 est cooperatif sur UP : aucune attente ni yield entre validation,
+   * lecture des PTE/regions et copie. Ceci n'est pas un verrou SMP. */
+  for (uint64_t i = 0; i < pages; ++i)
+    if (page_residency(process, address + i * PAGE_SIZE) < 0) return -ENOMEM;
+  unsigned char chunk[256];
+  for (uint64_t offset = 0; offset < pages;) {
+    size_t count = pages - offset < sizeof(chunk)
+        ? (size_t)(pages - offset) : sizeof(chunk);
+    for (size_t i = 0; i < count; ++i) {
+      int resident = page_residency(process, address + (offset + i) * PAGE_SIZE);
+      if (resident < 0) return resident;
+      chunk[i] = (unsigned char)resident;
+    }
+    if (copy_to_user(vector + offset, chunk, count)) return -EFAULT;
+    offset += count;
+  }
+  return 0;
 }
 
 static void retain_backing(vm_area_t *area) {
@@ -119,6 +203,7 @@ static void merge_areas(process_t *process) {
     bool offset_matches = (!area->file && !area->shared) ||
         area->offset + area->end - area->start == next->offset;
     if (area->end == next->start && area->prot == next->prot &&
+        area->max_prot == next->max_prot &&
         area->flags == next->flags && area->file == next->file &&
         area->shared == next->shared && offset_matches) {
       area->end = next->end;
@@ -221,6 +306,7 @@ int64_t vm_mmap(process_t *process, uint64_t address, uint64_t length,
   area->end = end;
   area->offset = (uint64_t)offset;
   area->prot = prot;
+  area->max_prot = PROT_READ | PROT_WRITE | PROT_EXEC;
   area->flags = flags & (MAP_PRIVATE | MAP_SHARED | MAP_ANONYMOUS);
 
   if (flags & MAP_ANONYMOUS) {
@@ -233,7 +319,13 @@ int64_t vm_mmap(process_t *process, uint64_t address, uint64_t length,
     open_file_description_t *file = file_table_get(process->fd_table, fd);
     if (!file) error = -EBADF;
     else if (file->type == FILE_TYPE_SHM) {
-      if ((uint64_t)offset > shm_size(file->shm_object) ||
+      area->max_prot = PROT_READ;
+      if ((file->flags & O_ACCMODE) == O_RDWR)
+        area->max_prot |= PROT_WRITE;
+      if ((prot & ~area->max_prot) ||
+          (file->flags & O_ACCMODE) == O_WRONLY) {
+        error = -EACCES;
+      } else if ((uint64_t)offset > shm_size(file->shm_object) ||
           size > shm_size(file->shm_object) - (uint64_t)offset) {
         error = -EINVAL;
       } else {
@@ -287,6 +379,10 @@ int vm_mprotect(process_t *process, uint64_t address, uint64_t length,
   if (error) return error;
   if (!process || !range_valid(address, length, &end)) return -EINVAL;
   if (!range_covered(process, address, end)) return -ENOMEM;
+  for (vm_area_t *area = process->vm_areas; area; area = area->next) {
+    if (area->start >= end) break;
+    if (area->end > address && (prot & ~area->max_prot)) return -EACCES;
+  }
   error = split_range(process, address, end);
   if (error) return error;
   for (vm_area_t *area = process->vm_areas; area; area = area->next) {

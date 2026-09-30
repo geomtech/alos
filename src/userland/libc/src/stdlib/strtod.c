@@ -5,7 +5,7 @@
 
 static long double convert(const char *text, char **end, int precision) {
   int saved_errno = errno;
-  FloatStream stream = {text, text, -1};
+  FloatStream stream = {text, text, -1, NULL};
   long double value = __alos_floatscan(&stream, precision, 1);
   if (end) *end = (char *)(text + shcnt(&stream));
   if (!shcnt(&stream) && errno == EINVAL) errno = saved_errno;

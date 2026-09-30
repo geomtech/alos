@@ -1,0 +1,10 @@
+VALIDATE ../../base/message_loop/message_pump_alos.cc
+EXIT 0
+VALIDATE ../../base/message_loop/message_pump.cc
+EXIT 0
+VALIDATE ../../base/task/current_thread.cc
+EXIT 0
+VALIDATE ../../base/files/file_descriptor_watcher_posix.cc
+EXIT 0
+VALIDATE /alos/ports/chromium/tests/base-io-pump-smoke.cc
+EXIT 0

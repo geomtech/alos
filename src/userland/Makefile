@@ -55,9 +55,30 @@ LIBGUI_OBJ = libgui/gui.o libgui/draw.o
 LIBGUI = libgui/libgui.a
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test strtod-test printf-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
+all: env-test uname-test
+all: posix-file-test pipe-test socket-test inet-test entropy-test
+all: stdio-file-test positional-io-test
+all: path-match-test
+all: mincore-test
+all: system-info-test
+all: vector-io-test shared-memory-test resource-test native-compat-test
+all: fs-attributes-test
+all: msync-test
+all: process-control-test
+all: path-ops-test
+
+posix-file-test pipe-test socket-test inet-test entropy-test stdio-file-test positional-io-test path-match-test mincore-test system-info-test vector-io-test shared-memory-test resource-test native-compat-test fs-attributes-test msync-test process-control-test path-ops-test: %: %.o $(CRT0) $(LIBC)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
+env-test: env-test.o $(CRT0) $(LIBC)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
+uname-test: uname-test.o $(CRT0) $(LIBC)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
 .PHONY: libc_build
 
 libc_build:
@@ -87,7 +108,7 @@ exec-test: libc_build exec-test.o
 mmap-test: libc_build mmap-test.o
 	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(LIBC)
 
-simd-context-test tls-test time-test pthread-test strtod-test printf-test: %: %.o $(CRT0) $(LIBC)
+simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC)
 	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
 
 crt-cxx-test tls-cxx-test: %: %.o $(CRT0) $(LIBC)
@@ -145,7 +166,19 @@ cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f simd-context-test tls-test time-test pthread-test strtod-test printf-test crt-cxx-test tls-cxx-test
+	rm -f env-test uname-test
+	rm -f posix-file-test pipe-test socket-test inet-test entropy-test
+	rm -f stdio-file-test
+	rm -f positional-io-test
+	rm -f path-match-test
+	rm -f mincore-test
+	rm -f system-info-test
+	rm -f vector-io-test shared-memory-test resource-test native-compat-test
+	rm -f fs-attributes-test
+	rm -f msync-test
+	rm -f process-control-test
+	rm -f path-ops-test
+	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete

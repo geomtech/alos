@@ -3,6 +3,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/syscall.h>
+#include <errno.h>
 
 int ipc_listen(const char *name) {
   return (int)syscall1(SYS_IPC_LISTEN, (long)name);
@@ -28,7 +29,14 @@ int shm_create(size_t size) {
   return (int)syscall1(SYS_SHM_CREATE, (long)size);
 }
 
-void *shm_map(int fd) { return (void *)syscall1(SYS_SHM_MAP, fd); }
+void *shm_map(int fd) {
+  long result = syscall1(SYS_SHM_MAP, fd);
+  if (result < 0) {
+    errno = result == -1 ? EIO : (int)-result;
+    return (void *)-1;
+  }
+  return (void *)result;
+}
 
 int shm_unmap(void *address) {
   return (int)syscall1(SYS_SHM_UNMAP, (long)address);

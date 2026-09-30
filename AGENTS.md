@@ -162,6 +162,10 @@ and hosted language mode with `-fno-builtin`; do not import a host CRT/libc.
   needed. Keep backing references and cleanup correct across fork/exec/exit.
 - Check allocation failure, overflow, alignment and rollback paths. Avoid
   large stack buffers/deep recursion; kernel stacks are bounded.
+- mincore reports actual residency without faulting queried data, including
+  sparse/PROT_NONE regions and mapped ELF/stack/heap pages. System-memory
+  reporting uses boot-usable PMM-managed capacity/free bytes and zero swap,
+  not maximum physical address, DIMM inventory or complete process RSS.
 
 ### Scheduling and runtime
 
@@ -174,8 +178,34 @@ and hosted language mode with `-fno-builtin`; do not import a host CRT/libc.
 - TLS is static ELF Variant II, not dynamic TLS/dlopen. Thread-local errno
   also has a dedicated kernel-backed location.
 - Private futexes and basic pthread create/join/detach, mutexes, condvars,
-  once and keys exist. Cancellation, rwlocks, barriers, creation attributes
-  and process-shared synchronization are not complete.
+  reader/writer locks, once and keys exist. Rwlocks use mutex/condvar/futex
+  blocking, concurrent readers and exclusive writers, with reader preference
+  and no FIFO guarantee. Try operations use a nonblocking trylock even on
+  the internal gate. Rwlock attributes, timed locks and process-shared
+  operation are unsupported; cancellation and barriers remain incomplete.
+  Creation attributes support init/destroy, stack size and detach state;
+  pthread_getattr_np queries native stacks. Caller-supplied stacks and the
+  full scheduling/attribute API are not implemented. gettid is a native
+  numeric thread ID, not a cast of the opaque pthread_t.
+- CLOCK_BOOTTIME=2, CLOCK_MONOTONIC_RAW=3 and CLOCK_MONOTONIC_COARSE=4
+  share CLOCK_MONOTONIC kernel uptime at millisecond resolution; do not
+  imply suspend/resume or NTP support. gettimeofday uses realtime and
+  returns zero UTC fields for a supplied struct timezone.
+  CLOCK_THREAD_CPUTIME_ID=5 uses current-thread PIT CPU accounting, not an
+  uptime alias; avoid double-counting elapsed runtime at context switches.
+  CLOCK_REALTIME_COARSE=6 uses realtime at millisecond resolution.
+  usleep converts microseconds to seconds/nanoseconds and blocks through
+  nanosleep; it is not a busy wait.
+  Musl-derived gmtime/gmtime_r, timegm and strftime/strftime_l
+  provide UTC calendar support. time, localtime/localtime_r and mktime
+  also exist, with UTC as the only local-time profile, not timezone rules.
+  strptime uses C-locale parsing; tzset keeps UTC and sets ENOTSUP for
+  unsupported TZ names, not a pretend local timezone configuration.
+- sscanf/vsscanf, fgets and getc/putc/ungetc (one-byte pushback consumed by fread)
+  exist, without a claim of full POSIX scanning/stdio compliance. Locale
+  support is limited to C/POSIX/UTF-8 names and C formats.
+  sysconf(_SC_NPROCESSORS_CONF) returns one for the configured UP kernel,
+  not the host/guest CPUID physical CPU count.
 - Prefer real blocking waits with correct wake/timeout/exit cleanup over
   polling or success-shaped stubs.
 
@@ -223,8 +253,13 @@ Inspect their flags rather than assuming PCnet everywhere.
 
 The native TCP/IP stack is not a complete POSIX socket API: connect,
 setsockopt/getaddrinfo and Unix sockets/FD passing still need work for Chromium.
-Authentication, file permissions, sandboxing, ASLR and cryptographic entropy
-are not complete. Never replace required entropy with a deterministic PRNG.
+Passive IPv4 sockets/poll are natively tested, but connect returns EOPNOTSUPP
+and getaddrinfo is numeric-only; AF_UNIX/SCM_RIGHTS, IPv6 and full socket
+options remain unsupported. Authentication, permissions, sandboxing and ASLR
+are not complete. getentropy uses a trusted host-backed legacy VirtIO RNG,
+blocks with a bounded wait and fails closed when unavailable; native tests
+are not cryptographic health tests. See docs/entropy.md for deployment trust
+and driver limits. Never replace required entropy with a deterministic PRNG.
 
 ## Validation and debugging
 
@@ -269,11 +304,35 @@ Keep Chromium/LLVM source checkouts and large build outputs **outside this
 repository**. Store ALOS integration scripts/patches under `ports/chromium/`.
 Keep `docs/chromium-port.md` synchronized with observed results.
 
-The LLVM 18.1.8 bootstrap has produced target `libc++.a`/`libc++abi.a`, and a
-native `complex-cpp-test` exercises those archives. This is not a browser port.
+The LLVM 18.1.8 bootstrap has produced target `libc++.a`/`libc++abi.a`.
+The current profile enables localization, Unicode and C++ wide characters,
+but disables exceptions/RTTI, filesystem, timezone database and random_device.
+The runtime/wide-format suites and three consecutive `complex-cpp-test`
+runs passed on both QEMU `qemu64` and `max` after rebuilding/linking.
+swprintf/vswprintf use a musl-derived wchar_t sink; wide stream I/O uses
+UTF-8 and one-wide-character pushback, not general orientation/fwide.
+Console and writable-file wide output are supported; read-only writes fail
+with EBADF. Native lseek, dup/dup2, partial fcntl, directory streams and
+stat/lstat/fstat exist. fopen/fdopen support r/w/a, update and binary modes;
+fseek/ftell account for byte pushback, but pending wide pushback makes
+ftell/SEEK_CUR unsupported. pread/pwrite preserve the shared cursor and
+ftruncate/ftruncate64 extend sparsely or reclaim blocks on shrink.
+VFS offsets remain 32-bit bounded; advisory F_SETLK/F_GETLK/F_SETLKW
+return ENOTSUP, not a pretend successful lock.
+O_CREAT/O_EXCL/O_TRUNC/O_SYNC and fsync are implemented with Ext2 writes
+and ATA cache flush. Anonymous pipes block and report EPIPE without SIGPIPE.
+Temporary files/directories use exclusive PID/counter names, not random
+names. access supports F_OK only; path-at APIs, full permission enforcement
+and symlink following are unsupported. Process environment inheritance/
+mutation and uname have native coverage; _exit remains thread-only, so
+process-group termination tests explicitly use SYS_EXIT_GROUP.
+Earlier
+passes without localization remain a separate baseline. This is not a browser port.
 The experimental Chromium 140.0.7339.80 patch introduces `OS_ALOS`/`is_alos`
-and GN toolchain wiring, but dependency/configuration blockers remain;
-Chromium `//base`, Blink and V8 are not established working ALOS targets.
+and GN toolchain wiring. GN generates a graph and Ninja compiles real
+`//base`/dependency objects, but the complete target has not been built,
+linked or executed; Chromium `//base`, Blink and V8 are not established
+working ALOS targets.
 Do not claim working Ozone, Mojo or rendered Chromium content without evidence.
 
 ```powershell

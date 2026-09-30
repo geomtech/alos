@@ -1,0 +1,21 @@
+diff --git a/include/perfetto/base/thread_utils.h b/include/perfetto/base/thread_utils.h
+--- a/include/perfetto/base/thread_utils.h
++++ b/include/perfetto/base/thread_utils.h
+@@ -30,7 +30,7 @@ extern "C" {
+ }
+ #elif PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
+ #include <zircon/types.h>
+-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_QNX)
++#elif defined(__ALOS__) || PERFETTO_BUILDFLAG(PERFETTO_OS_QNX)
+ #include <sys/types.h>
+ #include <unistd.h>
+ #elif PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
+@@ -44,6 +44,7 @@ namespace perfetto {
+ namespace base {
+ 
+-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
++#if defined(__ALOS__) ||                    \
++    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
+     PERFETTO_BUILDFLAG(PERFETTO_OS_QNX)
+ using PlatformThreadId = pid_t;
+ inline PlatformThreadId GetThreadId() {

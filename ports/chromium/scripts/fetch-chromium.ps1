@@ -26,6 +26,8 @@ $sparse = @(
 
 # Entrees de DEPS (chemin, URL, revision, sparse ou $null = complet).
 $deps = @(
+    @{ Path = "third_party/googletest/src"; Url = "https://chromium.googlesource.com/external/github.com/google/googletest.git";
+       Rev = "373af2e3df71599b87a40ce0e37164523849166b"; Sparse = $null },
     @{ Path = "third_party/boringssl/src"; Url = "https://boringssl.googlesource.com/boringssl.git";
        Rev = "0a0009998fa180695f3e2071805dc03c9a5f3124"; Sparse = $null },
     @{ Path = "third_party/icu"; Url = "https://chromium.googlesource.com/chromium/deps/icu.git";

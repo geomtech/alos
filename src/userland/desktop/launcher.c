@@ -63,10 +63,10 @@ void desktop_load_apps(void) {
   for (unsigned int index = 0; index < 128 &&
                                g_desktop.app_count < DESKTOP_MAX_APPS;
        index++) {
-    struct dirent entry;
-    int result = readdir(APPLICATIONS_DIR, index, &entry);
+    struct alos_dirent entry;
+    int result = alos_readdir(APPLICATIONS_DIR, index, &entry);
     if (result == 1) break;
-    if (result != 0 || entry.d_type != DT_FILE) continue;
+    if (result != 0 || entry.d_type != ALOS_DT_FILE) continue;
 
     size_t name_length = strlen(entry.d_name);
     if (name_length < 8 ||

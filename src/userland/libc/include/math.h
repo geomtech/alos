@@ -26,6 +26,11 @@
 extern "C" {
 #endif
 double scalbn(double x, int n);
+float scalbnf(float x, int n);
+float ldexpf(float x, int n);
+float expf(float x);
+float atan2f(float y, float x);
+long double atan2l(long double y, long double x);
 long double scalbnl(long double x, int n);
 long double frexpl(long double x, int *exponent);
 long double fabsl(long double x);

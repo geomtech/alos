@@ -21,6 +21,8 @@
 #include "../net/l3/icmp.h"
 #include "../net/l3/route.h"
 #include "../net/l4/dhcp.h"
+#include "../drivers/virtio_rng.h"
+#include "../include/errno.h"
 #include "../net/l4/dns.h"
 #include "../net/l4/tcp.h"
 #include "../shell/shell.h"
@@ -417,6 +419,14 @@ void kmain(void) {
   /* ============================================ */
   /* PS/2 Mouse Driver                            */
   /* ============================================ */
+  int rng_status = virtio_rng_init();
+  if (!rng_status) KLOG_INFO("RNG", "Host-backed VirtIO RNG initialized");
+  else if (rng_status == -ENOSYS) KLOG_INFO("RNG", "No entropy device configured");
+  else {
+    KLOG_ERROR("RNG", "VirtIO RNG initialization failed");
+    KLOG_ERROR_HEX("RNG", "Initialization errno: ", (uint32_t)-rng_status);
+  }
+
   if (mouse_init() == 0) {
     KLOG_INFO("MOUSE", "PS/2 mouse driver initialized");
   } else {

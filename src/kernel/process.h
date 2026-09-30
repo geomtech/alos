@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../include/process_abi.h"
 
 /* ========================================
  * Constantes
@@ -71,6 +72,7 @@ typedef struct process {
   process_state_t state;         /* État du processus */
   volatile int should_terminate; /* Flag pour demander l'arrêt (CTRL+C) */
   int exit_status;               /* Code de sortie */
+  uint32_t native_exit_reason;   /* Cause native, pas un numero de signal */
 
   /* ===== Context (x86-64) ===== */
   uint64_t rsp;  /* Stack Pointer sauvegardé */
@@ -243,6 +245,9 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
  * Attend et reap un enfant du processus courant.
  */
 int process_waitpid(int pid, int *status, int options);
+int process_native_wait(int pid, alos_process_exit_t *output, uint32_t timeout_ms);
+int process_native_terminate(int pid, int raw_status);
+int process_native_query(int pid, alos_process_info_t *output);
 
 /**
  * Notifie le parent et adopte les enfants à la terminaison d'un processus.

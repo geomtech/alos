@@ -14,6 +14,8 @@ void *mmap(void *address, size_t length, int prot, int flags, int fd,
 int munmap(void *address, size_t length);
 int mprotect(void *address, size_t length, int prot);
 int madvise(void *address, size_t length, int advice);
+int mincore(void *address, size_t length, unsigned char *vector);
+int msync(void *address, size_t length, int flags);
 
 #ifdef __cplusplus
 }

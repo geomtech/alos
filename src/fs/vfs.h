@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "../include/fs_metadata.h"
+#include "../include/statvfs.h"
 
 /* ===========================================
  * Types de fichiers
@@ -60,6 +62,19 @@ typedef struct vfs_node* (*finddir_fn)(struct vfs_node*, const char* name);
 typedef int (*create_fn)(struct vfs_node* parent, const char* name, uint32_t type);
 typedef int (*unlink_fn)(struct vfs_node* parent, const char* name);
 typedef int (*mkdir_fn)(struct vfs_node* parent, const char* name);
+typedef int (*stat_fn)(struct vfs_node*, struct stat*);
+typedef int (*readdir_checked_fn)(struct vfs_node*, uint32_t, struct vfs_dirent*);
+/* Un succes lookup_checked transfere un nouveau noeud au demandeur. */
+typedef int (*lookup_checked_fn)(struct vfs_node*, const char*, struct vfs_node**);
+typedef void (*dispose_fn)(struct vfs_node*);
+typedef int (*sync_fn)(struct vfs_node*);
+typedef int (*truncate_fn)(struct vfs_node*);
+typedef int (*resize_fn)(struct vfs_node*, uint32_t);
+typedef int (*statvfs_fn)(struct vfs_node*, struct statvfs*);
+typedef int (*set_times_fn)(struct vfs_node*, uint32_t, uint32_t, uint32_t);
+typedef int (*readlink_fn)(struct vfs_node*, char*, uint32_t);
+typedef int (*symlink_fn)(struct vfs_node*, const char*, const char*);
+typedef int (*rename_fn)(struct vfs_node*, const char*, struct vfs_node*, const char*);
 
 /* ===========================================
  * Structure d'un noeud VFS (inode abstrait)
@@ -86,6 +101,18 @@ typedef struct vfs_node {
     create_fn create;
     unlink_fn unlink;
     mkdir_fn mkdir;
+    stat_fn stat;
+    readdir_checked_fn readdir_checked;
+    lookup_checked_fn lookup_checked;
+    dispose_fn dispose;
+    sync_fn sync;
+    truncate_fn truncate;
+    resize_fn resize;
+    statvfs_fn statvfs;
+    set_times_fn set_times;
+    readlink_fn readlink;
+    symlink_fn symlink;
+    rename_fn rename;
     
     /* Données privées du FS */
     void* fs_data;
@@ -146,6 +173,7 @@ typedef struct vfs_mount {
  * Initialise le VFS.
  */
 void vfs_init(void);
+int vfs_statvfs_path(const char* path, struct statvfs* information);
 
 /**
  * Enregistre un système de fichiers.
@@ -175,6 +203,7 @@ int vfs_unmount(const char* path);
  * @return Pointeur vers le noeud ou NULL si erreur
  */
 vfs_node_t* vfs_open(const char* path, uint32_t flags);
+int vfs_open_checked(const char*, uint32_t, vfs_node_t**);
 
 /**
  * Ferme un fichier.
@@ -202,6 +231,17 @@ int vfs_write(vfs_node_t* node, uint32_t offset, uint32_t size, const uint8_t* b
  * @return Entrée ou NULL si fin du répertoire
  */
 vfs_dirent_t* vfs_readdir(vfs_node_t* node, uint32_t index);
+/* 1 entree, 0 fin normale, ou -errno ; aucune confusion EOF/erreur. */
+int vfs_readdir_checked(vfs_node_t*, uint32_t, vfs_dirent_t*);
+int vfs_stat_node(vfs_node_t*, struct stat*);
+int vfs_stat_path(const char*, struct stat*, int flags);
+int vfs_open_at_checked(vfs_node_t*, const char*, uint32_t, vfs_node_t**);
+int vfs_stat_at(vfs_node_t*, const char*, struct stat*, int);
+int vfs_unlink_at(vfs_node_t*, const char*, int);
+int vfs_create_at(vfs_node_t*, const char*, uint32_t, uint32_t);
+int vfs_readlink_at(vfs_node_t*, const char*, char*, uint32_t);
+int vfs_symlink_at(vfs_node_t*, const char*, const char*);
+int vfs_rename_at(vfs_node_t*, const char*, const char*);
 
 /**
  * Cherche un fichier dans un répertoire.
@@ -212,6 +252,8 @@ vfs_node_t* vfs_finddir(vfs_node_t* node, const char* name);
  * Crée un fichier.
  */
 int vfs_create(const char* path);
+int vfs_create_checked(const char* path, uint32_t type, uint32_t mode);
+int vfs_access(const char* path, int mode);
 
 /**
  * Crée un répertoire.

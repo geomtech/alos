@@ -15,6 +15,11 @@ struct _IO_FILE {
   int fd;
   int error;
   int eof;
+  unsigned char pushed, has_pushback;
+  /* Un seul caractere large en attente ; pas d'orientation FILE generale. */
+  wint_t wide_pushed;
+  unsigned char has_wide_pushback;
+  unsigned char access_mode;
 };
 
 extern FILE *stdin;
@@ -28,12 +33,25 @@ int vprintf(const char *format, va_list ap);
 int fprintf(FILE *stream, const char *format, ...);
 int vfprintf(FILE *stream, const char *format, va_list ap);
 int remove(const char *path);
+int rename(const char *old_path, const char *new_path);
 int vsprintf(char *str, const char *format, va_list ap);
 int vsnprintf(char *str, size_t size, const char *format, va_list ap);
+int vasprintf(char **str, const char *format, va_list ap);
+int asprintf(char **str, const char *format, ...);
+int sscanf(const char *str, const char *format, ...);
+int vsscanf(const char *str, const char *format, va_list ap);
 
 int putchar(int c);
 int puts(const char *s);
 int getchar(void);
+int getc(FILE *);
+int fgetc(FILE *);
+char *fgets(char *buffer, int size, FILE *stream);
+int ungetc(int, FILE *);
+int putc(int, FILE *);
+int fputc(int, FILE *);
+int fputs(const char *, FILE *);
+void perror(const char *);
 
 
 #define SEEK_SET 0
@@ -41,6 +59,7 @@ int getchar(void);
 #define SEEK_END 2
 
 FILE *fopen(const char *pathname, const char *mode);
+FILE *fdopen(int fd, const char *mode);
 int fclose(FILE *stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);

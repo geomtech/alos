@@ -8,6 +8,7 @@
 #include "../include/mman.h"
 #include "../include/errno.h"
 #include "../include/time.h"
+#include "../include/memlayout.h"
 #include "../arch/x86_64/cpu.h"
 #include "futex.h"
 #include "thread_lifecycle.h"
@@ -30,6 +31,16 @@
 #include "thread.h"
 #include "timer.h"
 #include "uaccess.h"
+#include "system_identity.h"
+#include "system_info.h"
+#include "resource.h"
+#include "path_ops.h"
+#include "native_io.h"
+#include "native_network_cleanup.h"
+#include "native_socket.h"
+#include "native_poll.h"
+#include "posix_file.h"
+#include "entropy.h"
 
 /* Macro pour activer/désactiver les interruptions */
 static inline void enable_interrupts(void) { __asm__ volatile("sti"); }
@@ -43,6 +54,46 @@ static file_descriptor_t *current_fd_table(void) {
 static open_file_description_t *current_fd_get(int fd) {
   file_descriptor_t *table = current_fd_table();
   return table != NULL ? file_table_get(table, fd) : NULL;
+}
+
+static int copy_absolute_user_path(const char *path, char **storage,
+                                  const char **resolved) {
+  char *paths = kmalloc(2 * VFS_MAX_PATH);
+  if (!paths) return -ENOMEM;
+  size_t length;
+  int error = 0;
+  for (length = 0; length < VFS_MAX_PATH; ++length) {
+    if (!path || copy_from_user(&paths[length], path + length, 1)) {
+      error = -EFAULT;
+      break;
+    }
+    if (!paths[length]) break;
+  }
+  if (!error && length == VFS_MAX_PATH) error = -ENAMETOOLONG;
+  if (!error && !length) error = -ENOENT;
+  const char *absolute = paths;
+  if (!error && paths[0] != '/') {
+    process_t *process = process_current();
+    if (!process) error = -ESRCH;
+    else {
+      size_t cwd_length = 0;
+      while (cwd_length < sizeof(process->cwd) && process->cwd[cwd_length])
+        ++cwd_length;
+      if (cwd_length == sizeof(process->cwd) ||
+          cwd_length + 1 + length >= VFS_MAX_PATH) error = -ENAMETOOLONG;
+      else {
+        char *prefixed = paths + VFS_MAX_PATH;
+        memcpy(prefixed, process->cwd, cwd_length);
+        prefixed[cwd_length] = '/';
+        memcpy(prefixed + cwd_length + 1, paths, length + 1);
+        absolute = prefixed;
+      }
+    }
+  }
+  if (error) { kfree(paths); return error; }
+  *storage = paths;
+  *resolved = absolute;
+  return 0;
 }
 
 /* ========================================
@@ -152,40 +203,48 @@ static int sys_sleep_micros(uint32_t microseconds) {
  * @param buf     Pointeur vers la chaîne (dans EBX)
  * @param count   Nombre de caractères (dans ECX), 0 = null-terminated
  */
-static int sys_write(int fd, const char *buf, uint64_t count) {
-  open_file_description_t *description = current_fd_get(fd);
-  if ((fd != FD_STDOUT && fd != FD_STDERR) || description == NULL ||
-      description->type != FILE_TYPE_CONSOLE) {
-    return -1; /* Invalid file descriptor */
+static int64_t sys_write(int fd, const char *buffer, uint64_t count) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  if (description->type != FILE_TYPE_CONSOLE) {
+    int64_t result = file_description_write_user(description, buffer, count);
+    file_description_release(description);
+    return result;
   }
-
-  /* Safety check: ensure buffer is not NULL */
-  if (!buf) {
-    KLOG_ERROR("SYSCALL", "sys_write: NULL buffer");
-    return -1;
+  int64_t result = 0;
+  if ((description->flags & O_ACCMODE) == O_RDONLY) result = -EBADF;
+  else if (count > INT64_MAX) result = -EINVAL;
+  else if (count && !user_range_valid(buffer, (size_t)count, false))
+    result = -EFAULT;
+  if (result || !count) {
+    file_description_release(description);
+    return result;
   }
-  if (!user_range_valid(buf, count, false)) return -1;
-
-  /* Logging disabled for performance:
-   * KLOG_INFO("SYSCALL", "sys_write called:");
-   * KLOG_INFO_DEC("SYSCALL", "  fd: ", fd);
-   * KLOG_INFO_DEC("SYSCALL", "  count: ", (uint32_t)count);
-   */
-
-  /* Write to console (if enabled) AND log to serial */
+  char *bounce = kmalloc(4096);
+  if (!bounce) {
+    file_description_release(description);
+    return -ENOMEM;
+  }
+  if (count > INT32_MAX) count = INT32_MAX;
+  uint64_t written = 0;
   bool draw_console = console_is_enabled();
-  for (uint64_t i = 0; i < count; i++) {
-    if (draw_console) {
-      console_putc(buf[i]);
+  while (written < count) {
+    size_t length = (size_t)(count - written);
+    if (length > 4096) length = 4096;
+    if (copy_from_user(bounce, buffer + written, length)) {
+      result = -EFAULT;
+      break;
     }
-    
-    /* Output to serial port 0x3F8 for debugging */
-    /* Wait for transmit empty */
-    while ((inb(0x3F8 + 5) & 0x20) == 0);
-    outb(0x3F8, buf[i]);
+    for (size_t i = 0; i < length; ++i) {
+      if (draw_console) console_putc(bounce[i]);
+      while ((inb(0x3F8 + 5) & 0x20) == 0);
+      outb(0x3F8, bounce[i]);
+    }
+    written += length;
   }
-
-  return (int)count;
+  kfree(bounce);
+  file_description_release(description);
+  return written ? (int64_t)written : result;
 }
 
 /* ========================================
@@ -278,45 +337,13 @@ const char *syscall_get_cwd(void) {
  * @param flags  Flags d'ouverture (O_RDONLY, etc.)
  * @return File descriptor, ou -1 si erreur
  */
-static int sys_open(const char *path, int flags) {
-  if (path == NULL) {
-    return -1;
-  }
-
-  char resolved[VFS_MAX_PATH];
-  if (process_resolve_path(path, resolved, sizeof(resolved)) != 0) {
-    return -1;
-  }
-
-  KLOG_INFO("SYSCALL", "sys_open called");
-  KLOG_INFO("SYSCALL", "[SYSCALL] open:");
-  KLOG_INFO("SYSCALL", resolved);
-
-  /* Ouvrir le fichier via VFS */
-  vfs_node_t *node = vfs_open(resolved, flags);
-  if (node == NULL) {
-    KLOG_ERROR("SYSCALL", "[SYSCALL] open: file not found");
-    return -1;
-  }
-
-  open_file_description_t *description =
-      file_description_create(FILE_TYPE_FILE, flags, node);
-  if (description == NULL) {
-    vfs_close(node);
-    return -1;
-  }
-
-  file_descriptor_t *table = current_fd_table();
-  int fd = table != NULL ? file_table_install(table, description) : -1;
-  if (fd < 0) {
-    file_description_release(description);
-    KLOG_ERROR("SYSCALL", "[SYSCALL] open: no free file descriptors");
-    return -1;
-  }
-
-  KLOG_INFO_DEC("SYSCALL", "[SYSCALL] open: fd=", fd);
-  KLOG_INFO_DEC("SYSCALL", "file size=", node->size);
-
+static int sys_open(const char *path, int flags, uint32_t mode) {
+  char *storage;
+  const char *resolved;
+  int error = copy_absolute_user_path(path, &storage, &resolved);
+  if (error) return error;
+  int fd = file_table_open_mode(current_fd_table(), resolved, (uint32_t)flags, mode);
+  kfree(storage);
   return fd;
 }
 
@@ -328,60 +355,28 @@ static int sys_open(const char *path, int flags) {
  * @param count  Nombre de bytes à lire
  * @return Nombre de bytes lus, ou -1 si erreur
  */
-static int sys_read(int fd, void *buf, uint64_t count) {
-  if (buf == NULL || fd < 0 || fd >= MAX_FD) {
-    return -1;
-  }
-  if (!user_range_valid(buf, count, true)) return -1;
-
-  open_file_description_t *description = current_fd_get(fd);
-  if (description == NULL) {
-    return -1;
-  }
-
-  /* Lecture depuis un fichier VFS */
-  if (description->type == FILE_TYPE_FILE) {
-    vfs_node_t *node = (vfs_node_t *)description->vfs_node;
-    if (node == NULL) {
-      return -1;
-    }
-
-    /* Lire depuis la position courante */
-    int bytes_read =
-        vfs_read(node, description->position, count, (uint8_t *)buf);
-    if (bytes_read > 0) {
-      description->position += bytes_read;
-    }
-
-    return bytes_read;
-  }
-
-
-
-
-
-  /* Lecture depuis la console (stdin) - bloquant via clavier */
+static int64_t sys_read(int fd, void *buffer, uint64_t count) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  int64_t result;
   if (description->type == FILE_TYPE_CONSOLE) {
-    if (count == 0) {
-      return 0;
+    uint32_t flags = description->flags;
+    /* Le clavier est global : ne pas garder une reference FD dans une attente
+     * abandonnee par exit_group. Les droits ont ete lus avant le blocage. */
+    file_description_release(description);
+    if ((flags & O_ACCMODE) == O_WRONLY) result = -EBADF;
+    else if (count > INT64_MAX) result = -EINVAL;
+    else if (!count) result = 0;
+    else if (!user_range_valid(buffer, (size_t)count, true)) result = -EFAULT;
+    else {
+      char value = keyboard_getchar();
+      result = copy_to_user(buffer, &value, 1) ? -EFAULT : 1;
     }
-
-    uint64_t total = 0;
-    uint8_t *out = (uint8_t *)buf;
-    while (total < count) {
-      char c = keyboard_getchar(); /* Bloquant (sémaphore) */
-      out[total++] = (uint8_t)c;
-      /* On s'arrête après un seul caractère : le shell userland lit
-       * caractère par caractère (comme un terminal en mode canonique
-       * simplifié). */
-      break;
-    }
-
-    return (int)total;
-
+    return result;
   }
-
-  return -1;
+  result = file_description_read_user(description, buffer, count);
+  file_description_release(description);
+  return result;
 }
 
 /**
@@ -887,11 +882,11 @@ static int install_resource(file_type_t type, void *resource) {
   if (description == NULL) {
     return -1;
   }
-  int fd = file_table_install(current_fd_table(), description);
+  uint32_t descriptor_flags =
+      type == FILE_TYPE_IPC || type == FILE_TYPE_SHM ? FD_CLOEXEC : 0;
+  int fd = file_table_install_flags(current_fd_table(), description, descriptor_flags);
   if (fd < 0) {
     file_description_release(description);
-  } else if (type == FILE_TYPE_IPC || type == FILE_TYPE_SHM) {
-    current_fd_table()[fd].descriptor_flags = FD_CLOEXEC;
   }
   return fd;
 }
@@ -940,6 +935,7 @@ static int sys_ipc_send(int fd, const ipc_user_message_t *user_message) {
     if (attached == NULL || attached->type != FILE_TYPE_SHM) {
       return -1;
     }
+    if ((attached->flags & O_ACCMODE) == O_RDONLY) return -ENOTSUP;
     attachment = attached->shm_object;
   }
   return ipc_send(description->ipc_endpoint, message.data, message.length,
@@ -992,6 +988,7 @@ static void *sys_shm_map(int fd) {
   if (description == NULL || description->type != FILE_TYPE_SHM) {
     return (void *)-1;
   }
+  if ((description->flags & O_ACCMODE) == O_RDONLY) return (void *)-ENOTSUP;
   return shm_map_process(process_current(), description->shm_object);
 }
 
@@ -1327,19 +1324,122 @@ static int sys_send(int fd, const uint8_t *buf, int len, int flags) {
  * @return 0 si succès, -1 si erreur
  */
 static int sys_close(int fd) {
-  KLOG_INFO("SYSCALL", "sys_close called");
-  KLOG_INFO_HEX("SYSCALL", "  fd: ", fd);
+  return file_table_close(current_fd_table(), fd);
+}
 
-  /* Vérifier le FD */
-  if (fd < 0 || fd >= MAX_FD) {
-    return -1;
-  }
+static int64_t sys_lseek(int fd, int64_t offset, int whence) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  int64_t result = file_description_seek(description, offset, whence);
+  file_description_release(description);
+  return result;
+}
 
-  file_descriptor_t *table = current_fd_table();
-  if (table == NULL) {
-    return -1;
+static int sys_metadata_stat(const char *path, struct stat *output, int flags) {
+  if (flags & ~ALOS_STAT_NOFOLLOW) return -EINVAL;
+  if (!user_range_valid(output, sizeof(*output), true)) return -EFAULT;
+  char *storage;
+  const char *resolved;
+  int error = copy_absolute_user_path(path, &storage, &resolved);
+  if (error) return error;
+  struct stat metadata;
+  error = vfs_stat_path(resolved, &metadata, flags);
+  if (!error && copy_to_user(output, &metadata, sizeof(metadata))) error = -EFAULT;
+  kfree(storage);
+  return error;
+}
+
+static int sys_statvfs(const char *path, struct statvfs *output) {
+  if (!user_range_valid(output, sizeof(*output), true)) return -EFAULT;
+  char *storage;
+  const char *resolved;
+  int result = copy_absolute_user_path(path, &storage, &resolved);
+  if (result) return result;
+  native_network_resources_t held = {.allocation1 = storage};
+  native_network_resources_register(&held);
+  struct statvfs information;
+  result = file_statvfs_path(resolved, &information);
+  if (!result && copy_to_user(output, &information, sizeof(information)))
+    result = -EFAULT;
+  native_network_resources_unregister(&held);
+  kfree(storage);
+  return result;
+}
+
+static int sys_futimes(int fd, const void *user_times) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  uint64_t now = timer_get_realtime_ms() / 1000;
+  int result = now > UINT32_MAX ? -EOVERFLOW : 0;
+  uint32_t atime = (uint32_t)now, mtime = atime;
+  if (!result && user_times) {
+    int64_t times[2][2];
+    if (copy_from_user(times, user_times, sizeof(times))) result = -EFAULT;
+    else {
+      for (unsigned i = 0; i < 2; ++i) {
+        if (times[i][1] < 0 || times[i][1] >= 1000000) result = -EINVAL;
+        else if (times[i][0] < 0 || (uint64_t)times[i][0] > UINT32_MAX)
+          result = -EOVERFLOW;
+        if (result) break;
+      }
+      if (!result) {
+        atime = (uint32_t)times[0][0];
+        mtime = (uint32_t)times[1][0];
+      }
+    }
   }
-  return file_table_close(table, fd);
+  if (!result) {
+    native_network_resources_t held = {.description = description};
+    native_network_resources_register(&held);
+    result = file_description_set_times(description, atime, mtime, (uint32_t)now);
+    native_network_resources_unregister(&held);
+  }
+  file_description_release(description);
+  return result;
+}
+
+static int sys_set_process_title(const char *title) {
+  char name[PROCESS_NAME_MAX];
+  size_t length;
+  for (length = 0; length < sizeof(name); ++length) {
+    if (!title || copy_from_user(&name[length], title + length, 1))
+      return -EFAULT;
+    if (!name[length]) break;
+  }
+  if (length == sizeof(name)) return -ENAMETOOLONG;
+  if (!length) return -EINVAL;
+  process_t *process = process_current();
+  if (!process) return -ESRCH;
+  memcpy(process->name, name, length + 1);
+  if (process->main_thread) {
+    strncpy(process->main_thread->name, name,
+             sizeof(process->main_thread->name) - 1);
+    process->main_thread->name[sizeof(process->main_thread->name) - 1] = 0;
+  }
+  return 0;
+}
+
+static int sys_metadata_fstat(int fd, struct stat *output) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  int error;
+  struct stat metadata;
+  if (!user_range_valid(output, sizeof(*output), true)) error = -EFAULT;
+  else if (description->type != FILE_TYPE_FILE) error = -ENOTSUP;
+  else {
+    error = vfs_stat_node(description->vfs_node, &metadata);
+    if (!error && copy_to_user(output, &metadata, sizeof(metadata))) error = -EFAULT;
+  }
+  file_description_release(description);
+  return error;
+}
+
+static int sys_metadata_readdir(int fd, alos_dir_record_t *output) {
+  open_file_description_t *description = file_table_acquire(current_fd_table(), fd);
+  if (!description) return -EBADF;
+  int result = file_description_readdir_user(description, output);
+  file_description_release(description);
+  return result;
 }
 
 /* ========================================
@@ -1520,11 +1620,145 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
 
   case SYS_OPEN:
-    result = sys_open((const char *)regs->rdi, (int)regs->rsi);
+    result = sys_open((const char *)regs->rdi, (int)regs->rsi, (uint32_t)regs->rdx);
+    break;
+  case SYS_NATIVE_SOCKET:
+    result = native_socket_call(regs->rdi, regs->rsi, regs->rdx,
+                                regs->r10, regs->r8, regs->r9);
+    break;
+  case SYS_NATIVE_POLL:
+    result = native_poll((void *)regs->rdi, regs->rsi, (int)regs->rdx);
+    break;
+  case SYS_FSYNC:
+    result = posix_fsync((int)regs->rdi);
+    break;
+  case SYS_PREAD:
+    result = posix_pread((int)regs->rdi, (void *)regs->rsi, regs->rdx,
+                         (int64_t)regs->r10);
+    break;
+  case SYS_PWRITE:
+    result = posix_pwrite((int)regs->rdi, (const void *)regs->rsi, regs->rdx,
+                          (int64_t)regs->r10);
+    break;
+  case SYS_FTRUNCATE:
+    result = posix_ftruncate((int)regs->rdi, (int64_t)regs->rsi);
+    break;
+  case SYS_MINCORE:
+    result = vm_mincore(process_current(), regs->rdi, regs->rsi,
+                        (unsigned char *)regs->rdx);
+    break;
+  case SYS_SYSTEM_INFO:
+    result = sys_system_info((alos_system_info_t *)regs->rdi,
+                              (size_t)regs->rsi, (unsigned)regs->rdx);
+    break;
+  case SYS_READV:
+    result = native_vector_io((int)regs->rdi, (const void *)regs->rsi,
+                               (int)regs->rdx, 0);
+    break;
+  case SYS_WRITEV:
+    result = native_vector_io((int)regs->rdi, (const void *)regs->rsi,
+                               (int)regs->rdx, 1);
+    break;
+  case SYS_IOCTL:
+    result = native_ioctl((int)regs->rdi, regs->rsi, (void *)regs->rdx);
+    break;
+  case SYS_SHM_CREATE_NATIVE:
+    result = shm_create_descriptor(process_current(), regs->rdi);
+    break;
+  case SYS_SHM_READONLY:
+    result = shm_readonly_descriptor(process_current(), (int)regs->rdi);
+    break;
+  case SYS_SHM_INFO:
+    result = shm_descriptor_info(process_current(), (int)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_SHM_SAME:
+    result = shm_descriptors_same(process_current(), (int)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_RESOURCE_LIMIT:
+    result = sys_resource_limit((int)regs->rdi,
+                                 (alos_resource_limit_t *)regs->rsi);
+    break;
+  case SYS_RESOURCE_SET_LIMIT:
+    result = sys_resource_set_limit((int)regs->rdi,
+                                     (const alos_resource_limit_t *)regs->rsi);
+    break;
+  case SYS_THREAD_NICE:
+    result = sys_thread_nice((int)regs->rdi, (int)regs->rsi, (int *)regs->rdx);
+    break;
+  case SYS_STATVFS:
+    result = sys_statvfs((const char *)regs->rdi, (struct statvfs *)regs->rsi);
+    break;
+  case SYS_FUTIMES:
+    result = sys_futimes((int)regs->rdi, (const void *)regs->rsi);
+    break;
+  case SYS_SET_PROCESS_TITLE:
+    result = sys_set_process_title((const char *)regs->rdi);
+    break;
+  case SYS_MSYNC:
+    result = vm_msync(process_current(), regs->rdi, regs->rsi, (int)regs->rdx);
+    break;
+  case SYS_PROCESS_TERMINATE:
+    result = process_native_terminate((int)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_PROCESS_WAIT:
+    result = process_native_wait((int)regs->rdi,
+                                  (alos_process_exit_t *)regs->rsi,
+                                  (uint32_t)regs->rdx);
+    break;
+  case SYS_PROCESS_QUERY:
+    result = process_native_query((int)regs->rdi,
+                                   (alos_process_info_t *)regs->rsi);
+    break;
+  case SYS_NATIVE_PATH:
+    result = native_path_call((int)regs->rdi, (int)regs->rsi,
+                               (const char*)regs->rdx, regs->r10, regs->r8, regs->r9);
+    break;
+  case SYS_PIPE2:
+    result = posix_pipe2((int *)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_ACCESS:
+    result = posix_access((const char *)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_MKDIR_MODE:
+    result = posix_mkdir((const char *)regs->rdi, (uint32_t)regs->rsi);
+    break;
+  case SYS_GETENTROPY:
+    result = entropy_getentropy((void *)regs->rdi, (size_t)regs->rsi);
+    break;
+
+  case SYS_LSEEK:
+    result = sys_lseek((int)regs->rdi, (int64_t)regs->rsi, (int)regs->rdx);
+    break;
+  case SYS_FCNTL:
+    result = file_table_fcntl(current_fd_table(), (int)regs->rdi,
+                              (int)regs->rsi, (int)regs->rdx);
+    break;
+  case SYS_DUP:
+    result = file_table_dup(current_fd_table(), (int)regs->rdi);
+    break;
+  case SYS_DUP2:
+    result = file_table_dup2(current_fd_table(), (int)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_STAT:
+    preempt_disable();
+    result = sys_metadata_stat((const char *)regs->rdi,
+                               (struct stat *)regs->rsi, (int)regs->rdx);
+    preempt_enable();
+    break;
+  case SYS_FSTAT:
+    preempt_disable();
+    result = sys_metadata_fstat((int)regs->rdi, (struct stat *)regs->rsi);
+    preempt_enable();
+    break;
+  case SYS_READDIR_FD:
+    result = sys_metadata_readdir((int)regs->rdi, (alos_dir_record_t *)regs->rsi);
     break;
 
   case SYS_GETPID:
     result = sys_getpid();
+    break;
+  case SYS_UNAME:
+    result = sys_uname((struct utsname *)regs->rdi);
     break;
 
   case SYS_GETTID:
@@ -1570,8 +1804,15 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
   case SYS_CLOCK_GETTIME: {
     uint64_t ms;
-    if (regs->rdi == CLOCK_MONOTONIC) ms = timer_get_uptime_ms();
-    else if (regs->rdi == CLOCK_REALTIME) ms = timer_get_realtime_ms();
+    /* Sans suspend/resume, BOOTTIME et MONOTONIC partagent l'uptime reel. */
+    if (regs->rdi == CLOCK_MONOTONIC || regs->rdi == CLOCK_BOOTTIME ||
+        regs->rdi == CLOCK_MONOTONIC_RAW ||
+        regs->rdi == CLOCK_MONOTONIC_COARSE)
+      ms = timer_get_uptime_ms();
+    else if (regs->rdi == CLOCK_REALTIME || regs->rdi == CLOCK_REALTIME_COARSE)
+      ms = timer_get_realtime_ms();
+    else if (regs->rdi == CLOCK_THREAD_CPUTIME_ID)
+      ms = thread_get_cpu_time_ms(thread_current());
     else { result = -EINVAL; break; }
     struct timespec time = {(int64_t)(ms / 1000), (int64_t)(ms % 1000) * 1000000};
     result = copy_to_user((void *)regs->rsi, &time, sizeof(time)) ? -EFAULT : 0;
@@ -1593,6 +1834,36 @@ void syscall_dispatcher(syscall_regs_t *regs) {
                   ((uint64_t)time.tv_nsec + 999999) / 1000000;
     if (ms) ms++; /* Inclure la fraction du tick courant. */
     result = sys_nanosleep(ms);
+    break;
+  }
+
+  case SYS_THREAD_STACK: {
+    process_t *process = process_current();
+    thread_t *thread = thread_current();
+    preempt_disable();
+    if ((regs->cs & 3) != 3 || !process || !process->pml4 ||
+        !thread || thread->owner != process || !process->main_thread ||
+        process->main_thread->owner != process) {
+      result = -EINVAL;
+    } else if (regs->rdi != process->main_thread->tid) {
+      thread_t *target = process->thread_list;
+      while (target && target->tid != regs->rdi) target = target->proc_next;
+      result = target ? -ENOTSUP : -ESRCH;
+    } else {
+      /* Bornes exactes du mapping cree par process_spawn pour la pile ELF. */
+      uint64_t base = USER_STACK_TOP - USER_STACK_SIZE;
+      uint64_t size = USER_STACK_SIZE;
+      if (!user_range_valid((void *)base, size, true) ||
+          !user_range_valid((void *)regs->rsi, sizeof(base), true) ||
+          !user_range_valid((void *)regs->rdx, sizeof(size), true)) {
+        result = -EFAULT;
+      } else {
+        result = copy_to_user((void *)regs->rsi, &base, sizeof(base)) ||
+                         copy_to_user((void *)regs->rdx, &size, sizeof(size))
+                     ? -EFAULT : 0;
+      }
+    }
+    preempt_enable();
     break;
   }
 
@@ -1943,9 +2214,6 @@ static int sys_fork(syscall_regs_t *regs) {
 static int sys_execve(syscall_regs_t *regs, const char *filename, char **argv,
                       char **envp) {
   KLOG_INFO("SYSCALL", "sys_execve called");
-  if (filename != NULL) {
-    KLOG_INFO("SYSCALL", filename);
-  }
 
   if (process_execve((interrupt_frame_t *)regs, filename, argv, envp) != 0) {
     KLOG_ERROR("SYSCALL", "sys_execve: failed to execute program");

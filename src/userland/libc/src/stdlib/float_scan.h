@@ -7,10 +7,11 @@ typedef struct {
   const char *start;
   const char *cursor;
   int last;
+  const char *end;
 } FloatStream;
 
 static inline int shgetc(FloatStream *f) {
-  if (!*f->cursor) { f->last = -1; return -1; }
+  if ((f->end && f->cursor == f->end) || !*f->cursor) { f->last = -1; return -1; }
   f->last = (unsigned char)*f->cursor++;
   return f->last;
 }

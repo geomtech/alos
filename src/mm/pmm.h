@@ -63,6 +63,7 @@ void pmm_free_blocks(void* p, uint64_t count);
  * Retourne le nombre total de blocs gérés par le PMM.
  */
 uint64_t pmm_get_total_blocks(void);
+uint64_t pmm_get_usable_blocks(void);
 
 /**
  * Retourne le nombre de blocs actuellement utilisés.

@@ -1,0 +1,120 @@
+diff --git a/base/memory/platform_shared_memory_region.h b/base/memory/platform_shared_memory_region.h
+index bbd0653e..e95ba8d4 100644
+--- a/base/memory/platform_shared_memory_region.h
++++ b/base/memory/platform_shared_memory_region.h
+@@ -125,7 +125,7 @@ class BASE_EXPORT PlatformSharedMemoryRegion {
+ #if BUILDFLAG(IS_FUCHSIA)
+     kNotVmo,
+ #endif
+-#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_ALOS)
+     kFcntlFailed,
+     kReadOnlyFdNotReadOnly,
+     kUnexpectedReadOnlyFd,
+diff --git a/base/memory/platform_shared_memory_region_posix.cc b/base/memory/platform_shared_memory_region_posix.cc
+index 37b6c29f..5cc9852e 100644
+--- a/base/memory/platform_shared_memory_region_posix.cc
++++ b/base/memory/platform_shared_memory_region_posix.cc
+@@ -6,6 +6,9 @@
+ 
+ #include <fcntl.h>
+ #include <sys/mman.h>
++#if BUILDFLAG(IS_ALOS)
++#include <sys/alos_shm.h>
++#endif
+ 
+ #include <optional>
+ 
+@@ -197,9 +200,30 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
+     return {};
+   }
+ 
++#if BUILDFLAG(IS_ALOS)
++  if (size > ALOS_SHM_MAX_SIZE) {
++    return {};
++  }
++#endif
+   CHECK_NE(mode, Mode::kReadOnly) << "Creating a region in read-only mode will "
+                                      "lead to this region being non-modifiable";
+ 
++#if BUILDFLAG(IS_ALOS)
++  ScopedFD fd(alos_shm_create(size));
++  if (!fd.is_valid()) {
++    return {};
++  }
++  ScopedFD readonly_fd;
++  if (mode == Mode::kWritable) {
++    readonly_fd.reset(alos_shm_readonly(fd.get()));
++    if (!readonly_fd.is_valid()) {
++      return {};
++    }
++  }
++  return PlatformSharedMemoryRegion(
++      {std::move(fd), std::move(readonly_fd)}, mode, size,
++      UnguessableToken::Create());
++#else
+   // This function theoretically can block on the disk, but realistically
+   // the temporary files we create will just go into the buffer cache
+   // and be deleted before they ever make it out to disk.
+@@ -277,6 +301,7 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
+   return PlatformSharedMemoryRegion(
+       {ScopedFD(shm_file.TakePlatformFile()), std::move(readonly_fd)}, mode,
+       size, UnguessableToken::Create());
++#endif
+ }
+ 
+ expected<void, PlatformSharedMemoryRegion::TakeError>
+@@ -284,6 +309,13 @@ PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
+     PlatformSharedMemoryHandle handle,
+     Mode mode,
+     size_t size) {
++#if BUILDFLAG(IS_ALOS)
++  const long actual_size = alos_shm_size(handle.fd);
++  if (actual_size <= 0 || size > static_cast<size_t>(actual_size) ||
++      size > ALOS_SHM_MAX_SIZE) {
++    return unexpected(TakeError::kFcntlFailed);
++  }
++#endif
+   if (auto result = CheckFDAccessMode(
+           handle.fd, mode == Mode::kReadOnly ? O_RDONLY : O_RDWR);
+       result.has_value()) {
+@@ -298,6 +330,11 @@ PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
+   }
+ 
+   if (mode == Mode::kWritable) {
++#if BUILDFLAG(IS_ALOS)
++    if (alos_shm_same(handle.fd, handle.readonly_fd) != 1) {
++      return unexpected(TakeError::kReadOnlyFdNotReadOnly);
++    }
++#endif
+     if (auto result = CheckFDAccessMode(handle.readonly_fd, O_RDONLY);
+         result.has_value()) {
+       switch (*result) {
+diff --git a/base/rand_util_posix.cc b/base/rand_util_posix.cc
+index 94f46d13..f68da72b 100644
+--- a/base/rand_util_posix.cc
++++ b/base/rand_util_posix.cc
+@@ -122,6 +122,15 @@ bool UseBoringSSLForRandBytes() {
+ namespace {
+ 
+ void RandBytesInternal(span<uint8_t> output, bool avoid_allocation) {
++#if BUILDFLAG(IS_ALOS)
++  (void)avoid_allocation;
++  while (!output.empty()) {
++    auto chunk = output.first(std::min<size_t>(output.size(), 256));
++    CHECK_EQ(getentropy(chunk.data(), chunk.size()), 0);
++    output = output.subspan(chunk.size());
++  }
++  return;
++#else
+   // The BoringSSL experiment takes priority over everything else.
+   if (!avoid_allocation && internal::UseBoringSSLForRandBytes()) {
+     // BoringSSL's RAND_bytes always returns 1. Any error aborts the program.
+@@ -152,6 +161,7 @@ void RandBytesInternal(span<uint8_t> output, bool avoid_allocation) {
+   const int urandom_fd = GetUrandomFD();
+   const bool success = ReadFromFD(urandom_fd, as_writable_chars(output));
+   CHECK(success);
++#endif
+ }
+ 
+ }  // namespace

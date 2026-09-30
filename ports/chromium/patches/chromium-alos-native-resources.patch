@@ -1,0 +1,147 @@
+diff --git a/base/posix/can_lower_nice_to.cc b/base/posix/can_lower_nice_to.cc
+index d9117138..c5f734de 100644
+--- a/base/posix/can_lower_nice_to.cc
++++ b/base/posix/can_lower_nice_to.cc
+@@ -11,6 +11,10 @@
+ 
+ #include "build/build_config.h"
+ 
++#if BUILDFLAG(IS_ALOS)
++#include <sys/alos_resource.h>
++#endif
++
+ // Not defined on AIX by default.
+ #if BUILDFLAG(IS_AIX)
+ #if defined(RLIMIT_NICE)
+@@ -22,6 +26,9 @@
+ namespace base::internal {
+ 
+ bool CanLowerNiceTo(int nice_value) {
++#if BUILDFLAG(IS_ALOS)
++  return alos_thread_can_set_nice(nice_value);
++#else
+   // On a POSIX system, the nice value of a thread can be lowered 1. by the root
+   // user, 2. by a user with the CAP_SYS_NICE permission or 3. by any user if
+   // the target value is within the range allowed by RLIMIT_NICE.
+@@ -55,6 +62,7 @@ bool CanLowerNiceTo(int nice_value) {
+   // And lowering niceness to |nice_value| is allowed if it is greater than or
+   // equal to the limit:
+   return nice_value >= lowest_nice_allowed;
++#endif
+ }
+ 
+ }  // namespace base::internal
+diff --git a/base/process/process_metrics_posix.cc b/base/process/process_metrics_posix.cc
+index 20520002..9b4301e5 100644
+--- a/base/process/process_metrics_posix.cc
++++ b/base/process/process_metrics_posix.cc
+@@ -58,6 +58,8 @@ static const rlim_t kSystemDefaultMaxFds = 256;
+ static const rlim_t kSystemDefaultMaxFds = 1024;
+ #elif BUILDFLAG(IS_AIX)
+ static const rlim_t kSystemDefaultMaxFds = 8192;
++#elif BUILDFLAG(IS_ALOS)
++static const rlim_t kSystemDefaultMaxFds = 32;
+ #endif
+ 
+ size_t GetMaxFds() {
+@@ -130,7 +132,11 @@ size_t GetMallocUsageMallinfo() {
+         // BUILDFLAG(IS_ANDROID)
+ 
+ size_t ProcessMetrics::GetMallocUsage() {
+-#if BUILDFLAG(IS_APPLE)
++#if BUILDFLAG(IS_ALOS)
++  struct alos_malloc_stats stats;
++  CHECK_EQ(alos_malloc_get_stats(&stats), 0);
++  return stats.arena_bytes;
++#elif BUILDFLAG(IS_APPLE)
+   malloc_statistics_t stats = {0};
+   malloc_zone_statistics(nullptr, &stats);
+   return stats.size_in_use;
+diff --git a/base/threading/platform_thread_internal_posix.cc b/base/threading/platform_thread_internal_posix.cc
+index 25e766f7..9a665d10 100644
+--- a/base/threading/platform_thread_internal_posix.cc
++++ b/base/threading/platform_thread_internal_posix.cc
+@@ -12,6 +12,11 @@
+ #include "base/containers/adapters.h"
+ #include "base/logging.h"
+ #include "base/notimplemented.h"
++#include "build/build_config.h"
++
++#if BUILDFLAG(IS_ALOS)
++#include <sys/alos_resource.h>
++#endif
+ 
+ namespace base::internal {
+ 
+@@ -31,6 +36,15 @@ ThreadPriorityForTest NiceValueToThreadPriorityForTest(int nice_value) {
+ }
+ 
+ int GetCurrentThreadNiceValue() {
++#if BUILDFLAG(IS_ALOS)
++  int nice_value = 0;
++  if (alos_thread_get_nice(&nice_value) != 0) {
++    DVPLOG(1) << "Failed to get native thread nice value ("
++              << PlatformThread::CurrentId() << ")";
++    return 0;
++  }
++  return nice_value;
++#else
+   // Need to clear errno before calling getpriority():
+   // http://man7.org/linux/man-pages/man2/getpriority.2.html
+   errno = 0;
+@@ -42,6 +56,7 @@ int GetCurrentThreadNiceValue() {
+   }
+ 
+   return nice_value;
++#endif
+ }
+ 
+ }  // namespace base::internal
+diff --git a/base/threading/platform_thread_posix.cc b/base/threading/platform_thread_posix.cc
+index 09c17bc2..a377a61e 100644
+--- a/base/threading/platform_thread_posix.cc
++++ b/base/threading/platform_thread_posix.cc
+@@ -28,6 +28,10 @@
+ #include "build/build_config.h"
+ #include "partition_alloc/buildflags.h"
+ 
++#if BUILDFLAG(IS_ALOS)
++#include <sys/alos_resource.h>
++#endif
++
+ #if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_FUCHSIA)
+ #include "base/posix/can_lower_nice_to.h"
+ #endif
+@@ -250,6 +254,10 @@ PlatformThreadId PlatformThreadBase::CurrentId() {
+ #endif
+   }
+   return PlatformThreadId(g_thread_id);
++#elif BUILDFLAG(IS_ALOS)
++  const pid_t id = gettid();
++  PCHECK(id > 0) << "Cannot query the native ALOS thread identifier";
++  return PlatformThreadId(id);
+ #elif BUILDFLAG(IS_ANDROID)
+   // Note: do not cache the return value inside a thread_local variable on
+   // Android (as above). The reasons are:
+@@ -378,6 +386,13 @@ void SetCurrentThreadTypeImpl(ThreadType thread_type,
+     return;
+   }
+ 
++#if BUILDFLAG(IS_ALOS)
++  const int nice_setting = internal::ThreadTypeToNiceValue(thread_type);
++  if (alos_thread_set_nice(nice_setting)) {
++    DVPLOG(1) << "Failed to set native thread nice value ("
++              << PlatformThread::CurrentId() << ") to " << nice_setting;
++  }
++#else
+   // setpriority(2) should change the whole thread group's (i.e. process)
+   // priority. However, as stated in the bugs section of
+   // http://man7.org/linux/man-pages/man2/getpriority.2.html: "under the current
+@@ -389,6 +404,7 @@ void SetCurrentThreadTypeImpl(ThreadType thread_type,
+     DVPLOG(1) << "Failed to set nice value of thread ("
+               << PlatformThread::CurrentId() << ") to " << nice_setting;
+   }
++#endif
+ }
+ 
+ }  // namespace internal

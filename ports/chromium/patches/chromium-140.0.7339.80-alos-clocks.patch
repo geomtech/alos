@@ -1,0 +1,18 @@
+diff --git a/base/time/time_now_posix.cc b/base/time/time_now_posix.cc
+--- a/base/time/time_now_posix.cc
++++ b/base/time/time_now_posix.cc
+@@ -50,4 +50,4 @@
+ #if (BUILDFLAG(IS_POSIX) && defined(_POSIX_MONOTONIC_CLOCK) && \
+      _POSIX_MONOTONIC_CLOCK >= 0) ||                           \
+-    BUILDFLAG(IS_BSD) || BUILDFLAG(IS_ANDROID)
++    BUILDFLAG(IS_BSD) || BUILDFLAG(IS_ANDROID) || defined(__ALOS__)
+ int64_t ClockNow(clockid_t clk_id) {
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/time/time_now_posix.cc b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/time/time_now_posix.cc
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/time/time_now_posix.cc
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/time/time_now_posix.cc
+@@ -56,4 +56,4 @@
+ #if (PA_BUILDFLAG(IS_POSIX) && defined(_POSIX_MONOTONIC_CLOCK) && \
+      _POSIX_MONOTONIC_CLOCK >= 0) ||                              \
+-    PA_BUILDFLAG(IS_BSD) || PA_BUILDFLAG(IS_ANDROID)
++    PA_BUILDFLAG(IS_BSD) || PA_BUILDFLAG(IS_ANDROID) || defined(__ALOS__)
+ int64_t ClockNow(clockid_t clk_id) {

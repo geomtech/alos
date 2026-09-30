@@ -1,0 +1,30 @@
+diff --git a/third_party/abseil-cpp/absl/time/internal/cctz/src/time_zone_info.cc b/third_party/abseil-cpp/absl/time/internal/cctz/src/time_zone_info.cc
+index f8484c90..11808b1b 100644
+--- a/third_party/abseil-cpp/absl/time/internal/cctz/src/time_zone_info.cc
++++ b/third_party/abseil-cpp/absl/time/internal/cctz/src/time_zone_info.cc
+@@ -521,6 +521,7 @@ std::unique_ptr<ZoneInfoSource> AndroidZoneInfoSource::Open(
+ //
+ // [1]:
+ // https://fuchsia.dev/fuchsia-src/development/components/data#using_config_data_in_your_component
++#if !defined(__ALOS__)
+ class FuchsiaZoneInfoSource : public FileZoneInfoSource {
+  public:
+   static std::unique_ptr<ZoneInfoSource> Open(const std::string& name);
+@@ -582,6 +583,7 @@ std::unique_ptr<ZoneInfoSource> FuchsiaZoneInfoSource::Open(
+   return nullptr;
+ }
+ 
++#endif  // !defined(__ALOS__)
+ }  // namespace
+ 
+ // What (no leap-seconds) UTC+seconds zoneinfo would look like.
+@@ -820,7 +822,9 @@ bool TimeZoneInfo::Load(const std::string& name) {
+       name, [](const std::string& n) -> std::unique_ptr<ZoneInfoSource> {
+         if (auto z = FileZoneInfoSource::Open(n)) return z;
+         if (auto z = AndroidZoneInfoSource::Open(n)) return z;
++#if !defined(__ALOS__)
+         if (auto z = FuchsiaZoneInfoSource::Open(n)) return z;
++#endif
+         return nullptr;
+       });
+   return zip != nullptr && Load(zip.get());

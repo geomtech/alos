@@ -3,11 +3,16 @@
 #define FS_FILE_H
 
 #include <stdint.h>
+#include <stddef.h>
+#include "../include/fcntl.h"
+#include "../include/statvfs.h"
 
 /* Forward declaration */
 struct tcp_socket;
 struct ipc_endpoint;
 struct shm_object;
+struct wait_queue;
+struct vfs_node;
 
 /* ========================================
  * Constantes
@@ -17,7 +22,6 @@ struct shm_object;
 #define FD_STDIN            0       /* Standard input */
 #define FD_STDOUT           1       /* Standard output */
 #define FD_STDERR           2       /* Standard error */
-#define FD_CLOEXEC          0x0001
 
 /* ========================================
  * Types de fichiers
@@ -28,7 +32,7 @@ typedef enum {
     FILE_TYPE_CONSOLE,          /* Console (stdin/stdout/stderr) */
     FILE_TYPE_FILE,             /* Regular file (VFS) */
     FILE_TYPE_SOCKET,           /* Network socket (TCP/UDP) */
-    FILE_TYPE_PIPE,             /* Pipe (future) */
+    FILE_TYPE_PIPE,             /* Bounded anonymous byte stream */
     FILE_TYPE_IPC,
     FILE_TYPE_SHM
 } file_type_t;
@@ -36,13 +40,6 @@ typedef enum {
 /* ========================================
  * Flags pour les fichiers
  * ======================================== */
-
-#define O_RDONLY    0x0001      /* Open for reading only */
-#define O_WRONLY    0x0002      /* Open for writing only */
-#define O_RDWR      0x0003      /* Open for reading and writing */
-#define O_CREAT     0x0100      /* Create file if it doesn't exist */
-#define O_TRUNC     0x0200      /* Truncate file to zero length */
-#define O_APPEND    0x0400      /* Append to file */
 
 /* ========================================
  * Structure File Descriptor
@@ -78,6 +75,39 @@ void file_table_destroy(file_descriptor_t table[MAX_FD]);
 void file_table_close_on_exec(file_descriptor_t table[MAX_FD]);
 int file_table_install(file_descriptor_t table[MAX_FD],
                        open_file_description_t* description);
+int file_table_install_flags(file_descriptor_t table[MAX_FD],
+                             open_file_description_t* description,
+                             uint32_t descriptor_flags);
+open_file_description_t* file_table_acquire(file_descriptor_t table[MAX_FD],
+                                            int fd);
+int file_table_open(file_descriptor_t table[MAX_FD], const char* path,
+                    uint32_t flags);
+int file_table_open_mode(file_descriptor_t table[MAX_FD], const char* path,
+                         uint32_t flags, uint32_t mode);
+int file_table_open_at_mode(file_descriptor_t table[MAX_FD], struct vfs_node* anchor,
+                            const char* path, uint32_t flags, uint32_t mode);
+int file_description_sync(open_file_description_t* description);
+int file_statvfs_path(const char *path, struct statvfs *information);
+int file_description_set_times(open_file_description_t *description,
+                                uint32_t atime, uint32_t mtime, uint32_t ctime);
+int file_description_poll(open_file_description_t* description, short events);
+struct wait_queue* file_poll_waitqueue(void);
+void file_poll_notify(void);
+int file_table_fcntl(file_descriptor_t table[MAX_FD], int fd, int command,
+                     int argument);
+int file_table_dup(file_descriptor_t table[MAX_FD], int fd);
+int file_table_dup2(file_descriptor_t table[MAX_FD], int fd, int target);
+int64_t file_description_read_user(open_file_description_t* description,
+                                   void* buffer, uint64_t count);
+int64_t file_description_write_user(open_file_description_t* description,
+                                    const void* buffer, uint64_t count);
+int64_t file_description_pread_user(open_file_description_t*, void*, uint64_t, int64_t);
+int64_t file_description_pwrite_user(open_file_description_t*, const void*, uint64_t, int64_t);
+int file_description_resize(open_file_description_t*, int64_t length);
+int64_t file_description_seek(open_file_description_t* description,
+                              int64_t offset, int whence);
+int file_description_readdir_user(open_file_description_t* description,
+                                  void* output);
 open_file_description_t* file_table_get(file_descriptor_t table[MAX_FD],
                                         int fd);
 int file_table_close(file_descriptor_t table[MAX_FD], int fd);

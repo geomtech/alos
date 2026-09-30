@@ -368,10 +368,12 @@ extern void keyboard_handler_c(void);
 extern void mouse_irq_handler(void);
 extern void network_irq_handler(void);
 extern void ata_irq_handler(void);
+extern void virtio_rng_handle_irq(uint8_t irq);
 
 void irq_handler(struct interrupt_frame *frame)
 {
     uint64_t irq = frame->int_no - 32;
+    if (irq < 16) virtio_rng_handle_irq((uint8_t)irq);
     
     switch (irq) {
         case 0:  /* Timer */

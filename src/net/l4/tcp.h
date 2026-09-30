@@ -107,6 +107,12 @@ typedef struct tcp_socket {
     /* État du socket */
     tcp_state_t state;          /* Current state (CLOSED, LISTEN, etc.) */
     bool        in_use;         /* Is this socket slot in use? */
+    bool        native_posix;   /* Profil socket POSIX, sans relisten implicite */
+    bool        read_shutdown;
+    bool        write_shutdown;
+    int         socket_error;
+    uint32_t    bound_address;
+    unsigned    native_backlog;
     
     /* Addresses */
     uint16_t    local_port;     /* Local port */
@@ -238,6 +244,7 @@ int tcp_recv(tcp_socket_t* sock, uint8_t* buf, int len);
  * @return Nombre de bytes envoyés, -1 si erreur
  */
 int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len);
+int tcp_send_checked(tcp_socket_t* sock, const uint8_t* buf, int len);
 
 /**
  * Vérifie si des données sont disponibles en lecture.
@@ -266,6 +273,7 @@ tcp_socket_t* tcp_accept(tcp_socket_t* listen_sock);
  * @return Socket client prêt, ou NULL si aucun
  */
 tcp_socket_t* tcp_find_ready_client(uint16_t local_port);
+tcp_socket_t* tcp_native_ready_client(uint16_t local_port);
 
 /**
  * Retourne le nombre actuel de sockets alloués.

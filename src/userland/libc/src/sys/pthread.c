@@ -7,11 +7,15 @@
 #include <stdio.h>
 
 #define STACK_SIZE (1024 * 1024)
-#define STACK_MAPPING (STACK_SIZE + 8192)
+#define STACK_GUARD 4096
+#define STACK_LIMIT (16 * 1024 * 1024 - 2 * STACK_GUARD)
+#define ATTR_LIVE 0x41545452u
 struct alos_pthread {
   uint32_t tid, ready;
   void *(*entry)(void *);
   void *argument, *result, *stack;
+  size_t stack_size, mapping_size;
+  int detachstate;
 };
 static _Thread_local pthread_t self;
 static _Thread_local void *specific[64];
@@ -20,6 +24,78 @@ static struct { unsigned generation, active; void (*destructor)(void *); } keys[
 static pthread_mutex_t key_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int error_result(long result) { return result < 0 ? (int)-result : 0; }
+
+static int attr_valid(const pthread_attr_t *attr) {
+  return attr && attr->initialized == ATTR_LIVE;
+}
+
+int pthread_attr_init(pthread_attr_t *attr) {
+  if (!attr) return EINVAL;
+  *attr = (pthread_attr_t){NULL, STACK_SIZE, PTHREAD_CREATE_JOINABLE, ATTR_LIVE};
+  return 0;
+}
+
+int pthread_attr_destroy(pthread_attr_t *attr) {
+  if (!attr_valid(attr)) return EINVAL;
+  *attr = (pthread_attr_t){0};
+  return 0;
+}
+
+int pthread_attr_getstack(const pthread_attr_t *attr, void **address, size_t *size) {
+  if (!attr_valid(attr) || !address || !size) return EINVAL;
+  *address = attr->stack_address;
+  *size = attr->stack_size;
+  return 0;
+}
+
+int pthread_attr_getstacksize(const pthread_attr_t *attr, size_t *size) {
+  if (!attr_valid(attr) || !size) return EINVAL;
+  *size = attr->stack_size;
+  return 0;
+}
+
+int pthread_attr_setstacksize(pthread_attr_t *attr, size_t size) {
+  if (!attr_valid(attr) || size < PTHREAD_STACK_MIN || size > STACK_LIMIT)
+    return EINVAL;
+  attr->stack_size = (size + STACK_GUARD - 1) & ~(size_t)(STACK_GUARD - 1);
+  attr->stack_address = NULL;
+  return 0;
+}
+
+int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *state) {
+  if (!attr_valid(attr) || !state) return EINVAL;
+  *state = attr->detachstate;
+  return 0;
+}
+
+int pthread_attr_setdetachstate(pthread_attr_t *attr, int state) {
+  if (!attr_valid(attr) ||
+      (state != PTHREAD_CREATE_JOINABLE && state != PTHREAD_CREATE_DETACHED))
+    return EINVAL;
+  attr->detachstate = state;
+  return 0;
+}
+
+int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+  if (!thread || !attr) return EINVAL;
+  void *address;
+  size_t size;
+  if (thread->stack) {
+    address = (char *)thread->stack + STACK_GUARD;
+    size = thread->stack_size;
+  } else {
+    uint64_t base, length;
+    long result = syscall3(SYS_THREAD_STACK, thread->tid,
+                            (long)&base, (long)&length);
+    if (result < 0) return (int)-result;
+    address = (void *)base;
+    size = (size_t)length;
+  }
+  *attr = (pthread_attr_t){address, size,
+                         __atomic_load_n(&thread->detachstate, __ATOMIC_ACQUIRE),
+                         ATTR_LIVE};
+  return 0;
+}
 
 int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr) {
   if (!mutex) return EINVAL;
@@ -143,50 +219,93 @@ static void start_thread(void *argument) {
   if (ready == 2) _exit(0);
   pthread_exit(self->entry(self->argument));
 }
-int pthread_create(pthread_t *out, const pthread_attr_t *attr,
-                    void *(*entry)(void *), void *argument) {
+static int create_thread(pthread_t *out, const pthread_attr_t *attr,
+                          void *(*entry)(void *), void *argument) {
   if (!out || !entry) return EINVAL;
-  if (attr) return ENOTSUP;
+  size_t stack_size = STACK_SIZE;
+  int detachstate = PTHREAD_CREATE_JOINABLE;
+  if (attr) {
+    if (!attr_valid(attr) || attr->stack_size < PTHREAD_STACK_MIN ||
+        attr->stack_size > STACK_LIMIT ||
+        (attr->detachstate != PTHREAD_CREATE_JOINABLE &&
+         attr->detachstate != PTHREAD_CREATE_DETACHED))
+      return EINVAL;
+    if (attr->stack_address) return ENOTSUP;
+    stack_size = (attr->stack_size + STACK_GUARD - 1) &
+                 ~(size_t)(STACK_GUARD - 1);
+    detachstate = attr->detachstate;
+  }
+  size_t mapping_size = stack_size + 2 * STACK_GUARD;
   pthread_t thread = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (thread == MAP_FAILED) return EAGAIN;
-  void *stack = mmap(NULL, STACK_MAPPING, PROT_NONE,
+  void *stack = mmap(NULL, mapping_size, PROT_NONE,
                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (stack == MAP_FAILED) { munmap(thread, 4096); return EAGAIN; }
-  if (mprotect((char *)stack + 4096, STACK_SIZE, PROT_READ | PROT_WRITE)) {
-    munmap(stack, STACK_MAPPING); munmap(thread, 4096); return EAGAIN;
+  if (mprotect((char *)stack + STACK_GUARD, stack_size,
+                 PROT_READ | PROT_WRITE)) {
+    munmap(stack, mapping_size); munmap(thread, 4096); return EAGAIN;
   }
   thread->entry = entry;
   thread->argument = argument;
   thread->stack = stack;
+  thread->stack_size = stack_size;
+  thread->mapping_size = mapping_size;
+  thread->detachstate = detachstate;
   long tid = syscall3(SYS_THREAD_CREATE, (long)start_thread,
-                      (long)stack + 4096 + STACK_SIZE, (long)thread);
-  if (tid < 0) { munmap(stack, STACK_MAPPING); munmap(thread, 4096); return EAGAIN; }
+                      (long)stack + STACK_GUARD + stack_size, (long)thread);
+  if (tid < 0) {
+    munmap(stack, mapping_size); munmap(thread, 4096); return EAGAIN;
+  }
   thread->tid = (uint32_t)tid;
   long result = syscall5(SYS_THREAD_REGISTER, tid, (long)thread,
-                         (long)stack, STACK_MAPPING, 4096);
+                         (long)stack, mapping_size, 4096);
+  if (!result && detachstate == PTHREAD_CREATE_DETACHED)
+    result = syscall1(SYS_THREAD_DETACH, tid);
   if (result < 0) {
     __atomic_store_n(&thread->ready, 2, __ATOMIC_RELEASE);
     futex_wake(&thread->ready, 1);
-    syscall1(SYS_THREAD_JOIN, tid);
-    munmap(stack, STACK_MAPPING); munmap(thread, 4096);
+    if (syscall1(SYS_THREAD_JOIN, tid) < 0) {
+      puts("pthread: cannot reap aborted thread");
+      _exit(134);
+    }
+    munmap(stack, mapping_size); munmap(thread, 4096);
     return error_result(result);
   }
+  uint32_t *ready = &thread->ready;
   *out = thread;
-  __atomic_store_n(&thread->ready, 1, __ATOMIC_RELEASE);
-  futex_wake(&thread->ready, 1);
+  __atomic_store_n(ready, 1, __ATOMIC_RELEASE);
+  /* Un detache peut finir avant wake : son adresse n'est plus dereferencee ici. */
+  futex_wake(ready, 1);
   return 0;
 }
+
+int pthread_create(pthread_t *out, const pthread_attr_t *attr,
+                    void *(*entry)(void *), void *argument) {
+  int saved_errno = errno;
+  int result = create_thread(out, attr, entry, argument);
+  errno = saved_errno;
+  return result;
+}
+
 int pthread_join(pthread_t thread, void **result) {
+  if (!thread) return EINVAL;
   int error = error_result(syscall1(SYS_THREAD_JOIN, thread->tid));
   if (error) return error;
   if (result) *result = thread->result;
-  if (thread->stack) munmap(thread->stack, STACK_MAPPING);
+  if (thread->stack) munmap(thread->stack, thread->mapping_size);
   munmap(thread, 4096);
   return 0;
 }
 int pthread_detach(pthread_t thread) {
-  return error_result(syscall1(SYS_THREAD_DETACH, thread->tid));
+  if (!thread) return EINVAL;
+  /* Ne pas acceder au descriptor apres detach : le reaper peut le liberer. */
+  int previous = __atomic_exchange_n(&thread->detachstate,
+                                      PTHREAD_CREATE_DETACHED, __ATOMIC_ACQ_REL);
+  int error = error_result(syscall1(SYS_THREAD_DETACH, thread->tid));
+  if (error)
+    __atomic_store_n(&thread->detachstate, previous, __ATOMIC_RELEASE);
+  return error;
 }
 
 int pthread_condattr_init(pthread_condattr_t *attr) { attr->clock = CLOCK_REALTIME; return 0; }

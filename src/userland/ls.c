@@ -6,13 +6,13 @@
 int main(int argc, char **argv) {
   const char *path = (argc >= 2) ? argv[1] : ".";
 
-  struct dirent entry;
+  struct alos_dirent entry;
   unsigned int index = 0;
   int count = 0;
 
   printf("\n");
   while (1) {
-    int ret = readdir(path, index, &entry);
+    int ret = alos_readdir(path, index, &entry);
     if (ret < 0) {
       printf("ls: %s: no such file or directory\n", path);
       return 1;
@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
       break; /* Fin du répertoire */
     }
 
-    if (entry.d_type == DT_DIR) {
+    if (entry.d_type == ALOS_DT_DIR) {
       printf("[DIR]  %s\n", entry.d_name);
     } else {
       printf("[FILE] %u  %s\n", entry.d_size, entry.d_name);

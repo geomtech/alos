@@ -1,0 +1,4 @@
+VALIDATE ../../base/message_loop/message_pump_alos.cc
+EXIT 0
+VALIDATE /alos/ports/chromium/tests/base-io-pump-smoke.cc
+EXIT 0

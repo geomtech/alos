@@ -1,0 +1,42 @@
+# Toolchain ALOS x86-64. Le compilateur est le clang epingle par Chromium
+# (clang_base_path), utilise comme compilateur croise vers le triple
+# x86_64-unknown-none-elf deja employe pour la libc et libc++ ALOS.
+# Aucun en-tete ni bibliotheque de l'hote Linux n'est visible : seules la
+# libc ALOS et la libc++/libc++abi LLVM 18.1.8 construites pour ALOS le sont.
+import("//build/config/clang/clang.gni")
+import("//build/toolchain/gcc_toolchain.gni")
+
+declare_args() {
+  # Racine du depot ALOS (libc, crt0, script d'edition de liens).
+  alos_root = "/alos"
+
+  # Installation libc++/libc++abi ALOS (include/c++/v1, lib/).
+  alos_libcxx_dir = "/libcxx"
+}
+
+gcc_toolchain("clang_x64") {
+  _prefix = rebase_path("$clang_base_path/bin", root_build_dir)
+  _libc = "$alos_root/src/userland/libc"
+  _target = "--target=x86_64-unknown-none-elf -D__ALOS__ -fno-builtin"
+  cc = "$_prefix/clang $_target -nostdinc -isystem $_libc/include -isystem " +
+       rebase_path("$clang_base_path/lib/clang/$clang_version/include",
+                   root_build_dir)
+  cxx = "$_prefix/clang++ $_target -nostdinc -nostdinc++ " +
+        "-isystem $alos_libcxx_dir/include/c++/v1 -isystem $_libc/include " +
+        "-isystem " +
+        rebase_path("$clang_base_path/lib/clang/$clang_version/include",
+                    root_build_dir)
+  ld = "python3 $alos_root/ports/chromium/build/link-native.py $_prefix/ld.lld"
+  ar = "$_prefix/llvm-ar"
+  readelf = "$_prefix/llvm-readelf"
+  nm = "$_prefix/llvm-nm"
+  # lld resout les archives independamment de leur position sur la ligne.
+  extra_ldflags = "-nostdlib -static -Wl,-T,$alos_root/src/userland/linker.ld " +
+                  "$_libc/crt0.o $alos_libcxx_dir/lib/libc++.a " +
+                  "$alos_libcxx_dir/lib/libc++abi.a $_libc/libc.a"
+  toolchain_args = {
+    current_cpu = "x64"
+    current_os = "alos"
+    use_remoteexec = false
+  }
+}

@@ -1,0 +1,82 @@
+diff --git a/base/atomicops.cc b/base/atomicops.cc
+--- a/base/atomicops.cc
++++ b/base/atomicops.cc
+@@ -9,6 +9,35 @@
+ #include "base/memory/aligned_memory.h"
+ 
+ namespace base::subtle {
++namespace {
++
++#if BUILDFLAG(IS_ALOS)
++// The pinned libc++ 18 does not provide atomic_ref. These compiler atomics
++// operate on the existing destination objects without changing their ABI.
++static_assert(sizeof(uint8_t) == 1 && alignof(uint8_t) == 1);
++static_assert(sizeof(uintmax_t) == 8 && alignof(uintmax_t) == 8);
++static_assert(__atomic_always_lock_free(sizeof(uint8_t), nullptr));
++static_assert(__atomic_always_lock_free(sizeof(uintmax_t), nullptr));
++constexpr size_t kByteAtomicAlignment = alignof(uint8_t);
++constexpr size_t kWordAtomicAlignment = alignof(uintmax_t);
++
++template <typename T>
++void StoreRelaxed(T* destination, T value) {
++  __atomic_store_n(destination, value, __ATOMIC_RELAXED);
++}
++#else
++constexpr size_t kByteAtomicAlignment =
++    std::atomic_ref<uint8_t>::required_alignment;
++constexpr size_t kWordAtomicAlignment =
++    std::atomic_ref<uintmax_t>::required_alignment;
++
++template <typename T>
++void StoreRelaxed(T* destination, T value) {
++  std::atomic_ref<T>(*destination).store(value, std::memory_order_relaxed);
++}
++#endif
++
++}  // namespace
+ 
+ void RelaxedAtomicWriteMemcpy(base::span<uint8_t> dst,
+                               base::span<const uint8_t> src) {
+@@ -17,17 +46,15 @@
+   uint8_t* dst_byte_ptr = dst.data();
+   const uint8_t* src_byte_ptr = src.data();
+   // Make sure that we can at least copy byte by byte with atomics.
+-  static_assert(std::atomic_ref<uint8_t>::required_alignment == 1);
++  static_assert(kByteAtomicAlignment == 1);
+ 
+   // Alignment for uintmax_t atomics that we use in the happy case.
+-  constexpr size_t kDesiredAlignment =
+-      std::atomic_ref<uintmax_t>::required_alignment;
++  constexpr size_t kDesiredAlignment = kWordAtomicAlignment;
+ 
+   // Copy byte-by-byte until `dst_byte_ptr` is not properly aligned for
+   // the happy case.
+   while (bytes > 0 && !IsAligned(dst_byte_ptr, kDesiredAlignment)) {
+-    std::atomic_ref<uint8_t>(*dst_byte_ptr)
+-        .store(*src_byte_ptr, std::memory_order_relaxed);
++    StoreRelaxed(dst_byte_ptr, *src_byte_ptr);
+     // SAFETY: We check above that `dst_byte_ptr` and `src_byte_ptr` point
+     // to spans of sufficient size.
+     UNSAFE_BUFFERS(++dst_byte_ptr);
+@@ -39,9 +66,8 @@
+   // aligned and the largest possible atomic is used for copying.
+   if (IsAligned(src_byte_ptr, kDesiredAlignment)) {
+     while (bytes >= sizeof(uintmax_t)) {
+-      std::atomic_ref<uintmax_t>(*reinterpret_cast<uintmax_t*>(dst_byte_ptr))
+-          .store(*reinterpret_cast<const uintmax_t*>(src_byte_ptr),
+-                 std::memory_order_relaxed);
++      StoreRelaxed(reinterpret_cast<uintmax_t*>(dst_byte_ptr),
++                   *reinterpret_cast<const uintmax_t*>(src_byte_ptr));
+       // SAFETY: We check above that `dst_byte_ptr` and `src_byte_ptr` point
+       // to spans of sufficient size.
+       UNSAFE_BUFFERS(dst_byte_ptr += sizeof(uintmax_t));
+@@ -52,8 +78,7 @@
+ 
+   // Copy what's left after the happy-case byte-by-byte.
+   while (bytes > 0) {
+-    std::atomic_ref<uint8_t>(*dst_byte_ptr)
+-        .store(*src_byte_ptr, std::memory_order_relaxed);
++    StoreRelaxed(dst_byte_ptr, *src_byte_ptr);
+     // SAFETY: We check above that `dst_byte_ptr` and `src_byte_ptr` point
+     // to spans of sufficient size.
+     UNSAFE_BUFFERS(++dst_byte_ptr);

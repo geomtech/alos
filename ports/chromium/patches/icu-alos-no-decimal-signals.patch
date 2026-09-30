@@ -1,0 +1,11 @@
+diff --git a/third_party/icu/source/i18n/decContext.h b/third_party/icu/source/i18n/decContext.h
+--- a/third_party/icu/source/i18n/decContext.h
++++ b/third_party/icu/source/i18n/decContext.h
+@@ -61,7 +61,6 @@
+ /* #include <stdint.h>   */         /* C99 standard integers           */
+   #endif
+   #include <stdio.h>               /* for printf, etc.                */
+-  #include <signal.h>              /* for traps                       */
+ 
+   /* Extended flags setting -- set this to 0 to use only IEEE flags   */
+   #if !defined(DECEXTFLAG)

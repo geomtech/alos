@@ -1,0 +1,100 @@
+diff --git a/base/synchronization/lock_impl_posix.cc b/base/synchronization/lock_impl_posix.cc
+--- a/base/synchronization/lock_impl_posix.cc
++++ b/base/synchronization/lock_impl_posix.cc
+@@ -88,7 +88,7 @@
+ // Lock::PriorityInheritanceAvailable still must be checked as the code may
+ // compile but the underlying platform still may not correctly support priority
+ // inheritance locks.
+-#if BUILDFLAG(IS_FUCHSIA)
++#if BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_ALOS)
+ #define PRIORITY_INHERITANCE_LOCKS_POSSIBLE() 0
+ #else
+ #define PRIORITY_INHERITANCE_LOCKS_POSSIBLE() 1
+diff --git a/base/process/process_metrics.h b/base/process/process_metrics.h
+--- a/base/process/process_metrics.h
++++ b/base/process/process_metrics.h
+@@ -310,7 +310,7 @@
+ 
+ #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_LINUX) ||      \
+     BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_AIX) || \
+-    BUILDFLAG(IS_FUCHSIA)
++    BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_ALOS)
+ // Data about system-wide memory consumption. Values are in KB. Available on
+ // Windows, Mac, Linux, Android and Chrome OS.
+ //
+diff --git a/base/process/process_metrics_alos.cc b/base/process/process_metrics_alos.cc
+--- /dev/null
++++ b/base/process/process_metrics_alos.cc
+@@ -0,0 +1,36 @@
++#include "base/process/process_metrics.h"
++
++#include <limits.h>
++#include <sys/alos_system.h>
++
++#include "base/logging.h"
++
++namespace base {
++
++bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
++  alos_system_info_t native;
++  if (alos_system_info(&native)) {
++    PLOG(ERROR) << "ALOS memory snapshot failed";
++    return false;
++  }
++  if (native.version != ALOS_SYSTEM_INFO_VERSION ||
++      native.struct_size != sizeof(native) ||
++      (native.valid_fields & ALOS_SYSTEM_INFO_MEMORY_FIELDS) !=
++          ALOS_SYSTEM_INFO_MEMORY_FIELDS ||
++      native.allocatable_free_bytes > native.managed_total_bytes ||
++      native.managed_total_bytes / 1024 > INT_MAX ||
++      native.swap_total_bytes / 1024 > INT_MAX ||
++      native.swap_free_bytes > native.swap_total_bytes) {
++    LOG(ERROR) << "Invalid ALOS memory snapshot";
++    return false;
++  }
++  SystemMemoryInfoKB result;
++  result.total = static_cast<int>(native.managed_total_bytes / 1024);
++  result.free = static_cast<int>(native.allocatable_free_bytes / 1024);
++  result.swap_total = static_cast<int>(native.swap_total_bytes / 1024);
++  result.swap_free = static_cast<int>(native.swap_free_bytes / 1024);
++  *meminfo = result;
++  return true;
++}
++
++}  // namespace base
+diff --git a/base/system/sys_info_alos.cc b/base/system/sys_info_alos.cc
+--- /dev/null
++++ b/base/system/sys_info_alos.cc
+@@ -0,0 +1,32 @@
++#include "base/system/sys_info.h"
++
++#include <sys/alos_system.h>
++
++#include "base/check.h"
++
++namespace base {
++namespace {
++
++alos_system_info_t ReadMemoryInfo() {
++  alos_system_info_t info;
++  CHECK_EQ(alos_system_info(&info), 0);
++  CHECK_EQ(info.version, ALOS_SYSTEM_INFO_VERSION);
++  CHECK_EQ(info.struct_size, sizeof(info));
++  CHECK_EQ(info.valid_fields & ALOS_SYSTEM_INFO_MEMORY_FIELDS,
++           ALOS_SYSTEM_INFO_MEMORY_FIELDS);
++  CHECK_GT(info.managed_total_bytes, 0U);
++  CHECK_LE(info.allocatable_free_bytes, info.managed_total_bytes);
++  return info;
++}
++
++}  // namespace
++
++uint64_t SysInfo::AmountOfPhysicalMemoryImpl() {
++  return ReadMemoryInfo().managed_total_bytes;
++}
++
++uint64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
++  return ReadMemoryInfo().allocatable_free_bytes;
++}
++
++}  // namespace base

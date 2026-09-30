@@ -1,0 +1,184 @@
+diff --git a/include/perfetto/base/build_config.h b/include/perfetto/base/build_config.h
+index e0927ff..9b7d632 100644
+--- a/include/perfetto/base/build_config.h
++++ b/include/perfetto/base/build_config.h
+@@ -24,6 +24,12 @@
+ #define PERFETTO_BUILDFLAG(flag) \
+   (PERFETTO_BUILDFLAG_CAT(PERFETTO_BUILDFLAG_DEFINE_, flag)())
+ 
++#if defined(__ALOS__)
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_ALOS() 1
++#else
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_ALOS() 0
++#endif
++
+ #if defined(__ANDROID__)
+ #define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_ANDROID() 1
+ #define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX() 0
+@@ -140,6 +146,20 @@
+ #define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_NACL() 1
+ #define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_QNX() 0
+ #define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_APPLE_TVOS() 0
++#elif defined(__ALOS__)
++// ALOS : systeme POSIX propre, ni Linux ni aucune autre plateforme connue.
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_ANDROID() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX_BUT_NOT_QNX() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_WIN() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_APPLE() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_MAC() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_IOS() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_WASM() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_FUCHSIA() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_NACL() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_QNX() 0
++#define PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_APPLE_TVOS() 0
+ #else
+ #error OS not supported (see build_config.h)
+ #endif
+diff --git a/src/tracing/internal/system_tracing_backend.cc b/src/tracing/internal/system_tracing_backend.cc
+index 8ed648d..519152b 100644
+--- a/src/tracing/internal/system_tracing_backend.cc
++++ b/src/tracing/internal/system_tracing_backend.cc
+@@ -45,6 +45,11 @@ SystemProducerTracingBackend::SystemProducerTracingBackend() {}
+ 
+ std::unique_ptr<ProducerEndpoint> SystemProducerTracingBackend::ConnectProducer(
+     const ConnectProducerArgs& args) {
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++  base::ignore_result(args);
++  PERFETTO_ELOG("ALOS system tracing requires unsupported AF_UNIX/FD passing");
++  return nullptr;
++#else
+   PERFETTO_DCHECK(args.task_runner->RunsTasksOnCurrentThread());
+ 
+   std::unique_ptr<SharedMemory> shm;
+@@ -73,6 +78,7 @@ std::unique_ptr<ProducerEndpoint> SystemProducerTracingBackend::ConnectProducer(
+       args.create_socket_async);
+   PERFETTO_CHECK(endpoint);
+   return endpoint;
++#endif
+ }
+ 
+ // static
+@@ -85,7 +91,11 @@ SystemConsumerTracingBackend::SystemConsumerTracingBackend() {}
+ 
+ std::unique_ptr<ConsumerEndpoint> SystemConsumerTracingBackend::ConnectConsumer(
+     const ConnectConsumerArgs& args) {
+-#if PERFETTO_BUILDFLAG(PERFETTO_SYSTEM_CONSUMER)
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++  base::ignore_result(args);
++  PERFETTO_ELOG("ALOS system tracing requires unsupported AF_UNIX/FD passing");
++  return nullptr;
++#elif PERFETTO_BUILDFLAG(PERFETTO_SYSTEM_CONSUMER)
+   auto endpoint = ConsumerIPCClient::Connect(GetConsumerSocket(), args.consumer,
+                                              args.task_runner);
+   PERFETTO_CHECK(endpoint);
+diff --git a/src/tracing/ipc/posix_shared_memory.cc b/src/tracing/ipc/posix_shared_memory.cc
+index 40fa962..c9af957 100644
+--- a/src/tracing/ipc/posix_shared_memory.cc
++++ b/src/tracing/ipc/posix_shared_memory.cc
+@@ -20,7 +20,8 @@
+     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
+     PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) ||   \
+     PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA) || \
+-    PERFETTO_BUILDFLAG(PERFETTO_OS_WASM)
++    PERFETTO_BUILDFLAG(PERFETTO_OS_WASM) || \
++    PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
+ 
+ #include <fcntl.h>
+ #include <stdint.h>
+@@ -29,23 +30,36 @@
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++#include <sys/alos_shm.h>
++#endif
+ 
+ #include <memory>
+ #include <utility>
+ 
+ #include "perfetto/base/compiler.h"
+ #include "perfetto/base/logging.h"
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
+ #include "perfetto/ext/base/temp_file.h"
+ #include "src/tracing/ipc/memfd.h"
++#endif
+ 
+ namespace perfetto {
+ 
+ namespace {
++#if !PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
+ int kFileSeals = F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL;
++#endif
+ }  // namespace
+ 
+ // static
+ std::unique_ptr<PosixSharedMemory> PosixSharedMemory::Create(size_t size) {
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++  if (!size || size > ALOS_SHM_MAX_SIZE) return nullptr;
++  base::ScopedFile fd(alos_shm_create(size));
++  if (!fd) return nullptr;
++  return MapFD(std::move(fd), size);
++#else
+   base::ScopedFile fd =
+       CreateMemfd("perfetto_shmem", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+   bool is_memfd = !!fd;
+@@ -72,12 +86,23 @@ std::unique_ptr<PosixSharedMemory> PosixSharedMemory::Create(size_t size) {
+   }
+ 
+   return MapFD(std::move(fd), size);
++#endif
+ }
+ 
+ // static
+ std::unique_ptr<PosixSharedMemory> PosixSharedMemory::AttachToFd(
+     base::ScopedFile fd,
+     bool require_seals_if_supported) {
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++  // Native SHM size is immutable; no Linux memfd seals or transport is implied.
++  (void)require_seals_if_supported;
++  long size = alos_shm_size(fd.get());
++  if (size <= 0 || static_cast<size_t>(size) > ALOS_SHM_MAX_SIZE ||
++      alos_shm_access(fd.get()) != O_RDWR) {
++    return nullptr;
++  }
++  return MapFD(std::move(fd), static_cast<size_t>(size));
++#else
+   bool requires_seals = require_seals_if_supported;
+ 
+ #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+@@ -102,6 +127,7 @@ std::unique_ptr<PosixSharedMemory> PosixSharedMemory::AttachToFd(
+   int res = fstat(fd.get(), &stat_buf);
+   PERFETTO_CHECK(res == 0 && stat_buf.st_size > 0);
+   return MapFD(std::move(fd), static_cast<size_t>(stat_buf.st_size));
++#endif
+ }
+ 
+ // static
+@@ -111,7 +137,11 @@ std::unique_ptr<PosixSharedMemory> PosixSharedMemory::MapFD(base::ScopedFile fd,
+   PERFETTO_DCHECK(size > 0);
+   void* start =
+       mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get(), 0);
++#if PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
++  if (start == MAP_FAILED) return nullptr;
++#else
+   PERFETTO_CHECK(start != MAP_FAILED);
++#endif
+   return std::unique_ptr<PosixSharedMemory>(
+       new PosixSharedMemory(start, size, std::move(fd)));
+ }
+diff --git a/src/tracing/ipc/posix_shared_memory.h b/src/tracing/ipc/posix_shared_memory.h
+index d7b9e20..84fe924 100644
+--- a/src/tracing/ipc/posix_shared_memory.h
++++ b/src/tracing/ipc/posix_shared_memory.h
+@@ -23,7 +23,8 @@
+     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
+     PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) ||   \
+     PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA) || \
+-    PERFETTO_BUILDFLAG(PERFETTO_OS_WASM)
++    PERFETTO_BUILDFLAG(PERFETTO_OS_WASM) || \
++    PERFETTO_BUILDFLAG(PERFETTO_OS_ALOS)
+ 
+ #include <stddef.h>
+ 

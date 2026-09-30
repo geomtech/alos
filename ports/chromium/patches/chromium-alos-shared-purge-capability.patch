@@ -1,0 +1,26 @@
+diff --git a/base/memory/discardable_shared_memory.cc b/base/memory/discardable_shared_memory.cc
+index 8d898db9..4852aa91 100644
+--- a/base/memory/discardable_shared_memory.cc
++++ b/base/memory/discardable_shared_memory.cc
+@@ -401,6 +401,13 @@ bool DiscardableSharedMemory::Purge(Time current_time) {
+   DFAKE_SCOPED_LOCK(thread_collision_warner_);
+   DCHECK(shared_memory_mapping_.IsValid());
+ 
++#if BUILDFLAG(IS_ALOS)
++  // Native SHM keeps eager, aliased frames pinned. Do not mark content purged
++  // unless the kernel can actually reclaim the shared backing safely.
++  errno = ENOTSUP;
++  PLOG(ERROR) << "ALOS shared backing reclamation is unavailable";
++  return false;
++#else
+   SharedState old_state(SharedState::UNLOCKED, last_known_usage_);
+   SharedState new_state(SharedState::UNLOCKED, Time());
+   SharedState result(subtle::Acquire_CompareAndSwap(
+@@ -473,6 +480,7 @@ bool DiscardableSharedMemory::Purge(Time current_time) {
+ 
+   last_known_usage_ = Time();
+   return true;
++#endif  // BUILDFLAG(IS_ALOS)
+ }
+ 
+ bool DiscardableSharedMemory::IsMemoryResident() const {

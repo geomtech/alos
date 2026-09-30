@@ -5,6 +5,58 @@
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
 #include "process.h"
+#include "../include/errno.h"
+
+int shm_create_descriptor(process_t *process, uint64_t size) {
+  if (!process || !size || size > SHM_MAX_SIZE) return -EINVAL;
+  shm_object_t *object = shm_create((size_t)size);
+  if (!object) return -ENOMEM;
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_SHM, O_RDWR, object);
+  if (!description) {
+    shm_release(object);
+    return -ENOMEM;
+  }
+  int fd = file_table_install_flags(process->fd_table, description, FD_CLOEXEC);
+  if (fd < 0) file_description_release(description);
+  return fd < 0 ? -EMFILE : fd;
+}
+
+int shm_readonly_descriptor(process_t *process, int fd) {
+  if (!process) return -EBADF;
+  open_file_description_t *source = file_table_get(process->fd_table, fd);
+  if (!source) return -EBADF;
+  if (source->type != FILE_TYPE_SHM) return -EINVAL;
+  shm_retain(source->shm_object);
+  open_file_description_t *description =
+      file_description_create(FILE_TYPE_SHM, O_RDONLY, source->shm_object);
+  if (!description) {
+    shm_release(source->shm_object);
+    return -ENOMEM;
+  }
+  int result = file_table_install_flags(process->fd_table, description, FD_CLOEXEC);
+  if (result < 0) file_description_release(description);
+  return result < 0 ? -EMFILE : result;
+}
+
+int64_t shm_descriptor_info(process_t *process, int fd, int query) {
+  if (!process) return -EBADF;
+  open_file_description_t *description = file_table_get(process->fd_table, fd);
+  if (!description) return -EBADF;
+  if (description->type != FILE_TYPE_SHM) return -EINVAL;
+  if (query == 0) return (int64_t)shm_size(description->shm_object);
+  if (query == 1) return description->flags & O_ACCMODE;
+  return -EINVAL;
+}
+
+int shm_descriptors_same(process_t *process, int fd, int other_fd) {
+  if (!process) return -EBADF;
+  open_file_description_t *a = file_table_get(process->fd_table, fd);
+  open_file_description_t *b = file_table_get(process->fd_table, other_fd);
+  if (!a || !b) return -EBADF;
+  if (a->type != FILE_TYPE_SHM || b->type != FILE_TYPE_SHM) return -EINVAL;
+  return a->shm_object == b->shm_object;
+}
 
 struct shm_object {
   volatile int ref_count;

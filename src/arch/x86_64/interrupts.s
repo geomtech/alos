@@ -456,6 +456,9 @@ irq11_handler:
     push r10
     push r11
     
+    extern virtio_rng_handle_shared_irq
+    call virtio_rng_handle_shared_irq
+
     ; Call all network handlers - they check internally if active
     call pcnet_irq_handler
     call virtio_net_irq_handler

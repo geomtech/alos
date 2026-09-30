@@ -1,0 +1,34 @@
+diff --git a/third_party/abseil-cpp/absl/debugging/internal/elf_mem_image.h b/third_party/abseil-cpp/absl/debugging/internal/elf_mem_image.h
+index 1fac29c5..fdb04197 100644
+--- a/third_party/abseil-cpp/absl/debugging/internal/elf_mem_image.h
++++ b/third_party/abseil-cpp/absl/debugging/internal/elf_mem_image.h
+@@ -35,7 +35,9 @@
+ #if defined(__ELF__) && !defined(__OpenBSD__) && !defined(__QNX__) && \
+     !defined(__native_client__) && !defined(__asmjs__) &&             \
+     !defined(__wasm__) && !defined(__HAIKU__) && !defined(__sun) &&   \
+-    !defined(__VXWORKS__) && !defined(__hexagon__) && !defined(__XTENSA__)
++    !defined(__VXWORKS__) && !defined(__hexagon__) && !defined(__XTENSA__) && \
++    !defined(__ALOS__)
++// ALOS has static ELF loading, not a dynamic ELF image/VDSO backend.
+ #define ABSL_HAVE_ELF_MEM_IMAGE 1
+ #endif
+ 
+diff --git a/third_party/abseil-cpp/absl/debugging/symbolize_unimplemented.inc b/third_party/abseil-cpp/absl/debugging/symbolize_unimplemented.inc
+index db24456b..3c12db2a 100644
+--- a/third_party/abseil-cpp/absl/debugging/symbolize_unimplemented.inc
++++ b/third_party/abseil-cpp/absl/debugging/symbolize_unimplemented.inc
+@@ -33,7 +33,13 @@ bool GetFileMappingHint(const void **, const void **, uint64_t *, const char **)
+ 
+ }  // namespace debugging_internal
+ 
+-void InitializeSymbolizer(const char*) {}
++void InitializeSymbolizer(const char*) {
++#if defined(__ALOS__)
++  ABSL_RAW_LOG(WARNING,
++               "ALOS: symbolization unavailable (no procfs/dynamic loader); "
++               "use supplied raw addresses for offline symbolization.");
++#endif
++}
+ bool Symbolize(const void *, char *, int) { return false; }
+ 
+ ABSL_NAMESPACE_END

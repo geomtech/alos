@@ -1,0 +1,30 @@
+diff --git a/base/debug/stack_trace.h b/base/debug/stack_trace.h
+--- a/base/debug/stack_trace.h
++++ b/base/debug/stack_trace.h
+@@ -19,7 +19,9 @@
+ #include "build/build_config.h"
+ 
+ #if BUILDFLAG(IS_POSIX)
++#if !BUILDFLAG(IS_ALOS)
+ #include <signal.h>
++#endif
+ #include <unistd.h>
+ #endif
+ 
+@@ -41,7 +43,7 @@ namespace base::debug {
+ // done in official builds because it has security implications).
+ BASE_EXPORT bool EnableInProcessStackDumping();
+ 
+-#if BUILDFLAG(IS_POSIX)
++#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ALOS)
+ // Sets a first-chance callback for the stack dump signal handler. This callback
+ // is called at the beginning of the signal handler to handle special kinds of
+ // signals, like out-of-bounds memory accesses in WebAssembly (WebAssembly Trap
+@@ -174,6 +176,7 @@ BASE_EXPORT std::ostream& operator<<(std::ostream& os, const StackTrace& s);
+ 
+ // Record a stack trace with up to |count| frames into |trace|. Returns the
+ // number of frames read.
++// ALOS records at most one caller return PC, without unwinding or symbolization.
+ BASE_EXPORT size_t CollectStackTrace(span<const void*> trace);
+ 
+ // A helper for tests that must either override the default suppression of

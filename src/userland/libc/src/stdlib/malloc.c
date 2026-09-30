@@ -7,6 +7,7 @@
 #include <sys/futex.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <malloc.h>
 
 /* Syscall pour brk - obtenir/étendre le heap */
 static void *sys_brk(void *addr) {
@@ -320,4 +321,42 @@ void *calloc(size_t nmemb, size_t size) {
     memset(ptr, 0, total_size);
   }
   return ptr;
+}
+
+int alos_malloc_get_stats(struct alos_malloc_stats *stats) {
+  if (!stats) {
+    errno = EINVAL;
+    return -1;
+  }
+  struct alos_malloc_stats result = {0};
+  lock_heap();
+  if (heap_start)
+    result.arena_bytes = (size_t)((uintptr_t)heap_end - (uintptr_t)heap_start);
+  for (mem_block_t *block = free_list; block; block = block->next) {
+    result.metadata_bytes += MIN_BLOCK_SIZE;
+    if (block->free) {
+      result.free_bytes += block->size;
+      result.free_blocks++;
+    } else {
+      result.allocated_bytes += block->size;
+      result.allocated_blocks++;
+    }
+  }
+  unlock_heap();
+  *stats = result;
+  return 0;
+}
+
+size_t malloc_usable_size(void *allocation) {
+  if (!allocation) return 0;
+  size_t result = 0;
+  lock_heap();
+  for (mem_block_t *block = free_list; block; block = block->next) {
+    if ((uint8_t *)block + MIN_BLOCK_SIZE == allocation && !block->free) {
+      result = block->size;
+      break;
+    }
+  }
+  unlock_heap();
+  return result;
 }

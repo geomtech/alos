@@ -47,6 +47,8 @@ _start:
     ; Call main(argc, argv)
     push rdi
     push rsi
+    lea rdx, [rsi + rdi*8 + 8]
+    mov rdi, rdx
     call __libc_init
     pop rsi
     pop rdi

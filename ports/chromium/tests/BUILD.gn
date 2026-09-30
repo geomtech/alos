@@ -1,0 +1,48 @@
+assert(is_alos, "This executable targets native ALOS only.")
+
+executable("base_smoke") {
+  sources = [ "base-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("atomic_smoke") {
+  sources = [ "nativeatomic-runtime-test.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("file_comparison_smoke") {
+  sources = [ "nativefile-comparison-test.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("stack_trace_smoke") {
+  sources = [ "base-stack-trace-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+group("all") {
+  deps = [
+    ":base_smoke",
+    ":atomic_smoke",
+    ":file_comparison_smoke",
+    ":stack_trace_smoke",
+    ":io_pump_smoke",
+    ":process_smoke",
+    ":discardable_capability_smoke",
+  ]
+}
+
+executable("io_pump_smoke") {
+  sources = [ "base-io-pump-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("process_smoke") {
+  sources = [ "base-process-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("discardable_capability_smoke") {
+  sources = [ "base-discardable-capability-smoke.cc" ]
+  deps = [ "//base" ]
+}

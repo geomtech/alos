@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 #include <sys/futex.h>
 #include <errno.h>
+#include <stdlib.h>
 
 typedef void (*init_fn)(void);
 extern init_fn __preinit_array_start[], __preinit_array_end[];
@@ -84,7 +85,8 @@ void __cxa_finalize(void *dso) {
   unlock_finalizers();
 }
 
-void __libc_init(void) {
+void __libc_init(char **envp) {
+  environ = envp;
   for (init_fn *p = __preinit_array_start; p != __preinit_array_end; p++) (*p)();
   for (init_fn *p = __init_array_start; p != __init_array_end; p++) (*p)();
 }

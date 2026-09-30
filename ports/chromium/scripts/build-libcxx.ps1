@@ -21,9 +21,12 @@ if ($LASTEXITCODE -ne 0 -or $revision.Trim() -ne "3b5b5c1ec4a3095ab096dd780e84d7
 $writableMounts = @("run", "--rm", "-v", "${repo}:/alos:ro",
                     "-v", "${source}:/llvm", "-v", "${output}:/build",
                     "alos-runtime")
-& docker @writableMounts sh -c 'sed "s/\r$//" /alos/ports/chromium/patches/llvm-18.1.8-alos-clock.patch > /build/alos-clock.patch'
+foreach ($patchName in @("llvm-18.1.8-alos-clock.patch", "llvm-18.1.8-musl-narrow-locale.patch")) {
+& docker @writableMounts sh -c "sed 's/\r`$//' /alos/ports/chromium/patches/$patchName > /build/alos-clock.patch"
 if ($LASTEXITCODE) { throw "Preparation du patch horloges ALOS echouee." }
 $patch = "/build/alos-clock.patch"
+& docker @writableMounts git -c safe.directory=/llvm -C /llvm apply --unidiff-zero --reverse --check $patch 2>$null
+if ($LASTEXITCODE -eq 0) { continue }
 & docker @writableMounts git -c safe.directory=/llvm -C /llvm apply --unidiff-zero --check $patch 2>$null
 if ($LASTEXITCODE -eq 0) {
     & docker @writableMounts git -c safe.directory=/llvm -C /llvm apply --unidiff-zero $patch
@@ -31,6 +34,7 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     & docker @writableMounts git -c safe.directory=/llvm -C /llvm apply --unidiff-zero --reverse --check $patch 2>$null
     if ($LASTEXITCODE) { throw "Patch horloges ALOS incompatible avec les sources LLVM." }
+}
 }
 $options = @(
     "-G", "Ninja", "-S", "/llvm/runtimes", "-B", "/build",

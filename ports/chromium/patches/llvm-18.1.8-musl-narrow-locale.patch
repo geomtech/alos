@@ -1,0 +1,11 @@
+diff --git a/libcxx/include/__support/musl/xlocale.h b/libcxx/include/__support/musl/xlocale.h
+--- a/libcxx/include/__support/musl/xlocale.h
++++ b/libcxx/include/__support/musl/xlocale.h
+@@ -20,0 +21 @@
++#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
+@@ -21,0 +23 @@
++#endif
+@@ -35,0 +38 @@
++#ifndef _LIBCPP_HAS_NO_WIDE_CHARACTERS
+@@ -47,0 +51 @@
++#endif

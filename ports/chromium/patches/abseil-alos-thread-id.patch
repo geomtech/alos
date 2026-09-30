@@ -1,0 +1,16 @@
+diff --git a/third_party/abseil-cpp/absl/base/internal/sysinfo.cc b/third_party/abseil-cpp/absl/base/internal/sysinfo.cc
+--- a/third_party/abseil-cpp/absl/base/internal/sysinfo.cc
++++ b/third_party/abseil-cpp/absl/base/internal/sysinfo.cc
+@@ -391,6 +391,12 @@ pid_t GetTID() {
+   return pid_t{GetCurrentThreadId()};
+ }
+ 
++#elif defined(__ALOS__)
++
++pid_t GetTID() {
++  return gettid();
++}
++
+ #elif defined(__linux__)
+ 
+ #ifndef SYS_gettid

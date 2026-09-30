@@ -9,33 +9,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-int open(const char *pathname, int flags, ...) {
-  long mode = 0;
-  if (flags & O_CREAT) {
-    va_list ap;
-    va_start(ap, flags);
-    mode = (long)va_arg(ap, int);
-    va_end(ap);
-  }
-  return (int)syscall3(SYS_OPEN, (long)pathname, (long)flags, mode);
-}
-
-ssize_t read(int fd, void *buf, size_t count) {
-  return syscall3(SYS_READ, fd, (long)buf, (long)count);
-}
-
-ssize_t write(int fd, const void *buf, size_t count) {
-  return syscall3(SYS_WRITE, fd, (long)buf, (long)count);
-}
-
-int close(int fd) { return syscall3(SYS_CLOSE, fd, 0, 0); }
-
 int unlink(const char *pathname) {
   return syscall3(SYS_UNLINK, (long)pathname, 0, 0);
-}
-
-off_t lseek(int fd, off_t offset, int whence) {
-  return syscall3(SYS_LSEEK, fd, (long)offset, whence);
 }
 
 int getpid(void) { return syscall0(SYS_GETPID); }
@@ -80,7 +55,7 @@ int creat(const char *pathname, int mode) {
   return (int)syscall3(SYS_CREATE, (long)pathname, 0, 0);
 }
 
-int readdir(const char *path, unsigned int index, struct dirent *entry) {
+int alos_readdir(const char *path, unsigned int index, struct alos_dirent *entry) {
   return (int)syscall3(SYS_READDIR, (long)path, (long)index, (long)entry);
 }
 
@@ -95,9 +70,13 @@ void _exit(int status) {
 
 long sysconf(int name) {
   if (name == _SC_PAGESIZE) return 4096;
+  /* Le noyau configure exactement un CPU ; le SMP n'est pas implemente. */
+  if (name == _SC_NPROCESSORS_CONF) return 1;
   errno = EINVAL;
   return -1;
 }
+
+int getpagesize(void) { return (int)sysconf(_SC_PAGESIZE); }
 
 int isatty(int fd) {
   long result = syscall1(SYS_ISATTY, fd);

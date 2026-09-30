@@ -1,0 +1,163 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -1689,7 +1689,19 @@ component("base") {
+     ]
+   }
+ 
+-  if (is_posix && !is_android) {
++  # ALOS has no signal/context capture backend. StackSampler::Create already
++  # reports unsupported on this platform; keep ordinary threads and tasks.
++  if (is_alos) {
++    sources -= [
++      "profiler/stack_copier_signal.cc",
++      "profiler/stack_copier_signal.h",
++      "profiler/thread_delegate_posix.cc",
++      "profiler/thread_delegate_posix.h",
++    ]
++    sources += [ "debug/stack_trace_alos.cc" ]
++  }
++
++  if (is_posix && !is_android && !is_alos) {
+     sources += [ "debug/stack_trace_posix.cc" ]
+   }
+ 
+diff --git a/base/debug/stack_trace.cc b/base/debug/stack_trace.cc
+--- a/base/debug/stack_trace.cc
++++ b/base/debug/stack_trace.cc
+@@ -273,7 +273,9 @@ StackTrace::StackTrace(span<const void* const> trace)
+ 
+ // static
+ bool StackTrace::WillSymbolizeToStreamForTesting() {
+-#if BUILDFLAG(HAS_SYMBOLS) == 0
++#if BUILDFLAG(IS_ALOS)
++  return false;  // ALOS prints raw addresses, not resolved symbols.
++#elif BUILDFLAG(HAS_SYMBOLS) == 0
+   // Symbols are not expected to be reliable when gn args specifies
+   // symbol_level=0.
+   return false;
+diff --git a/base/test/test_suite.cc b/base/test/test_suite.cc
+--- a/base/test/test_suite.cc
++++ b/base/test/test_suite.cc
+@@ -585,7 +585,12 @@
+   InitAndroidTestMessageLoop();
+ #endif  // else BUILDFLAG(IS_ANDROID)
+ 
++#if BUILDFLAG(IS_ALOS)
++  // ALOS explicitly reports unavailable signal delivery; retain fatal checks.
++  debug::EnableInProcessStackDumping();
++#else
+   CHECK(debug::EnableInProcessStackDumping());
++#endif
+ #if BUILDFLAG(IS_WIN)
+   RouteStdioToConsole(true);
+   // Make sure we run with high resolution timer to minimize differences
+diff --git a/base/debug/stack_trace_alos.cc b/base/debug/stack_trace_alos.cc
+new file mode 100644
+--- /dev/null
++++ b/base/debug/stack_trace_alos.cc
+@@ -0,0 +1,104 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "base/debug/stack_trace.h"
++
++#include <stdint.h>
++#include <stdio.h>
++
++#include <ostream>
++
++#include "base/compiler_specific.h"
++
++namespace base::debug {
++
++bool EnableInProcessStackDumping() {
++  fputs("ALOS: signal-driven stack dumping is unavailable; synchronous "
++        "capture records one caller PC only, without unwinding or symbols.\n",
++        stderr);
++  return false;
++}
++
++// ALOS does not walk frame chains: this is one compiler-provided return PC,
++// including when the caller was built with omitted frame pointers.
++NOINLINE size_t CollectStackTrace(span<const void*> trace) {
++  if (trace.empty()) {
++    return 0;
++  }
++  const void* pc =
++      __builtin_extract_return_addr(__builtin_return_address(0));
++  if (!pc) {
++    return 0;
++  }
++  trace[0] = pc;
++  return 1;
++}
++
++void StackTrace::PrintMessageWithPrefix(cstring_view prefix,
++                                       cstring_view message) {
++  fputs(prefix.c_str(), stderr);
++  fputs(message.c_str(), stderr);
++}
++
++void StackTrace::PrintWithPrefixImpl(cstring_view prefix) const {
++  size_t index = 0;
++  for (const void* pc : addresses()) {
++    fprintf(stderr, "%s#%zu 0x%zx\n", prefix.c_str(), index++,
++            reinterpret_cast<uintptr_t>(pc));
++  }
++}
++
++void StackTrace::OutputToStreamWithPrefixImpl(std::ostream* os,
++                                              cstring_view prefix) const {
++  size_t index = 0;
++  for (const void* pc : addresses()) {
++    char line[64];
++    snprintf(line, sizeof(line), "#%zu 0x%zx\n", index++,
++             reinterpret_cast<uintptr_t>(pc));
++    *os << prefix << line;
++  }
++}
++
++namespace internal {
++
++void itoa_r(intptr_t value, int base, size_t padding, span<char> buf) {
++  if (buf.empty()) {
++    return;
++  }
++  buf[0] = '\0';
++  if (base < 2 || base > 16) {
++    return;
++  }
++  uintptr_t magnitude = static_cast<uintptr_t>(value);
++  size_t start = 0;
++  if (value < 0 && base == 10) {
++    magnitude = static_cast<uintptr_t>(-(value + 1)) + 1;
++    if (buf.size() < 2) {
++      return;
++    }
++    buf[start++] = '-';
++  }
++  size_t end = start;
++  constexpr char digits[] = "0123456789abcdef";
++  do {
++    if (end >= buf.size() - 1) {
++      buf[0] = '\0';
++      return;
++    }
++    buf[end++] = digits[magnitude % static_cast<uintptr_t>(base)];
++    magnitude /= static_cast<uintptr_t>(base);
++    if (padding) {
++      --padding;
++    }
++  } while (magnitude || padding);
++  buf[end] = '\0';
++  for (size_t left = start, right = end - 1; left < right; ++left, --right) {
++    char digit = buf[left];
++    buf[left] = buf[right];
++    buf[right] = digit;
++  }
++}
++
++}  // namespace internal
++}  // namespace base::debug

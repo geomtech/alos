@@ -12,11 +12,11 @@ The current priority is to keep the x86-64 scheduler, Ring 0/Ring 3 transitions,
 
 Next major milestones:
 1. Continue the Chromium/C++ runtime bootstrap and upstream build integration
-2. Complete missing POSIX services: pipes, signals, socket APIs and event multiplexing
+2. Complete missing POSIX services: signals, active socket APIs and broader event multiplexing
 3. Copy-on-Write and coherent shared file mappings
 4. AHCI/SATA DMA, then NVMe
 
-**Chromium is not yet runnable on ALOS.** Target LLVM 18.1.8 `libc++`/`libc++abi` archives and a native C++ integration test have been built, but the experimental Chromium GN/platform patch still has dependency and configuration blockers. This is not a working Blink, V8, Mojo or Ozone port. See [the detailed port status](docs/chromium-port.md).
+**Chromium is not yet runnable on ALOS.** GN generates an experimental Chromium 140.0.7339.80 build graph and Ninja compiles real `//base`/dependency objects, but the complete target has not been built, linked or executed. Target LLVM 18.1.8 `libc++`/`libc++abi` archives now build with localization, Unicode and C++ wide-character support enabled. Native runtime/wide-format suites and three consecutive `complex-cpp-test` runs passed on both QEMU `qemu64` and `max`. This is not a working Blink, V8, Mojo or Ozone port. See [the detailed port status](docs/chromium-port.md).
 
 ## Features implemented and future plans
 
@@ -37,6 +37,7 @@ Next major milestones:
 ### Memory Management
 - [x] Per-process page tables and VM region management
 - [x] Sparse demand paging for mmap regions
+- [x] mincore residency queries and managed-RAM/free-memory reporting
 - [ ] Copy-on-Write (COW)
 - [x] Anonymous mmap and private file mappings
 - [x] mmap protections, munmap and private MADV_DONTNEED
@@ -59,7 +60,7 @@ Next major milestones:
 - [ ] Real-time scheduling (SCHED_FIFO, SCHED_RR)
 
 ### IPC (Inter-Process Communication)
-- [ ] Pipes (anonymous and named/FIFO)
+- [x] Anonymous pipes with blocking waits (named/FIFO not implemented)
 - [ ] Message queues
 - [ ] Semaphores
 - [x] Native named IPC channels with blocking waits
@@ -132,7 +133,7 @@ Next major milestones:
 - [x] Static ELF64 loading
 - [ ] Dynamic linking (shared libraries .so)
 - [x] Native libc subset with thread-local errno
-- [x] Basic pthread create/join/detach, mutexes, condition variables, once and keys
+- [x] Basic pthread create/join/detach, mutexes, condition variables, reader/writer locks, once and keys
 - [x] C/C++ constructors, global/TLS destructors and static TLS runtime
 - [x] Target libc++/libc++abi bootstrap (limited profile)
 - [ ] Math library (libm)
@@ -149,7 +150,7 @@ Next major milestones:
 - [x] Persistent history (`/config/history`)
 - [ ] Init system (systemd/OpenRC-like)
 - [ ] Service management
-- [ ] Environment variables
+- [x] Process environment with exec inheritance and libc mutation APIs
 - [ ] User authentication (/etc/passwd, /etc/shadow)
 - [ ] Permissions and ACL
 - [ ] Cron/scheduled tasks
@@ -163,7 +164,7 @@ Next major milestones:
 - [ ] ASLR (Address Space Layout Randomization)
 - [x] RW/NX protections for mmap regions; RWX mappings rejected
 - [ ] Complete executable-memory protection policy across ELF/heap mappings
-- [ ] Cryptographic entropy service
+- [x] Host-backed getentropy via legacy VirtIO RNG (trusted deployment required)
 - [ ] Encrypted filesystems
 - [ ] SELinux/AppArmor-like MAC
 
@@ -201,9 +202,14 @@ ALOS remains an educational OS, not a production-secure or fully POSIX-compatibl
 - Demand paging and mprotect apply to managed mmap regions; mprotect does not yet cover ELF segments or the brk heap. Shared file mappings, swap and COW are not implemented.
 - Shared anonymous/SHM backing is currently eager and limited to 16 MiB per object. Shared MADV_DONTNEED is unsupported.
 - Ring 3 threads are preempted, but historical Ring 0 sections remain cooperative. SMP is not implemented, even when a launch script configures multiple virtual CPUs.
-- TLS is static only. Pthread cancellation, rwlocks, barriers, creation attributes and process-shared synchronization are not complete.
+- TLS is static only. Reader/writer locks allow concurrent readers and exclusive writers with blocking waits, reader preference and no FIFO guarantee; rwlock attributes, timed locks and process-shared operation are unsupported. Pthread creation supports stack-size/detach attributes and native stack queries, but not caller-supplied stacks or the full attribute API. Cancellation and barriers remain incomplete.
+- CLOCK_BOOTTIME, CLOCK_MONOTONIC_RAW and CLOCK_MONOTONIC_COARSE currently share millisecond-resolution monotonic kernel uptime: suspend/resume and NTP adjustment are not implemented. CLOCK_THREAD_CPUTIME_ID measures the current thread's PIT-accounted CPU time, not uptime; CLOCK_REALTIME_COARSE uses real wall time at millisecond resolution. gettimeofday returns realtime and, when requested, zero UTC timezone fields. Calendar APIs, including localtime and mktime, support UTC only, not configurable local timezones.
+- The libc has sscanf/vsscanf, getc/putc and one-byte ungetc pushback, plus limited C/POSIX/UTF-8 locale APIs; these additions do not establish full POSIX stdio or locale compliance.
+- Wide formatting and UTF-8 wide stream I/O support console and writable file descriptors, without general stream orientation/fwide. Native FD/metadata APIs, file creation/sync, pread/pwrite, ftruncate, fopen/fdopen and fseek/ftell are implemented. VFS offsets remain limited to 32 bits; advisory locks, path-at APIs and full permission enforcement remain unsupported. Pending wide pushback makes ftell/SEEK_CUR unsupported.
+- Passive IPv4 sockets and poll have native coverage, but connect remains EOPNOTSUPP and getaddrinfo is numeric-only. AF_UNIX/SCM_RIGHTS, IPv6 and full socket-option support remain absent. Anonymous pipes return EPIPE without SIGPIPE; access supports only F_OK.
 - Native IPC is not Unix sockets or Mojo. Full POSIX socket, signal and event-wait APIs remain incomplete.
 - Authentication, file permissions, sandboxing, ASLR and cryptographic entropy are not complete. Older libc wrappers do not all use uniform POSIX errno conventions.
+- getentropy fails closed without a configured trusted VirtIO RNG. Native source/concurrency tests are not cryptographic health tests or proof of host binary authenticity; temporary names use PID/counters, not cryptographic randomness.
 
 ## Project Structure
 

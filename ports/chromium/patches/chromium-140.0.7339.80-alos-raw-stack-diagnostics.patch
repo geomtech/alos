@@ -1,0 +1,44 @@
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
+index 1745f2ca..32aa8e7f 100644
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
+@@ -18,7 +18,8 @@
+ #include "partition_alloc/partition_alloc_base/posix/eintr_wrapper.h"
+ #include "partition_alloc/partition_alloc_base/strings/safe_sprintf.h"
+ 
+-#if !PA_BUILDFLAG(IS_ANDROID) && !PA_BUILDFLAG(IS_APPLE)
++#if !PA_BUILDFLAG(IS_ANDROID) && !PA_BUILDFLAG(IS_APPLE) && \
++    !PA_BUILDFLAG(IS_ALOS)
+ #include <link.h>  // For ElfW() macro.
+ #endif
+ 
+@@ -30,7 +31,7 @@ namespace partition_alloc::internal::base::debug {
+ 
+ namespace {
+ 
+-#if !PA_BUILDFLAG(IS_APPLE)
++#if !PA_BUILDFLAG(IS_APPLE) && !PA_BUILDFLAG(IS_ALOS)
+ 
+ // On Android the 'open' function has two versions:
+ // int open(const char *pathname, int flags);
+@@ -372,7 +373,19 @@ void PrintStackTraceInternal(const void** trace, size_t count) {
+   }
+   close(fd);
+ }
+-#endif  // !PA_BUILDFLAG(IS_APPLE)
++#endif  // !PA_BUILDFLAG(IS_APPLE) && !PA_BUILDFLAG(IS_ALOS)
++
++#if PA_BUILDFLAG(IS_ALOS)
++void PrintStackTraceInternal(const void** trace, size_t count) {
++  // ALOS n'a ni procfs ni chargeur dynamique : conserver les adresses brutes.
++  PA_RAW_LOG(WARNING,
++             "ALOS: symbolization unavailable (no procfs/dynamic loader); "
++             "raw stack addresses follow.\n");
++  for (size_t i = 0; i < count; ++i) {
++    OutputStackTrace(i, reinterpret_cast<uintptr_t>(trace[i]), 0u, "???", 0u);
++  }
++}
++#endif  // PA_BUILDFLAG(IS_ALOS)
+ 
+ #if PA_BUILDFLAG(IS_APPLE)
+ // Since /proc/self/maps is not available, use dladdr() to obtain module

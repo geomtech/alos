@@ -6,6 +6,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <locale>
+#include <sstream>
+#include <iomanip>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -40,6 +43,21 @@ static void worker() {
   }
 }
 int main() {
+  const auto classic = std::locale::classic();
+  std::ostringstream output;
+  output.imbue(classic);
+  output << std::fixed << std::setprecision(2) << 1.25 << ' ' << 42;
+  std::istringstream input("1.25 42");
+  input.imbue(classic);
+  double decimal = 0;
+  int integer = 0;
+  input >> decimal >> integer;
+  if (output.str() != "1.25 42" || input.fail() ||
+      decimal != 1.25 || integer != 42 ||
+      std::use_facet<std::numpunct<char>>(classic).decimal_point() != '.' ||
+      !std::use_facet<std::ctype<char>>(classic).is(std::ctype_base::alpha, 'A'))
+    ++failed;
+  puts("complex-cpp-test: classic locale streams PASS");
   std::string name = "ALOS";
   name += " Chromium";
   std::vector<int> values{1, 2, 3, 4};

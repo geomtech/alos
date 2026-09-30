@@ -1,5 +1,5 @@
 /* Fonctions larges ALOS. Seules les fonctions reellement implementees sont
- * declarees ; les E/S larges sur FILE ne le sont pas encore. */
+ * declarees ; l'orientation generale des flux n'est pas implementee. */
 #ifndef _WCHAR_H
 #define _WCHAR_H
 
@@ -20,6 +20,13 @@ extern "C" {
 #endif
 
 struct tm;
+
+int swprintf(wchar_t *__restrict, size_t, const wchar_t *__restrict, ...);
+int vswprintf(wchar_t *__restrict, size_t, const wchar_t *__restrict, va_list);
+wint_t fgetwc(FILE *);
+wint_t getwc(FILE *);
+wint_t fputwc(wchar_t, FILE *);
+wint_t ungetwc(wint_t, FILE *);
 
 wchar_t *wcscpy(wchar_t *__restrict, const wchar_t *__restrict);
 wchar_t *wcsncpy(wchar_t *__restrict, const wchar_t *__restrict, size_t);

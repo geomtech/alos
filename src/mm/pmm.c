@@ -28,6 +28,7 @@ static uint8_t pmm_bitmap[PMM_BITMAP_SIZE];
 static uint64_t pmm_total_blocks = 0;
 static uint64_t pmm_used_blocks = 0;
 static uint64_t pmm_memory_size = 0;
+static uint64_t pmm_usable_blocks = 0;
 
 /* HHDM offset pour conversion phys<->virt */
 static uint64_t pmm_hhdm_offset = 0;
@@ -218,6 +219,8 @@ void init_pmm_limine(struct limine_memmap_response *memmap, uint64_t hhdm_offset
      * C'est une bonne pratique de ne jamais allouer dans cette région.
      */
     pmm_mark_region_used(0, 0x100000);
+    /* Capacite USABLE apres reservations, sans compter les trous du bitmap. */
+    pmm_usable_blocks = pmm_get_free_blocks();
     
     KLOG_INFO_DEC("PMM", "Total blocks: ", (uint32_t)pmm_total_blocks);
     KLOG_INFO_DEC("PMM", "Used blocks: ", (uint32_t)pmm_used_blocks);
@@ -304,6 +307,11 @@ void pmm_free_blocks(void* p, uint64_t count)
 uint64_t pmm_get_total_blocks(void)
 {
     return pmm_total_blocks;
+}
+
+uint64_t pmm_get_usable_blocks(void)
+{
+    return pmm_usable_blocks;
 }
 
 uint64_t pmm_get_used_blocks(void)

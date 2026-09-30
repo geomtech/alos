@@ -28,6 +28,9 @@
 
 /* Filesystem syscalls */
 #define SYS_CLOSE 6    /* Fermer un file descriptor */
+#define SYS_LSEEK 19
+#define SYS_FSTAT 28
+#define SYS_STAT 106
 #define SYS_UNLINK 10  /* Supprimer un fichier */
 #define SYS_CHDIR 12   /* Changer de répertoire */
 #define SYS_MKDIR 39   /* Créer un répertoire */
@@ -51,6 +54,42 @@
 #define SYS_THREAD_REGISTER 231
 #define SYS_EXIT_GROUP 232
 #define SYS_ISATTY 233
+#define SYS_THREAD_STACK 234 /* Bornes de la pile principale ELF du processus */
+#define SYS_READDIR_FD 235
+#define SYS_FCNTL 236
+#define SYS_DUP 237
+#define SYS_DUP2 238
+#define SYS_UNAME 260
+#define SYS_NATIVE_SOCKET 240
+#define SYS_NATIVE_POLL 241
+#define SYS_FSYNC 250
+#define SYS_PIPE2 251
+#define SYS_ACCESS 252
+#define SYS_MKDIR_MODE 253
+#define SYS_GETENTROPY 261
+#define SYS_PREAD 262
+#define SYS_PWRITE 263
+#define SYS_FTRUNCATE 264
+#define SYS_MINCORE 265
+#define SYS_SYSTEM_INFO 266
+#define SYS_READV 270
+#define SYS_WRITEV 271
+#define SYS_IOCTL 272
+#define SYS_SHM_CREATE_NATIVE 280
+#define SYS_SHM_READONLY 281
+#define SYS_SHM_INFO 282
+#define SYS_SHM_SAME 283
+#define SYS_RESOURCE_LIMIT 290
+#define SYS_RESOURCE_SET_LIMIT 291
+#define SYS_THREAD_NICE 292
+#define SYS_STATVFS 300
+#define SYS_FUTIMES 301
+#define SYS_SET_PROCESS_TITLE 302
+#define SYS_MSYNC 303
+#define SYS_PROCESS_TERMINATE 304
+#define SYS_PROCESS_WAIT 305
+#define SYS_PROCESS_QUERY 306
+#define SYS_NATIVE_PATH 310
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */
 

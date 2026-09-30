@@ -1,0 +1,62 @@
+diff --git a/base/message_loop/message_pump_for_io.h b/base/message_loop/message_pump_for_io.h
+--- a/base/message_loop/message_pump_for_io.h
++++ b/base/message_loop/message_pump_for_io.h
+@@ -21,6 +21,8 @@
+ #include "base/message_loop/message_pump_kqueue.h"
+ #elif BUILDFLAG(IS_FUCHSIA)
+ #include "base/message_loop/message_pump_fuchsia.h"
++#elif BUILDFLAG(IS_ALOS)
++#include "base/message_loop/message_pump_alos.h"
+ #elif BUILDFLAG(IS_POSIX)
+ #include "base/message_loop/message_pump_epoll.h"
+ #endif
+@@ -38,6 +40,8 @@
+ using MessagePumpForIO = MessagePumpKqueue;
+ #elif BUILDFLAG(IS_FUCHSIA)
+ using MessagePumpForIO = MessagePumpFuchsia;
++#elif BUILDFLAG(IS_ALOS)
++using MessagePumpForIO = MessagePumpAlos;
+ #elif BUILDFLAG(IS_POSIX)
+ using MessagePumpForIO = MessagePumpEpoll;
+ #else
+diff --git a/base/message_loop/message_pump_for_ui.h b/base/message_loop/message_pump_for_ui.h
+--- a/base/message_loop/message_pump_for_ui.h
++++ b/base/message_loop/message_pump_for_ui.h
+@@ -19,6 +19,8 @@
+ #include "base/message_loop/message_pump.h"
+ #elif BUILDFLAG(IS_AIX)
+ // No MessagePumpForUI, see below.
++#elif BUILDFLAG(IS_ALOS)
++#include "base/message_loop/message_pump_alos.h"
+ #elif defined(USE_GLIB)
+ #include "base/message_loop/message_pump_glib.h"
+ #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_BSD)
+@@ -44,6 +46,9 @@
+ #elif BUILDFLAG(IS_AIX)
+ // Currently AIX doesn't have a MessagePumpForUI.
+ // TODO(abarth): Figure out if we need this.
++#elif BUILDFLAG(IS_ALOS)
++// Task/FD loop only; not a native window-system or Ozone implementation.
++using MessagePumpForUI = MessagePumpAlos;
+ #elif defined(USE_GLIB)
+ using MessagePumpForUI = MessagePumpGlib;
+ #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_BSD)
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2359,9 +2359,15 @@
+   if (use_epoll) {
+     sources += [
+       "message_loop/message_pump_epoll.cc",
+       "message_loop/message_pump_epoll.h",
+     ]
+   }
++  if (is_alos) {
++    sources += [
++      "message_loop/message_pump_alos.cc",
++      "message_loop/message_pump_alos.h",
++    ]
++  }
+ 
+   # Android and MacOS have their own custom shared memory handle
+   # implementations. e.g. due to supporting both POSIX and native handles.

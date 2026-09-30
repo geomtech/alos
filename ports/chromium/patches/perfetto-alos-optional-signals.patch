@@ -1,0 +1,16 @@
+diff --git a/third_party/perfetto/src/base/BUILD.gn b/third_party/perfetto/src/base/BUILD.gn
+--- a/third_party/perfetto/src/base/BUILD.gn
++++ b/third_party/perfetto/src/base/BUILD.gn
+@@ -69,6 +69,12 @@ perfetto_component("base") {
+     "weak_runner.cc",
+   ]
+ 
++  # The ALOS bootstrap excludes signal delivery and the perfetto_cmd CLI.
++  # Selecting that CLI still requires a real Ctrl-C handler implementation.
++  if (defined(is_alos) && is_alos) {
++    sources -= [ "ctrl_c_handler.cc" ]
++  }
++
+   if (!is_nacl) {
+     sources += [
+       "thread_task_runner.cc",

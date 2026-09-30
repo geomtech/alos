@@ -9,6 +9,8 @@
 #include "../../kernel/timer.h"
 #include "../../kernel/klog.h"
 #include "../../mm/kheap.h"
+#include "../../include/errno.h"
+#include "../../kernel/native_poll.h"
 
 /* ===========================================
  * Tableau des sockets TCP (allocation dynamique)
@@ -143,6 +145,12 @@ static uint16_t tcp_checksum(uint8_t* src_ip, uint8_t* dest_ip,
 static void tcp_init_socket(tcp_socket_t* sock)
 {
     sock->in_use = false;
+    sock->native_posix = false;
+    sock->read_shutdown = false;
+    sock->write_shutdown = false;
+    sock->socket_error = 0;
+    sock->bound_address = 0;
+    sock->native_backlog = 1;
     sock->state = TCP_STATE_CLOSED;
     sock->local_port = 0;
     sock->remote_port = 0;
@@ -175,7 +183,8 @@ static bool tcp_grow_sockets(void)
     }
     
     /* Calculer la nouvelle capacité (doubler) */
-    int new_capacity = tcp_socket_capacity * 2;
+    /* Les descripteurs et waitqueues gardent des pointeurs dans ce tableau. */
+    int new_capacity = TCP_MAX_SOCKETS;
     if (new_capacity > TCP_MAX_SOCKETS) {
         new_capacity = TCP_MAX_SOCKETS;
     }
@@ -247,6 +256,7 @@ static tcp_socket_t* tcp_alloc_socket(void)
     /* Chercher un slot libre dans le tableau existant */
     for (int i = 0; i < tcp_socket_capacity; i++) {
         if (!tcp_sockets[i].in_use) {
+            tcp_init_socket(&tcp_sockets[i]);
             tcp_sockets[i].in_use = true;
             tcp_socket_count++;
             return &tcp_sockets[i];
@@ -297,6 +307,18 @@ tcp_socket_t* tcp_find_ready_client(uint16_t local_port)
             tcp_sockets[i].state == TCP_STATE_ESTABLISHED) {
             return &tcp_sockets[i];
         }
+    }
+    return NULL;
+}
+
+tcp_socket_t* tcp_native_ready_client(uint16_t local_port)
+{
+    for (int i = 0; i < tcp_socket_capacity; ++i) {
+        tcp_socket_t* s = &tcp_sockets[i];
+        if (s->in_use && s->native_posix && s->local_port == local_port &&
+            !(s->flags & TCP_SOCK_ACCEPTED) &&
+            (s->state == TCP_STATE_ESTABLISHED || s->state == TCP_STATE_CLOSE_WAIT))
+            return s;
     }
     return NULL;
 }
@@ -383,6 +405,15 @@ tcp_socket_t* tcp_listen(uint16_t port)
 void tcp_close(tcp_socket_t* sock)
 {
     if (sock == NULL) return;
+    if (sock->native_posix && sock->state == TCP_STATE_LISTEN) {
+        for (int i = 0; i < tcp_socket_capacity; ++i) {
+            tcp_socket_t* pending = &tcp_sockets[i];
+            if (pending != sock && pending->in_use && pending->native_posix &&
+                pending->local_port == sock->local_port &&
+                !(pending->flags & TCP_SOCK_ACCEPTED))
+                tcp_close(pending);
+        }
+    }
     
     uint16_t saved_port = sock->local_port;
     
@@ -415,6 +446,9 @@ void tcp_close(tcp_socket_t* sock)
     
     /* Signal state change (IRQ-safe) */
     wait_queue_wake_all(&sock->state_waitqueue);
+    wait_queue_wake_all(&sock->recv_waitqueue);
+    wait_queue_wake_all(&sock->accept_waitqueue);
+    native_poll_notify();
 }
 
 /**
@@ -622,6 +656,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     uint16_t flags_field = ntohs(tcp->data_offset_flags);
     uint8_t flags = tcp_get_flags(flags_field);
     int header_len = tcp_get_header_len(flags_field);
+    if (header_len < TCP_HEADER_SIZE || header_len > len) return;
     
     /* Log: paquet TCP reçu (seulement pour SYN/RST, pas ACK/FIN routine) */
 #ifdef TCP_DEBUG_VERBOSE
@@ -647,12 +682,61 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         }
         return;
     }
+    if (sock->native_posix && (flags & TCP_FLAG_RST)) {
+        sock->socket_error = ECONNRESET;
+        sock->state = TCP_STATE_CLOSED;
+        wait_queue_wake_all(&sock->state_waitqueue);
+        wait_queue_wake_all(&sock->recv_waitqueue);
+        native_poll_notify();
+        return;
+    }
+    if (sock->native_posix && sock->state == TCP_STATE_ESTABLISHED) {
+        int payload_len = len - header_len;
+        uint8_t* payload = data + header_len;
+        int32_t already = (int32_t)(sock->ack - seq_num);
+        if (already < 0) {
+            tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+            return;
+        }
+        int skip = already > payload_len ? payload_len : already;
+        int stored = skip;
+        while (stored < payload_len && sock->recv_count < TCP_RECV_BUFFER_SIZE) {
+            if (!sock->read_shutdown) {
+                sock->recv_buffer[sock->recv_head] = payload[stored];
+                sock->recv_head = (sock->recv_head + 1) % TCP_RECV_BUFFER_SIZE;
+                ++sock->recv_count;
+            }
+            ++stored;
+            ++sock->ack;
+        }
+        /* Ne jamais acquitter les octets perdus faute de place. */
+        sock->window = TCP_RECV_BUFFER_SIZE - sock->recv_count;
+        if ((flags & TCP_FLAG_FIN) && sock->ack == seq_num + (uint32_t)payload_len) {
+            ++sock->ack;
+            sock->state = TCP_STATE_CLOSE_WAIT;
+        }
+        if (payload_len || (flags & TCP_FLAG_FIN))
+            tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
+        wait_queue_wake_all(&sock->recv_waitqueue);
+        native_poll_notify();
+        return;
+    }
     
     /* === Machine à états TCP === */
     switch (sock->state) {
         case TCP_STATE_LISTEN:
             /* En écoute - on attend un SYN */
             if (flags & TCP_FLAG_SYN) {
+                if (sock->native_posix) {
+                    unsigned pending = 0;
+                    for (int i = 0; i < tcp_socket_capacity; ++i) {
+                        tcp_socket_t* c = &tcp_sockets[i];
+                        if (c != sock && c->in_use && c->native_posix &&
+                            c->local_port == sock->local_port &&
+                            !(c->flags & TCP_SOCK_ACCEPTED)) ++pending;
+                    }
+                    if (pending >= sock->native_backlog) return;
+                }
                 KLOG_INFO("TCP", "Connection request received");
                 
                 /* NOUVEAU: Créer immédiatement un socket client pour cette connexion.
@@ -667,6 +751,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 
                 /* Configurer le socket client */
                 client_sock->local_port = sock->local_port;
+                client_sock->native_posix = sock->native_posix;
+                client_sock->bound_address = sock->bound_address;
                 for (int i = 0; i < 4; i++) {
                     client_sock->remote_ip[i] = ip_hdr->src_ip[i];
                 }
@@ -820,11 +906,16 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
                 KLOG_INFO("TCP", "Connection closing (FIN received)");
                 
                 /* ACK le FIN */
-                sock->ack = seq_num + 1;
+                sock->ack = seq_num + (uint32_t)(len - header_len) + 1;
                 tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0);
                 
                 /* Passer en CLOSE_WAIT */
                 sock->state = TCP_STATE_CLOSE_WAIT;
+                if (sock->native_posix) {
+                    wait_queue_wake_all(&sock->recv_waitqueue);
+                    wait_queue_wake_all(&sock->state_waitqueue);
+                    break;
+                }
                 
                 /* Pour simplifier, on ferme directement */
                 /* Dans une vraie implémentation, on attendrait que l'app ferme */
@@ -916,6 +1007,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
             KLOG_WARN("TCP", "Packet in unexpected state");
             break;
     }
+    native_poll_notify();
 }
 
 /* ===========================================
@@ -1013,7 +1105,7 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len)
     if (sock == NULL || buf == NULL || len <= 0) {
         return -1;
     }
-    
+
     /* Vérifier que le socket est connecté */
     if (sock->state != TCP_STATE_ESTABLISHED) {
         KLOG_ERROR("TCP", "Cannot send: socket not connected");
@@ -1026,6 +1118,20 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* buf, int len)
     tcp_send_packet(sock, TCP_FLAG_ACK | TCP_FLAG_PSH, (uint8_t*)buf, len);
     
     return len;
+}
+
+int tcp_send_checked(tcp_socket_t* sock, const uint8_t* buf, int len)
+{
+    if (!sock || !buf || len <= 0) return -EINVAL;
+    if (sock->socket_error) return -sock->socket_error;
+    if (sock->write_shutdown) return -EPIPE;
+    if (sock->state != TCP_STATE_ESTABLISHED &&
+        sock->state != TCP_STATE_CLOSE_WAIT) return -ENOTCONN;
+    /* MTU Ethernet : 1500 - IPv4(20) - TCP(20). */
+    if (len > 1460) len = 1460;
+    uint32_t before = sock->seq;
+    tcp_send_packet(sock, TCP_FLAG_ACK | TCP_FLAG_PSH, (uint8_t*)buf, len);
+    return sock->seq != before ? len : -EHOSTUNREACH;
 }
 
 /**

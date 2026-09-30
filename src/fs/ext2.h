@@ -146,6 +146,7 @@ typedef struct ext2_dir_entry {
  * Structure de contexte Ext2
  * =========================================== */
 typedef struct ext2_fs {
+    vfs_mount_t* mount;
     ext2_superblock_t superblock;
     ext2_group_desc_t* group_descs;
     uint32_t block_size;            /* Taille d'un bloc en octets */

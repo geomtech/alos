@@ -1,0 +1,121 @@
+diff --git a/base/files/file_util.cc b/base/files/file_util.cc
+index 30bdcc0c..4e25e146 100644
+--- a/base/files/file_util.cc
++++ b/base/files/file_util.cc
+@@ -21,7 +21,9 @@
+ #include <stdio.h>
+ 
+ #include <algorithm>
++#if !BUILDFLAG(IS_ALOS)
+ #include <fstream>
++#endif
+ #include <limits>
+ #include <memory>
+ #include <utility>
+@@ -229,6 +231,24 @@ bool CopyFileContents(File& infile, File& outfile) {
+ }
+ 
+ bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
++#if BUILDFLAG(IS_ALOS)
++  ScopedFILE file1(fopen(filename1.value().c_str(), "rb"));
++  ScopedFILE file2(fopen(filename2.value().c_str(), "rb"));
++  if (!file1 || !file2) {
++    return false;
++  }
++  char buffer1[2056], buffer2[2056];
++  do {
++    const size_t count1 = fread(buffer1, 1, sizeof(buffer1), file1.get());
++    const size_t count2 = fread(buffer2, 1, sizeof(buffer2), file2.get());
++    if (ferror(file1.get()) || ferror(file2.get()) ||
++        (feof(file1.get()) != feof(file2.get())) || count1 != count2 ||
++        memcmp(buffer1, buffer2, count1)) {
++      return false;
++    }
++  } while (!feof(file1.get()) || !feof(file2.get()));
++  return true;
++#else
+   // We open the file in binary format even if they are text files because
+   // we are just comparing that bytes are exactly same in both files and not
+   // doing anything smart with text formatting.
+@@ -265,9 +285,73 @@ bool ContentsEqual(const FilePath& filename1, const FilePath& filename2) {
+   file1.close();
+   file2.close();
+   return true;
++#endif
+ }
+ 
+ bool TextContentsEqual(const FilePath& filename1, const FilePath& filename2) {
++#if BUILDFLAG(IS_ALOS)
++  ScopedFILE file1(fopen(filename1.value().c_str(), "r"));
++  ScopedFILE file2(fopen(filename2.value().c_str(), "r"));
++  if (!file1 || !file2) {
++    return false;
++  }
++
++  // Defer CR runs until their following byte is known, without a line-size cap.
++  struct LineReader {
++    FILE* file;
++    size_t carriage_returns = 0;
++    int next = EOF;
++    bool has_next = false;
++    bool failed = false;
++
++    int Read() {
++      if (carriage_returns) {
++        --carriage_returns;
++        return '\r';
++      }
++      if (has_next) {
++        has_next = false;
++        return next;
++      }
++      int c = fgetc(file);
++      while (c == '\r') {
++        if (carriage_returns == std::numeric_limits<size_t>::max()) {
++          failed = true;
++          return EOF;
++        }
++        ++carriage_returns;
++        c = fgetc(file);
++      }
++      if (c == '\n' || c == EOF) {
++        carriage_returns = 0;
++        return c;
++      }
++      if (carriage_returns) {
++        next = c;
++        has_next = true;
++        --carriage_returns;
++        return '\r';
++      }
++      return c;
++    }
++  };
++  LineReader reader1{file1.get()}, reader2{file2.get()};
++  do {
++    int c1, c2;
++    do {
++      c1 = reader1.Read();
++      c2 = reader2.Read();
++      if (reader1.failed || reader2.failed || ferror(file1.get()) ||
++          ferror(file2.get()) || c1 != c2) {
++        return false;
++      }
++    } while (c1 != '\n' && c1 != EOF);
++    if (feof(file1.get()) != feof(file2.get())) {
++      return false;
++    }
++  } while (!feof(file1.get()) || !feof(file2.get()));
++  return true;
++#else
+ #if BUILDFLAG(IS_WIN)
+   std::ifstream file1(filename1.value().c_str(), std::ios::in);
+   std::ifstream file2(filename2.value().c_str(), std::ios::in);
+@@ -313,6 +397,7 @@ bool TextContentsEqual(const FilePath& filename1, const FilePath& filename2) {
+   } while (!file1.eof() || !file2.eof());
+ 
+   return true;
++#endif
+ }
+ 
+ bool ReadStreamToString(FILE* stream, std::string* contents) {

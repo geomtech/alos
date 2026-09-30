@@ -47,6 +47,16 @@ ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupt
 # Kernel core
 KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c src/kernel/uaccess.c src/kernel/shared_memory.c src/kernel/ipc.c src/kernel/display.c
 KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o src/kernel/uaccess.o src/kernel/shared_memory.o src/kernel/ipc.o src/kernel/display.o src/kernel/tls.o
+KERNEL_SRC += src/kernel/system_identity.c
+KERNEL_OBJ += src/kernel/system_identity.o
+KERNEL_SRC += src/kernel/system_info.c
+KERNEL_OBJ += src/kernel/system_info.o
+KERNEL_SRC += src/kernel/native_io.c src/kernel/resource.c
+KERNEL_OBJ += src/kernel/native_io.o src/kernel/resource.o
+KERNEL_SRC += src/kernel/path_ops.c
+KERNEL_OBJ += src/kernel/path_ops.o
+KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/entropy.c src/drivers/virtio_rng.c
+KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/entropy.o src/drivers/virtio_rng.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
@@ -356,7 +366,19 @@ fs_root: disk_structure userland
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
 	@cp -v src/userland/mmap-test fs_root/bin/
-	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/strtod-test src/userland/printf-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
+	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/pthread-rwlock-test src/userland/pthread-attr-test src/userland/thread-id-test src/userland/calendar-test src/userland/libc-common-test src/userland/fd-io-test src/userland/fs-metadata-test src/userland/strtod-test src/userland/printf-test src/userland/wide-format-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
+	@cp -v src/userland/env-test src/userland/uname-test fs_root/bin/
+	@cp -v src/userland/posix-file-test src/userland/pipe-test src/userland/socket-test src/userland/inet-test src/userland/entropy-test fs_root/bin/
+	@cp -v src/userland/stdio-file-test fs_root/bin/
+	@cp -v src/userland/positional-io-test fs_root/bin/
+	@cp -v src/userland/path-match-test fs_root/bin/
+	@cp -v src/userland/mincore-test fs_root/bin/
+	@cp -v src/userland/system-info-test fs_root/bin/
+	@cp -v src/userland/vector-io-test src/userland/shared-memory-test src/userland/resource-test src/userland/native-compat-test fs_root/bin/
+	@cp -v src/userland/fs-attributes-test fs_root/bin/
+	@cp -v src/userland/msync-test fs_root/bin/
+	@cp -v src/userland/process-control-test fs_root/bin/
+	@cp -v src/userland/path-ops-test fs_root/bin/
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
 	@cp -v src/userland/gui-demo fs_root/bin/gui-demo

@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdlib.h>
 
 static FILE standard_input = {STDIN_FILENO, 0, 0};
 static FILE standard_output = {STDOUT_FILENO, 0, 0};
@@ -58,6 +59,36 @@ int vsnprintf(char *str, size_t size, const char *format, va_list arguments) {
 
 int vsprintf(char *str, const char *format, va_list arguments) {
   return vsnprintf(str, (size_t)-1, format, arguments);
+}
+
+int vasprintf(char **out, const char *format, va_list arguments) {
+  if (!out || !format) { errno = EINVAL; return -1; }
+  *out = NULL;
+  va_list copy;
+  va_copy(copy, arguments);
+  int length = vsnprintf(NULL, 0, format, copy);
+  va_end(copy);
+  if (length < 0) return -1;
+  char *buffer = malloc((size_t)length + 1);
+  if (!buffer) { errno = ENOMEM; return -1; }
+  va_copy(copy, arguments);
+  int result = vsnprintf(buffer, (size_t)length + 1, format, copy);
+  va_end(copy);
+  if (result < 0 || result > length) {
+    free(buffer);
+    if (result >= 0) errno = EOVERFLOW;
+    return -1;
+  }
+  *out = buffer;
+  return result;
+}
+
+int asprintf(char **out, const char *format, ...) {
+  va_list arguments;
+  va_start(arguments, format);
+  int result = vasprintf(out, format, arguments);
+  va_end(arguments);
+  return result;
 }
 
 int sprintf(char *str, const char *format, ...) {

@@ -17,6 +17,8 @@
 #include "../arch/x86_64/cpu.h"
 #include "tls.h"
 #include "thread_lifecycle.h"
+#include "../fs/pipe.h"
+#include "native_network_cleanup.h"
 
 /* Fonction ASM pour sauter vers un thread user (premier switch) */
 extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
@@ -1171,7 +1173,8 @@ void scheduler_tick(void) {
 
   uint64_t now = timer_get_ticks();
 
-  /* CPU accounting: increment CPU time for running thread */
+  /* Comptabilisation unique au tick PIT ; les switches ne l'ajoutent pas
+   * une seconde fois. Le temps bloque n'appartient pas au thread. */
   if (g_current_thread && g_current_thread != g_idle_thread) {
     g_current_thread->cpu_ticks++;
   }
@@ -1336,12 +1339,6 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame) {
   /* On va changer de thread ! */
 
   uint64_t now = timer_get_ticks();
-
-  /* CPU accounting: finalize current thread's run time */
-  if (current->run_start_tick > 0) {
-    uint64_t run_duration = now - current->run_start_tick;
-    current->cpu_ticks += run_duration;
-  }
 
   /* Boost demotion: if current thread was boosted, demote it back */
   if (current->is_boosted) {
@@ -1552,12 +1549,6 @@ void scheduler_schedule(void) {
 
   uint64_t now = timer_get_ticks();
 
-  /* CPU accounting: finalize current thread's run time */
-  if (current && current->run_start_tick > 0) {
-    uint64_t run_duration = now - current->run_start_tick;
-    current->cpu_ticks += run_duration;
-  }
-
   /* Boost demotion: if current thread was boosted, demote it back */
   if (current && current->is_boosted) {
     current->is_boosted = false;
@@ -1707,6 +1698,9 @@ static void reaper_thread_func(void *arg) {
     /* Clean up the zombie */
     KLOG_INFO("REAPER", "Cleaning up zombie thread:");
     KLOG_INFO("REAPER", zombie->name);
+
+    pipe_thread_cleanup(zombie);
+    native_network_thread_cleanup(zombie);
 
     /* Si le thread a un processus owner, vérifier s'il faut le nettoyer */
     process_t *orphan_process = NULL;

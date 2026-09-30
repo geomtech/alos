@@ -1,0 +1,25 @@
+diff --git a/third_party/abseil-cpp/absl/base/internal/thread_identity.cc b/third_party/abseil-cpp/absl/base/internal/thread_identity.cc
+--- a/third_party/abseil-cpp/absl/base/internal/thread_identity.cc
++++ b/third_party/abseil-cpp/absl/base/internal/thread_identity.cc
+@@ -16,8 +16,8 @@
+ 
+ #if !defined(_WIN32) || defined(__MINGW32__)
+ #include <pthread.h>
+-#ifndef __wasi__
+-// WASI does not provide this header, either way we disable use
++#if !defined(__wasi__) && !defined(__ALOS__)
++// WASI and ALOS do not provide this header, either way we disable use
+ // of signals with it below.
+ #include <signal.h>
+ #endif
+@@ -85,8 +85,8 @@
+                   reclaimer);
+ 
+ #if defined(__wasi__) || defined(__EMSCRIPTEN__) || defined(__MINGW32__) || \
+-    defined(__hexagon__)
+-  // Emscripten, WASI and MinGW pthread implementations does not support
++    defined(__hexagon__) || defined(__ALOS__)
++  // ALOS, Emscripten, WASI and MinGW pthread implementations do not support
+   // signals. See
+   // https://kripken.github.io/emscripten-site/docs/porting/pthreads.html for
+   // more information.

@@ -17,6 +17,9 @@ int vm_mprotect(struct process *process, uint64_t address, uint64_t length,
                  int prot);
 int vm_madvise(struct process *process, uint64_t address, uint64_t length,
                int advice);
+int vm_msync(struct process *process, uint64_t address, uint64_t length, int flags);
+int vm_mincore(struct process *process, uint64_t address, uint64_t length,
+                unsigned char *vector);
 typedef enum {
   VM_FAULT_UNHANDLED,
   VM_FAULT_HANDLED,

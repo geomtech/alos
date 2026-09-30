@@ -1,0 +1,15 @@
+{
+  "version": 0,
+  "roots": [
+    {
+      "type": "file",
+      "name": "/chromium/base/message_loop/message_pump_for_io.h",
+      "external-contents": "/alos/.copilot-network/validation/base/message_loop/message_pump_for_io.h"
+    },
+    {
+      "type": "file",
+      "name": "/chromium/base/message_loop/message_pump_for_ui.h",
+      "external-contents": "/alos/.copilot-network/validation/base/message_loop/message_pump_for_ui.h"
+    }
+  ]
+}

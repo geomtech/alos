@@ -1,0 +1,62 @@
+diff --git a/base/files/file_util_posix.cc b/base/files/file_util_posix.cc
+index 7ea57849..93ddfd67 100644
+--- a/base/files/file_util_posix.cc
++++ b/base/files/file_util_posix.cc
+@@ -77,7 +77,7 @@
+ #include "base/os_compat_android.h"
+ #endif
+ 
+-#if !BUILDFLAG(IS_IOS)
++#if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ALOS)
+ #include <grp.h>
+ #endif
+ 
+diff --git a/base/process/set_process_title.cc b/base/process/set_process_title.cc
+index aacd4a84..9d7bbeb5 100644
+--- a/base/process/set_process_title.cc
++++ b/base/process/set_process_title.cc
+@@ -15,6 +15,10 @@
+ #include <stddef.h>
+ 
+ #include "base/process/set_process_title.h"
++#if BUILDFLAG(IS_ALOS)
++#include <sys/alos_process.h>
++#include "base/logging.h"
++#endif
+ 
+ #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_SOLARIS)
+ #include <limits.h>
+@@ -51,7 +55,9 @@ void SetProcessTitleFromCommandLine(const char** main_argv) {
+   // by spaces. We can't actually keep them separate due to the way the
+   // setproctitle() function works.
+   std::string title;
++#if !BUILDFLAG(IS_ALOS)
+   bool have_argv0 = false;
++#endif
+ 
+ #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+   DCHECK_EQ(base::PlatformThread::CurrentId(),
+@@ -95,6 +101,9 @@ void SetProcessTitleFromCommandLine(const char** main_argv) {
+ 
+   const base::CommandLine* command_line =
+       base::CommandLine::ForCurrentProcess();
++#if BUILDFLAG(IS_ALOS)
++  title = command_line->GetProgram().BaseName().value();
++#endif
+   for (size_t i = 1; i < command_line->argv().size(); ++i) {
+     if (!title.empty()) {
+       title += " ";
+@@ -102,7 +111,13 @@ void SetProcessTitleFromCommandLine(const char** main_argv) {
+     title += command_line->argv()[i];
+   }
+   // Disable prepending argv[0] with '-' if we prepended it ourselves above.
++#if BUILDFLAG(IS_ALOS)
++  if (alos_set_process_title(title.c_str()) != 0) {
++    PLOG(ERROR) << "ALOS could not set its bounded native process debug name";
++  }
++#else
+   setproctitle(have_argv0 ? "-%s" : "%s", title.c_str());
++#endif
+ }
+ 
+ #else

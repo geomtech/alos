@@ -1,0 +1,7 @@
+#ifndef ALOS_ENTROPY_ABI_H
+#define ALOS_ENTROPY_ABI_H
+
+#define ALOS_SYS_GETENTROPY 261
+#define ALOS_GETENTROPY_MAX 256
+
+#endif
