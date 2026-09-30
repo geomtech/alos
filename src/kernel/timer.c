@@ -354,6 +354,10 @@ timestamp_t timestamp_now(void)
     return ts;
 }
 
+uint64_t timer_get_realtime_ms(void) {
+    return (uint64_t)g_boot_timestamp * 1000 + timer_get_uptime_ms();
+}
+
 void datetime_format(const datetime_t* dt, char* buffer, int format)
 {
     /* Helper pour écrire un nombre à 2 chiffres */

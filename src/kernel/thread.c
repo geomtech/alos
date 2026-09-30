@@ -6,12 +6,17 @@
 #include "../include/string.h"
 #include "../mm/kheap.h"
 #include "../mm/vmm.h"
+#include "../mm/vm.h"
 #include "console.h"
 #include "klog.h"
 #include "process.h"
 #include "sync.h"
 #include "timer.h"
 #include "syscall.h"
+#include "../arch/x86_64/xstate.h"
+#include "../arch/x86_64/cpu.h"
+#include "tls.h"
+#include "thread_lifecycle.h"
 
 /* Fonction ASM pour sauter vers un thread user (premier switch) */
 extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
@@ -22,6 +27,14 @@ extern void jump_to_user(uint64_t rsp, uint64_t rip, uint64_t cr3);
 
 /* Thread actuellement en cours d'exécution */
 static thread_t *g_current_thread = NULL;
+static thread_t *g_timeout_list;
+
+static void timeout_remove(thread_t *thread) {
+  thread_t **link = &g_timeout_list;
+  while (*link && *link != thread) link = &(*link)->timeout_next;
+  if (*link) *link = thread->timeout_next;
+  thread->timeout_next = NULL;
+}
 
 /* Run queues par priorité */
 static thread_t *g_run_queues[THREAD_PRIORITY_COUNT] = {NULL};
@@ -183,6 +196,8 @@ bool wait_queue_wait_timeout(wait_queue_t *queue,
   /* Setup timeout if specified */
   if (timeout_ms > 0) {
     thread->timeout_tick = timer_get_ticks() + timeout_ms;
+    thread->timeout_next = g_timeout_list;
+    g_timeout_list = thread;
   } else {
     thread->timeout_tick = 0; /* No timeout */
   }
@@ -193,6 +208,7 @@ bool wait_queue_wait_timeout(wait_queue_t *queue,
 
   /* Vérifier le prédicat avant de bloquer */
   while (!predicate || !predicate(context)) {
+    if (thread->should_terminate) break;
     /* Check if we timed out while checking predicate */
     if (thread->wait_result == -ETIMEDOUT) {
       break;
@@ -209,6 +225,7 @@ bool wait_queue_wait_timeout(wait_queue_t *queue,
 
     /* Back from sleep - check what happened */
     spinlock_lock(&queue->lock);
+    if (thread->should_terminate) break;
 
     /* If we timed out, exit the loop */
     if (thread->wait_result == -ETIMEDOUT) {
@@ -216,6 +233,7 @@ bool wait_queue_wait_timeout(wait_queue_t *queue,
     }
 
     /* Re-vérifier le prédicat */
+    if (!predicate) break;
     if (predicate && predicate(context)) {
       break;
     }
@@ -224,6 +242,7 @@ bool wait_queue_wait_timeout(wait_queue_t *queue,
   spinlock_unlock(&queue->lock);
 
   /* Cleanup timeout state */
+  timeout_remove(thread);
   thread->timeout_tick = 0;
   thread->current_wait_queue = NULL;
 
@@ -312,6 +331,13 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
   }
 
   /* Initialiser la structure */
+  memset(thread, 0, sizeof(*thread));
+  thread->xstate = xstate_create();
+  if (!thread->xstate) {
+    kfree(stack);
+    kfree(thread);
+    return NULL;
+  }
   thread->tid = g_next_tid++;
   if (name) {
     safe_strcpy(thread->name, name, THREAD_NAME_MAX);
@@ -319,6 +345,7 @@ thread_t *thread_create(const char *name, thread_entry_t entry, void *arg,
     thread->name[0] = '\0';
   }
   thread->magic = THREAD_MAGIC;
+  thread->errno_address = 0;
 
   thread->owner = NULL; /* Thread kernel, pas de process parent */
 
@@ -501,6 +528,12 @@ thread_t *thread_create_user(process_t *proc, const char *name,
   }
 
   /* Initialiser la structure */
+  memset(thread, 0, sizeof(*thread));
+  thread->xstate = xstate_create();
+  if (!thread->xstate) {
+    kfree(thread);
+    return NULL;
+  }
   thread->tid = g_next_tid++;
   if (name) {
     safe_strcpy(thread->name, name, THREAD_NAME_MAX);
@@ -508,6 +541,7 @@ thread_t *thread_create_user(process_t *proc, const char *name,
     thread->name[0] = '\0';
   }
   thread->magic = THREAD_MAGIC;
+  thread->errno_address = 0;
 
   thread->owner = proc;
 
@@ -641,6 +675,18 @@ thread_t *thread_create_user(process_t *proc, const char *name,
   KLOG_INFO_HEX("THREAD", "RSP0 (high): ", (uint32_t)(thread->rsp0 >> 32));
   KLOG_INFO_HEX("THREAD", "RSP0 (low): ", (uint32_t)thread->rsp0);
 
+  if (tls_setup_thread(proc, thread) != 0) {
+    KLOG_ERROR("THREAD", "Unable to initialize ELF TLS");
+    xstate_destroy(thread->xstate);
+    kfree(thread);
+    return NULL;
+  }
+  if (thread_completion_create(proc, thread)) {
+    vm_munmap(proc, thread->tls_mapping, thread->tls_mapping_size);
+    xstate_destroy(thread->xstate);
+    kfree(thread);
+    return NULL;
+  }
   /* Ajouter au scheduler */
   scheduler_enqueue(thread);
 
@@ -665,6 +711,17 @@ thread_t *thread_create_user_from_frame(process_t *proc, const char *name,
   interrupt_frame_t *child_frame = (interrupt_frame_t *)thread->rsp;
   memcpy(child_frame, frame, sizeof(*child_frame));
   child_frame->rax = 0;
+  thread_t *parent = thread_current();
+  vm_munmap(proc, thread->tls_mapping, thread->tls_mapping_size);
+  thread->fs_base = parent->fs_base;
+  thread->tls_mapping = parent->tls_mapping;
+  thread->tls_mapping_size = parent->tls_mapping_size;
+  uint64_t tid = thread->tid;
+  if (thread->fs_base)
+    vmm_copy_to_dir((page_directory_t *)proc->pml4,
+                     thread->fs_base + 24, &tid, sizeof(tid));
+  xstate_save(parent->xstate);
+  memcpy(thread->xstate, parent->xstate, PAGE_SIZE);
   return thread;
 }
 
@@ -746,6 +803,14 @@ bool thread_kill(thread_t *thread, int status) {
 
   thread->should_terminate = 1;
   thread->exit_status = status;
+  timeout_remove(thread);
+  if (thread->waiting_queue) wait_queue_remove(thread->waiting_queue, thread);
+  if (thread->state == THREAD_STATE_SLEEPING) {
+    thread_t **link = &g_sleep_queue;
+    while (*link && *link != thread) link = &(*link)->sched_next;
+    if (*link) *link = thread->sched_next;
+    thread->sched_next = NULL;
+  }
 
   /* Si le thread est bloqué ou en sleep, le réveiller */
   if (thread->state == THREAD_STATE_BLOCKED ||
@@ -1013,6 +1078,13 @@ void scheduler_init(void) {
   main_thread->tid = g_next_tid++;
   safe_strcpy(main_thread->name, "main", THREAD_NAME_MAX);
   main_thread->magic = THREAD_MAGIC;
+  main_thread->errno_address = 0;
+  main_thread->xstate = xstate_create();
+  if (!main_thread->xstate) {
+    KLOG_ERROR("SCHED", "Cannot allocate initial CPU state");
+    for (;;) __asm__ volatile("cli; hlt");
+  }
+  xstate_save(main_thread->xstate);
   main_thread->owner = NULL;
   main_thread->state = THREAD_STATE_RUNNING;
   main_thread->should_terminate = 0;
@@ -1199,7 +1271,8 @@ static thread_t *scheduler_pick_next_nolock(void) {
 
 /* Ajoute un thread à la run queue sans prendre le lock */
 static void scheduler_enqueue_nolock(thread_t *thread) {
-  if (!thread || thread->state == THREAD_STATE_RUNNING)
+  if (!thread || thread == g_idle_thread ||
+      thread->state == THREAD_STATE_RUNNING)
     return;
 
   thread_priority_t pri = thread->priority;
@@ -1207,13 +1280,12 @@ static void scheduler_enqueue_nolock(thread_t *thread) {
     pri = THREAD_PRIORITY_NORMAL;
   }
 
-  thread->sched_prev = NULL;
-  thread->sched_next = g_run_queues[pri];
-
-  if (g_run_queues[pri]) {
-    g_run_queues[pri]->sched_prev = thread;
-  }
-  g_run_queues[pri] = thread;
+  thread->sched_next = NULL;
+  thread_t *tail = g_run_queues[pri];
+  while (tail && tail->sched_next) tail = tail->sched_next;
+  thread->sched_prev = tail;
+  if (tail) tail->sched_next = thread;
+  else g_run_queues[pri] = thread;
 
   if (thread->state != THREAD_STATE_RUNNING) {
     thread->state = THREAD_STATE_READY;
@@ -1223,37 +1295,8 @@ static void scheduler_enqueue_nolock(thread_t *thread) {
 uint64_t scheduler_preempt(interrupt_frame_t *frame) {
   if (!g_scheduler_active || !g_current_thread)
     return 0;
-
-  /* ========================================
-   * IMPORTANT: Ne pas préempter les threads user !
-   * ========================================
-   *
-   * Si l'IRQ a interrompu un thread user (Ring 3), on ne peut pas
-   * faire de context switch car le format du frame sauvegardé par
-   * l'IRQ (avec SS/ESP_user) n'est pas compatible avec switch_task.
-   *
-   * Les threads user ne peuvent céder le CPU que via les syscalls
-   * bloquants qui appellent scheduler_schedule().
-   *
-   * On détecte Ring 3 en regardant le CS sauvegardé sur la stack.
-   *
-   * IMPORTANT: On doit AUSSI ne pas préempter si le thread actuel est
-   * un thread user, MÊME s'il est temporairement en Ring 0 (dans un syscall).
-   * Sinon, on pourrait corrompre son contexte pendant le syscall.
-   */
-  if ((frame->cs & 0x03) == 3 || g_current_thread->owner != NULL) {
-    /* On était en Ring 3 OU c'est un thread user dans un syscall - ne pas préempter */
-    return 0;
-  }
-
-  /* Réveiller les threads endormis */
-  scheduler_wake_sleeping();
-
-  /* Décrémenter le time slice */
-  if (g_current_thread != g_idle_thread &&
-      g_current_thread->time_slice_remaining > 0) {
-    g_current_thread->time_slice_remaining--;
-  }
+  if ((frame->cs & 3) == 3 && g_current_thread->should_terminate)
+    thread_exit(g_current_thread->exit_status);
 
   /* Vérifier si on doit préempter */
   thread_t *current = g_current_thread;
@@ -1275,33 +1318,13 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame) {
     return 0; /* Pas encore épuisé */
   }
 
-  /* Essayer de trouver un autre thread KERNEL.
-   * Les threads user ne peuvent pas être préemptés via IRQ car le format
-   * de leur contexte (sauvegardé par switch_task) n'est pas compatible
-   * avec le format attendu par l'IRQ handler (popa + iret vers Ring 3).
-   *
-   * IMPORTANT: On ne doit PAS retirer les threads user de la queue ici,
-   * sinon ils sont perdus ! On parcourt la queue sans modifier.
-   */
+  /* Ne pas interrompre les sections kernel historiques non preempt-safe.
+   * Les frames IRQ Ring 3 et switch_task sont desormais identiques. */
+  if ((frame->cs & 3) != 3 && current != g_idle_thread) return 0;
   spinlock_lock(&g_scheduler_lock);
 
-  /* Chercher un thread KERNEL dans les run queues (sans retirer) */
-  thread_t *next = NULL;
-  for (int pri = THREAD_PRIORITY_COUNT - 1;
-       pri >= THREAD_PRIORITY_IDLE && !next; pri--) {
-    thread_t *t = g_run_queues[pri];
-    while (t) {
-      /* Accepter seulement les threads kernel (owner == NULL) */
-      if (t->owner == NULL && t != current) {
-        next = t;
-        break;
-      }
-      t = t->sched_next;
-    }
-  }
-
-  if (!next) {
-    /* Aucun thread kernel disponible, continuer avec le thread actuel */
+  thread_t *next = scheduler_pick_next_nolock();
+  if (!next || next == current) {
     spinlock_unlock(&g_scheduler_lock);
     /* Recharger le time slice si épuisé */
     if (current->time_slice_remaining == 0) {
@@ -1309,19 +1332,6 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame) {
     }
     return 0;
   }
-
-  /* Retirer le thread sélectionné de sa queue */
-  thread_priority_t pri = next->priority;
-  if (next->sched_prev) {
-    next->sched_prev->sched_next = next->sched_next;
-  } else {
-    g_run_queues[pri] = next->sched_next;
-  }
-  if (next->sched_next) {
-    next->sched_next->sched_prev = next->sched_prev;
-  }
-  next->sched_next = NULL;
-  next->sched_prev = NULL;
 
   /* On va changer de thread ! */
 
@@ -1359,14 +1369,16 @@ uint64_t scheduler_preempt(interrupt_frame_t *frame) {
 
   spinlock_unlock(&g_scheduler_lock);
 
-  /* Mettre à jour le TSS.RSP0 seulement pour les threads kernel.
-   * Ne JAMAIS mettre à jour TSS.RSP0 quand on switch vers un thread user
-   * qui est déjà dans le kernel (au milieu d'un syscall).
-   * Les threads user utilisent le RSP0 configuré lors de leur premier switch.
-   */
-  if (next->owner == NULL && next->rsp0 != 0) {
+  current_process = next->owner ? next->owner : idle_process;
+  if (next->rsp0 != 0) {
     tss_set_rsp0(next->rsp0);
   }
+  xstate_save(current->xstate);
+  current->fs_base = rdmsr(0xC0000100);
+  xstate_restore(next->xstate);
+  wrmsr(0xC0000100, next->fs_base);
+  next->first_switch = false;
+  write_cr3(next->owner ? next->owner->cr3 : vmm_get_kernel_cr3());
 
   /* Sauvegarder l'ESP du thread préempté.
    * Le frame pointe vers les registres sauvegardés sur la stack.
@@ -1445,18 +1457,7 @@ void scheduler_enqueue(thread_t *thread) {
     pri = THREAD_PRIORITY_NORMAL;
   }
 
-  /* Ajouter en fin de queue (FIFO dans la même priorité) */
-  thread->sched_prev = NULL;
-  thread->sched_next = g_run_queues[pri];
-
-  if (g_run_queues[pri]) {
-    g_run_queues[pri]->sched_prev = thread;
-  }
-  g_run_queues[pri] = thread;
-
-  if (thread->state != THREAD_STATE_RUNNING) {
-    thread->state = THREAD_STATE_READY;
-  }
+  scheduler_enqueue_nolock(thread);
 
   spinlock_irqrestore(&g_scheduler_lock, flags);
 }
@@ -1578,6 +1579,8 @@ void scheduler_schedule(void) {
   next->context_switches++;
 
   /* Basculer vers le nouveau thread */
+  next->time_slice_remaining = scheduler_get_time_slice(next);
+  next->preempt_pending = false;
   next->state = THREAD_STATE_RUNNING;
   g_current_thread = next;
 
@@ -1629,6 +1632,12 @@ void scheduler_schedule(void) {
    * Ce format est également celui utilisé par les threads user.
    */
   if (current) {
+    xstate_save(current->xstate);
+    current->fs_base = rdmsr(0xC0000100);
+  }
+  xstate_restore(next->xstate);
+  wrmsr(0xC0000100, next->fs_base);
+  if (current) {
     switch_task(&current->rsp, next->rsp, new_cr3);
   } else {
     /* Premier switch - utiliser un RSP dummy */
@@ -1646,61 +1655,21 @@ void scheduler_schedule(void) {
  * ======================================== */
 
 void check_thread_timeouts(void) {
-  uint64_t now = timer_get_ticks();
-  (void)now;
-
-  /* We need to check all blocked threads with timeouts.
-   * For now, we iterate through all run queues and check blocked threads.
-   * In a more complete implementation, we'd have a separate timeout queue.
-   */
-
-  /* Note: Blocked threads are NOT in run queues - they're in wait queues.
-   * We need to check all threads that have a timeout set.
-   * This is done by storing current_wait_queue pointer in thread_t.
-   *
-   * For efficiency, we iterate over known places:
-   * 1. The scheduler_wake_sleeping already handles sleep timeouts
-   * 2. We need to check threads blocked on wait queues
-   *
-   * Since we don't have a global list of all threads, we rely on
-   * the timeout being checked when the thread is in a wait queue.
-   * The wait queue functions check timeout_tick.
-   *
-   * A better approach: maintain a timeout heap, but for simplicity,
-   * we scan threads that have timeout_tick set and are BLOCKED.
-   */
-
-  /* For now, we check threads that are blocked and have a timeout set.
-   * This requires iterating - in a production kernel, use a timer wheel.
-   *
-   * Optimization: Keep a separate sorted timeout list.
-   * For now, blocked threads with timeout are woken by their wait queues
-   * checking thread->wait_result after scheduler_schedule returns.
-   */
-
-  /* Simple implementation: Check all queues for timed-out blocked threads
-   * Note: Called from IRQ context, use IRQ-safe spinlock for safety */
-  uint64_t timeout_flags = spinlock_irqsave(&g_scheduler_lock);
-
-  /* Scan all priority queues - but blocked threads aren't here!
-   * Blocked threads are in wait queues, not run queues.
-   * We need a different approach: check when the thread is about to sleep.
-   * The check happens in wait_queue_wait_timeout.
-   */
-
-  spinlock_irqrestore(&g_scheduler_lock, timeout_flags);
-
-  /* Alternative: use a global thread list or timeout list.
-   * For now, the timeout mechanism works as follows:
-   * 1. Thread calls wait_queue_wait_timeout with timeout_ms
-   * 2. Thread sets timeout_tick = now + timeout_ms
-   * 3. Thread goes to sleep (scheduler_schedule)
-   * 4. When scheduler_tick runs, we need to wake threads whose timeout expired
-   * 5. The woken thread finds wait_result = -ETIMEDOUT
-   *
-   * Implementation: Add blocked threads to sleep queue with wake_tick =
-   * timeout_tick Then scheduler_wake_sleeping will wake them automatically!
-   */
+  thread_t *thread = g_timeout_list;
+  uint64_t deadline = timer_get_ticks();
+  while (thread) {
+    thread_t *next = thread->timeout_next;
+    if (thread->timeout_tick <= deadline) {
+      timeout_remove(thread);
+      if (thread->state == THREAD_STATE_BLOCKED && thread->waiting_queue) {
+        wait_queue_remove(thread->waiting_queue, thread);
+        thread->wait_result = -ETIMEDOUT;
+        thread->state = THREAD_STATE_READY;
+        scheduler_enqueue(thread);
+      }
+    }
+    thread = next;
+  }
 }
 
 /* ========================================
@@ -1743,9 +1712,27 @@ static void reaper_thread_func(void *arg) {
     process_t *orphan_process = NULL;
     if (zombie->owner) {
       process_t *proc = zombie->owner;
+      thread_t **link = &proc->thread_list;
+      while (*link && *link != zombie) link = &(*link)->proc_next;
+      if (*link) *link = zombie->proc_next;
+      if (proc->main_thread == zombie) proc->main_thread = NULL;
 
       /* Décrémenter le compteur de threads du processus */
+      if (proc->thread_count > 1 && zombie->errno_address != 0) {
+        preempt_disable();
+        if (vm_munmap(proc, zombie->errno_address, PAGE_SIZE) != 0) {
+          KLOG_ERROR("REAPER", "Unable to release thread errno mapping");
+        }
+        preempt_enable();
+      }
+      if (proc->thread_count > 1 && zombie->tls_mapping != 0) {
+        preempt_disable();
+        if (vm_munmap(proc, zombie->tls_mapping, zombie->tls_mapping_size))
+          KLOG_ERROR("REAPER", "Unable to release TLS mapping");
+        preempt_enable();
+      }
       proc->thread_count--;
+      thread_completion_finish(zombie);
 
       /* Si c'était le dernier thread, marquer le processus ZOMBIE et réveiller le parent */
       if (proc->thread_count == 0) {
@@ -1765,6 +1752,8 @@ static void reaper_thread_func(void *arg) {
          * référence. */
         file_table_destroy(proc->fd_table);
         shm_cleanup_process(proc);
+        vm_cleanup(proc);
+        thread_completion_cleanup(proc);
 
         /* Conserver exit_status (fourni par sys_exit ou par ce thread) */
         if (proc->exit_status == 0 && zombie->exit_status != 0) {
@@ -1803,6 +1792,7 @@ static void reaper_thread_func(void *arg) {
 
     /* Don't free the main thread structure (it's static) */
     if (zombie != &g_main_thread_struct) {
+      xstate_destroy(zombie->xstate);
       kfree(zombie);
     }
 

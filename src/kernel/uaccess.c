@@ -3,6 +3,7 @@
 #include "../include/memlayout.h"
 #include "../include/string.h"
 #include "../mm/vmm.h"
+#include "../mm/vm.h"
 #include "process.h"
 #include <stdint.h>
 
@@ -34,6 +35,11 @@ bool user_range_valid(const void *address, size_t size, bool write) {
   uint64_t last_page = PAGE_ALIGN_DOWN(end);
   for (;;) {
     vmm_mapping_info_t mapping;
+    if (vmm_query_mapping(directory, page, &mapping) != 0 &&
+        vm_handle_fault(process_current(), page, 4 | (write ? 2 : 0)) !=
+            VM_FAULT_HANDLED) {
+      return false;
+    }
     if (vmm_query_mapping(directory, page, &mapping) != 0 ||
         !(mapping.raw_entry & PAGE_PRESENT) ||
         !(mapping.raw_entry & PAGE_USER) ||

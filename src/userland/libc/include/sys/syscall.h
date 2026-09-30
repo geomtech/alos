@@ -39,6 +39,22 @@
 #define SYS_READDIR 89
 #define SYS_MMAP 90
 #define SYS_MUNMAP 91
+#define SYS_MPROTECT 125
+#define SYS_MADVISE 219
+#define SYS_ERRNO_LOCATION 220
+#define SYS_VMINFO 221
+#define SYS_CLOCK_GETTIME 222
+#define SYS_NANOSLEEP_POSIX 223
+#define SYS_GET_FS 224
+#define SYS_SET_FS 225
+#define SYS_CONTEXT_SWITCHES 226
+#define SYS_FUTEX_WAIT 227
+#define SYS_FUTEX_WAKE 228
+#define SYS_THREAD_JOIN 229
+#define SYS_THREAD_DETACH 230
+#define SYS_THREAD_REGISTER 231
+#define SYS_EXIT_GROUP 232
+#define SYS_ISATTY 233
 #define SYS_KBHIT 100
 #define SYS_CLEAR 101
 #define SYS_MEMINFO 102
@@ -125,6 +141,9 @@ typedef struct {
 } input_event_t;
 
 /* Syscall wrapper functions */
+#ifdef __cplusplus
+extern "C" {
+#endif
 long syscall0(long number);
 long syscall1(long number, long arg1);
 long syscall2(long number, long arg1, long arg2);
@@ -135,4 +154,7 @@ long syscall5(long number, long arg1, long arg2, long arg3, long arg4,
 long syscall6(long number, long arg1, long arg2, long arg3, long arg4,
               long arg5, long arg6);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

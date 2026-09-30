@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 $QEMU = "C:\Program Files\qemu\qemu-system-x86_64.exe"
 $QEMU_SHARE = "C:\Program Files\qemu\share"
 $PROJECT_DIR = $PSScriptRoot
-$DOCKER_IMAGE = "alos-build"
+$DOCKER_IMAGE = "alos-runtime"
 
 # UEFI firmware (EDK2 bundled with QEMU for Windows)
 $OVMF_CODE = Join-Path $QEMU_SHARE "edk2-x86_64-code.fd"
@@ -57,7 +57,7 @@ function Invoke-Build {
     $imageExists = docker images $DOCKER_IMAGE --format "{{.Repository}}" 2>$null
     if (-not $imageExists) {
         Write-Step "Building Docker image '$DOCKER_IMAGE' (first time, may take ~10 min)"
-        docker build -t $DOCKER_IMAGE "$PROJECT_DIR"
+        docker build -f (Join-Path $PROJECT_DIR "ports\chromium\build\Dockerfile.runtime") -t $DOCKER_IMAGE "$PROJECT_DIR"
         if ($LASTEXITCODE -ne 0) { Write-Host "Docker build failed!" -ForegroundColor Red; exit 1 }
     }
 

@@ -89,6 +89,7 @@ uint64_t timer_get_uptime_ms(void);
  * @return Secondes depuis le boot
  */
 uint32_t timer_get_uptime_seconds(void);
+uint64_t timer_get_realtime_ms(void);
 
 /**
  * Attend un nombre spécifié de millisecondes.

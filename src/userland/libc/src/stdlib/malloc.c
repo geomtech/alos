@@ -3,6 +3,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/futex.h>
+#include <stdio.h>
+#include <unistd.h>
 
 /* Syscall pour brk - obtenir/étendre le heap */
 static void *sys_brk(void *addr) {
@@ -15,7 +19,21 @@ typedef struct mem_block {
   size_t size;            /* Taille du bloc (sans l'en-tête) */
   struct mem_block *next; /* Pointeur vers le bloc suivant */
   int free;               /* 1 si libre, 0 si alloué */
-} mem_block_t;
+} __attribute__((aligned(16))) mem_block_t;
+
+static uint32_t allocator_lock;
+static void lock_heap(void) {
+  while (__atomic_exchange_n(&allocator_lock, 1, __ATOMIC_ACQUIRE)) {
+    if (futex_wait(&allocator_lock, 1, 0) && errno != EAGAIN) {
+      puts("malloc: heap wait failed");
+      _exit(134);
+    }
+  }
+}
+static void unlock_heap(void) {
+  __atomic_store_n(&allocator_lock, 0, __ATOMIC_RELEASE);
+  futex_wake(&allocator_lock, 1);
+}
 
 /* Taille minimale d'un bloc */
 #define MIN_BLOCK_SIZE sizeof(mem_block_t)
@@ -84,7 +102,7 @@ static void merge_blocks() {
   while (current && current->next) {
     if ((uint8_t *)current + MIN_BLOCK_SIZE + current->size ==
             (uint8_t *)current->next &&
-        current->next->free) {
+        current->free && current->next->free) {
       // Fusionner current et current->next
       current->size += MIN_BLOCK_SIZE + current->next->size;
       current->next = current->next->next;
@@ -95,12 +113,12 @@ static void merge_blocks() {
 }
 
 /* Allouer de la mémoire depuis le heap */
-void *malloc(size_t size) {
+static void *malloc_locked(size_t size) {
   if (size == 0)
     return NULL;
 
-  // Aligner la taille sur 8 octets
-  size = (size + 7) & ~7;
+  if (size > (size_t)-1 - 15 - MIN_BLOCK_SIZE) return NULL;
+  size = (size + 15) & ~(size_t)15;
 
   if (!heap_start) {
     init_heap();
@@ -131,6 +149,7 @@ void *malloc(size_t size) {
 
   // Aucun bloc libre trouvé, étendre le heap
   size_t needed_size = size + MIN_BLOCK_SIZE;
+  if ((uintptr_t)heap_end > (uintptr_t)-1 - needed_size) return NULL;
   void *new_brk = (void *)((uintptr_t)heap_end + needed_size);
 
   if (sys_brk(new_brk) != new_brk) {
@@ -157,7 +176,7 @@ void *malloc(size_t size) {
 }
 
 /* Libérer de la mémoire */
-void free(void *ptr) {
+static void free_locked(void *ptr) {
   if (!ptr)
     return;
 
@@ -177,11 +196,11 @@ void free(void *ptr) {
 }
 
 /* Réallouer de la mémoire */
-void *realloc(void *ptr, size_t size) {
+static void *realloc_locked(void *ptr, size_t size) {
   if (!ptr)
-    return malloc(size);
+    return malloc_locked(size);
   if (size == 0) {
-    free(ptr);
+    free_locked(ptr);
     return NULL;
   }
 
@@ -204,15 +223,97 @@ void *realloc(void *ptr, size_t size) {
   }
 
   // Sinon, allouer un nouveau bloc et copier
-  void *new_ptr = malloc(size);
+  void *new_ptr = malloc_locked(size);
   if (new_ptr) {
     memcpy(new_ptr, ptr, block->size);
-    free(ptr);
+    free_locked(ptr);
   }
   return new_ptr;
 }
 
+void *malloc(size_t size) {
+  lock_heap();
+  void *result = malloc_locked(size);
+  unlock_heap();
+  if (!result && size) errno = ENOMEM;
+  return result;
+}
+
+static void *allocate_aligned(size_t alignment, size_t size) {
+  if (alignment <= 16) return malloc(size);
+  if (size > (size_t)-1 - alignment ||
+      size + alignment > (size_t)-1 - 2 * MIN_BLOCK_SIZE - 16) {
+    errno = ENOMEM;
+    return NULL;
+  }
+  lock_heap();
+  void *base = malloc_locked(size + alignment + 2 * MIN_BLOCK_SIZE + 16);
+  void *result = NULL;
+  if (base) {
+    mem_block_t *prefix = (mem_block_t *)((uint8_t *)base - MIN_BLOCK_SIZE);
+    uintptr_t data = ((uintptr_t)base + MIN_BLOCK_SIZE + 16 + alignment - 1) &
+                      ~(uintptr_t)(alignment - 1);
+    mem_block_t *block = (mem_block_t *)(data - MIN_BLOCK_SIZE);
+    size_t padding = (size_t)((uint8_t *)block - (uint8_t *)prefix) - MIN_BLOCK_SIZE;
+    block->size = prefix->size - padding - MIN_BLOCK_SIZE;
+    block->next = prefix->next;
+    block->free = 0;
+    prefix->size = padding;
+    prefix->next = block;
+    prefix->free = 1;
+    size_t aligned_size = (size + 15) & ~(size_t)15;
+    if (block->size > aligned_size + MIN_BLOCK_SIZE)
+      split_block(block, aligned_size);
+    result = (void *)data;
+  }
+  unlock_heap();
+  if (!result && size) errno = ENOMEM;
+  return result;
+}
+
+void *aligned_alloc(size_t alignment, size_t size) {
+  if (!alignment || (alignment & (alignment - 1)) || size % alignment) {
+    errno = EINVAL;
+    return NULL;
+  }
+  return allocate_aligned(alignment, size);
+}
+
+int posix_memalign(void **result, size_t alignment, size_t size) {
+  if (!result || alignment < sizeof(void *) ||
+      (alignment & (alignment - 1))) return EINVAL;
+  int saved_errno = errno;
+  void *allocation = allocate_aligned(alignment, size);
+  int error = allocation || !size ? 0 : ENOMEM;
+  errno = saved_errno;
+  if (!error) *result = allocation;
+  return error;
+}
+
+void free(void *ptr) {
+  lock_heap();
+  free_locked(ptr);
+  unlock_heap();
+}
+
+void *realloc(void *ptr, size_t size) {
+  if (size > (size_t)-1 - 15 - MIN_BLOCK_SIZE) {
+    errno = ENOMEM;
+    return NULL;
+  }
+  size_t aligned = (size + 15) & ~(size_t)15;
+  lock_heap();
+  void *result = realloc_locked(ptr, aligned);
+  unlock_heap();
+  if (!result && size) errno = ENOMEM;
+  return result;
+}
+
 void *calloc(size_t nmemb, size_t size) {
+  if (size && nmemb > (size_t)-1 / size) {
+    errno = ENOMEM;
+    return NULL;
+  }
   size_t total_size = nmemb * size;
   void *ptr = malloc(total_size);
   if (ptr) {

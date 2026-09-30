@@ -33,6 +33,24 @@
 #define SYS_MKDIR 39   /* Créer un répertoire */
 #define SYS_RMDIR 40   /* Supprimer un répertoire vide */
 #define SYS_READDIR 89 /* Lire une entrée de répertoire */
+#define SYS_MMAP 90
+#define SYS_MUNMAP 91
+#define SYS_MPROTECT 125
+#define SYS_MADVISE 219
+#define SYS_ERRNO_LOCATION 220
+#define SYS_VMINFO 221
+#define SYS_CLOCK_GETTIME 222
+#define SYS_NANOSLEEP_POSIX 223
+#define SYS_GET_FS 224
+#define SYS_SET_FS 225
+#define SYS_CONTEXT_SWITCHES 226
+#define SYS_FUTEX_WAIT 227
+#define SYS_FUTEX_WAKE 228
+#define SYS_THREAD_JOIN 229
+#define SYS_THREAD_DETACH 230
+#define SYS_THREAD_REGISTER 231
+#define SYS_EXIT_GROUP 232
+#define SYS_ISATTY 233
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */
 

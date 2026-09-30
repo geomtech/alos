@@ -3,10 +3,55 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 
-FILE *stdin = (FILE *)0;
-FILE *stdout = (FILE *)1;
-FILE *stderr = (FILE *)2;
+static FILE standard_input = {STDIN_FILENO, 0, 0};
+static FILE standard_output = {STDOUT_FILENO, 0, 0};
+static FILE standard_error = {STDERR_FILENO, 0, 0};
+FILE *stdin = &standard_input;
+FILE *stdout = &standard_output;
+FILE *stderr = &standard_error;
+
+int vfprintf(FILE *stream, const char *format, va_list arguments) {
+  if (!stream || !format) { errno = EINVAL; return EOF; }
+  size_t capacity = 1024;
+  for (;;) {
+    char *buffer = malloc(capacity);
+    if (!buffer) return EOF;
+    va_list copy;
+    va_copy(copy, arguments);
+    int length = vsnprintf(buffer, capacity, format, copy);
+    va_end(copy);
+    if (length < 0) { free(buffer); return EOF; }
+    if ((size_t)length < capacity - 1) {
+      size_t written = 0;
+      while (written < (size_t)length) {
+        ssize_t result = write(stream->fd, buffer + written, (size_t)length - written);
+        if (result <= 0) { free(buffer); errno = EIO; return EOF; }
+        written += (size_t)result;
+      }
+      free(buffer);
+      return length;
+    }
+    free(buffer);
+    if (capacity > (size_t)-1 / 2) { errno = ENOMEM; return EOF; }
+    capacity *= 2;
+  }
+}
+
+int fprintf(FILE *stream, const char *format, ...) {
+  va_list arguments;
+  va_start(arguments, format);
+  int result = vfprintf(stream, format, arguments);
+  va_end(arguments);
+  return result;
+}
+
+int remove(const char *path) {
+  int result = unlink(path);
+  if (result) { errno = EIO; return -1; }
+  return 0;
+}
 
 int getchar(void) {
   unsigned char c;

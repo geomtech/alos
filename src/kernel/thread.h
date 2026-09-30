@@ -165,6 +165,12 @@ struct thread {
     uint32_t tid;                   /* Thread ID unique */
     char name[THREAD_NAME_MAX];     /* Nom du thread (debug) */
     uint32_t magic;                 /* Magic number pour validation */
+    uint64_t errno_address;          /* Cellule errno user privee au thread */
+    void *xstate;
+    uint64_t fs_base;
+    uint64_t tls_mapping;
+    uint64_t tls_mapping_size;
+    struct thread_completion *completion;
     
     /* Lien avec le processus */
     process_t *owner;               /* Processus propriétaire */
@@ -216,6 +222,7 @@ struct thread {
 
     /* Timeout support (scheduler integrated) */
     uint64_t timeout_tick;          /* Tick absolu de timeout (0 = pas de timeout) */
+    thread_t *timeout_next;
     int wait_result;                /* Résultat du wait (0=succès, -ETIMEDOUT=timeout) */
     wait_queue_t *current_wait_queue; /* Wait queue courante pour retrait forcé par timeout */
 

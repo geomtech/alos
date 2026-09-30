@@ -84,6 +84,12 @@ typedef struct process {
   char cwd[PROCESS_CWD_MAX]; /* Répertoire courant, canonique et absolu */
   file_descriptor_t fd_table[MAX_FD]; /* Table privée, descriptions partageables */
   shm_process_mapping_t shm_mappings[SHM_MAX_MAPPINGS];
+  struct vm_area *vm_areas;
+  uint64_t tls_image_address;
+  uint64_t tls_file_size;
+  uint64_t tls_mem_size;
+  uint64_t tls_alignment;
+  struct thread_completion *thread_completions;
 
   /* ===== Stack ===== */
   void *stack_base;    /* Base de la stack allouée (pour kfree) */
@@ -340,6 +346,9 @@ size_t process_snapshot(process_info_t *buffer, size_t capacity);
  */
 void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
                              uint64_t error_code) __attribute__((noreturn));
+void process_terminate_mapping_fault(uint64_t rip, uint64_t fault_addr,
+                                     uint64_t error_code) __attribute__((noreturn));
+void process_log_fault_context(const interrupt_frame_t *frame, uint64_t address);
 
 /* ========================================
  * Fonction ASM (définie dans switch.s)

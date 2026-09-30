@@ -22,6 +22,7 @@ shm_object_t *shm_create(size_t size);
 void shm_retain(shm_object_t *object);
 void shm_release(shm_object_t *object);
 size_t shm_size(const shm_object_t *object);
+uint64_t shm_page_physical(const shm_object_t *object, uint64_t page);
 
 void *shm_map_process(struct process *process, shm_object_t *object);
 int shm_unmap_process(struct process *process, void *address);

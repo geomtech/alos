@@ -77,6 +77,10 @@
 #define USER_SHM_BASE           0x0000000070000000ULL
 #define USER_SHM_END            0x0000000078000000ULL
 
+/* Arena mmap : separee du heap, des surfaces GUI et de la stack. */
+#define USER_MMAP_BASE          0x0000000100000000ULL
+#define USER_MMAP_END           0x0000400000000000ULL
+
 /* Adresse de base pour la stack utilisateur */
 #define USER_STACK_TOP          0x00007FFFFFFFE000ULL
 #define USER_STACK_SIZE         (16 * 4096)  /* 64 KB */

@@ -8,6 +8,10 @@
 #include "../mm/kheap.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
+#include "../mm/vm.h"
+#include "../arch/x86_64/xstate.h"
+#include "../arch/x86_64/cpu.h"
+#include "thread_lifecycle.h"
 #include "console.h"
 #include "elf.h"
 #include "keyboard.h"
@@ -223,6 +227,7 @@ void init_multitasking(void) {
   }
 
   /* Initialiser le processus idle */
+  memset(idle_process, 0, sizeof(*idle_process));
   idle_process->pid = next_pid++;
   safe_strcpy(idle_process->name, "kernel_idle", sizeof(idle_process->name));
   idle_process->state = PROCESS_STATE_RUNNING;
@@ -310,6 +315,7 @@ process_t *create_kernel_thread(void (*function)(void), const char *name) {
   }
 
   /* Initialiser le processus */
+  memset(proc, 0, sizeof(*proc));
   proc->pid = next_pid++;
   safe_strcpy(proc->name, name, sizeof(proc->name));
   proc->state = PROCESS_STATE_READY;
@@ -847,6 +853,7 @@ process_t *process_spawn(const char *filename, int argc, char **argv) {
   memset(kernel_stack, 0, KERNEL_STACK_SIZE);
 
   /* Initialiser le processus */
+  memset(proc, 0, sizeof(*proc));
   proc->pid = next_pid++;
 
   /* Extraire le nom du fichier pour le nom du processus */
@@ -1140,9 +1147,16 @@ int process_fork(const interrupt_frame_t *frame) {
   child->cr3 = child_dir->pml4_phys;
   child->heap_start = parent->heap_start;
   child->heap_brk = parent->heap_brk;
+  child->tls_image_address = parent->tls_image_address;
+  child->tls_file_size = parent->tls_file_size;
+  child->tls_mem_size = parent->tls_mem_size;
+  child->tls_alignment = parent->tls_alignment;
   process_inherit_cwd(child, parent);
   file_table_init(child->fd_table, parent->fd_table);
-  if (shm_clone_process_mappings(parent, child) != 0) {
+  if (shm_clone_process_mappings(parent, child) != 0 ||
+      vm_clone_areas(parent, child) != 0) {
+    shm_cleanup_process(child);
+    vm_cleanup(child);
     file_table_destroy(child->fd_table);
     kfree(kernel_stack);
     vmm_free_directory(child_dir);
@@ -1154,6 +1168,7 @@ int process_fork(const interrupt_frame_t *frame) {
   thread_t *thread = thread_create_user_from_frame(
       child, child->name, frame, kernel_stack, KERNEL_STACK_SIZE);
   if (thread == NULL) {
+    vm_cleanup(child);
     shm_cleanup_process(child);
     file_table_destroy(child->fd_table);
     kfree(kernel_stack);
@@ -1163,6 +1178,7 @@ int process_fork(const interrupt_frame_t *frame) {
   }
 
   child->main_thread = thread;
+  thread->errno_address = thread_current()->errno_address;
   child->thread_list = thread;
   child->thread_count = 1;
   process_link(parent, child);
@@ -1216,17 +1232,29 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
   process_unlock(flags);
 
   file_table_destroy(image->fd_table);
+  vm_cleanup(proc);
   safe_strcpy(proc->name, image->name, sizeof(proc->name));
   safe_strcpy(thread->name, image->name, sizeof(thread->name));
   proc->pml4 = image->pml4;
   proc->cr3 = image->cr3;
   proc->heap_start = image->heap_start;
   proc->heap_brk = image->heap_brk;
+  proc->tls_image_address = image->tls_image_address;
+  proc->tls_file_size = image->tls_file_size;
+  proc->tls_mem_size = image->tls_mem_size;
+  proc->tls_alignment = image->tls_alignment;
+  proc->vm_areas = image->vm_areas;
+  thread->fs_base = image_thread->fs_base;
+  thread->tls_mapping = image_thread->tls_mapping;
+  thread->tls_mapping_size = image_thread->tls_mapping_size;
+  thread->errno_address = 0;
 
   image->pml4 = NULL;
   image_thread->owner = NULL;
   kfree(image_thread->stack_base);
   image_thread->stack_base = NULL;
+  xstate_destroy(image_thread->xstate);
+  thread_completion_cleanup(image);
   kfree(image_thread);
   kfree(image);
 
@@ -1237,6 +1265,9 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
   file_table_close_on_exec(proc->fd_table);
   shm_cleanup_process(proc);
   vmm_free_directory(old_dir);
+  xstate_reset(thread->xstate);
+  xstate_restore(thread->xstate);
+  wrmsr(0xC0000100, thread->fs_base);
 
   memcpy(frame, &new_frame, sizeof(*frame));
   frame->rax = 0;
@@ -1282,6 +1313,7 @@ process_t *process_create_kernel(const char *name, thread_entry_t entry,
   }
 
   /* Initialiser */
+  memset(proc, 0, sizeof(*proc));
   proc->pid = next_pid++;
   safe_strcpy(proc->name, name ? name : "", sizeof(proc->name));
   proc->state = PROCESS_STATE_READY;
@@ -1595,8 +1627,12 @@ size_t process_snapshot(process_info_t *buffer, size_t capacity) {
   return count;
 }
 
-void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
-                             uint64_t error_code) {
+static void terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                             uint64_t error_code, bool backing_error)
+    __attribute__((noreturn));
+
+static void terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                             uint64_t error_code, bool backing_error) {
   /* Désactiver les interruptions pour manipulation atomique des états */
   asm volatile("cli");
 
@@ -1694,6 +1730,12 @@ void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
     break;
   }
 
+  if (backing_error) {
+    fault_name = "Page Fault (mmap backing unavailable)";
+    sig_name = "SIGBUS";
+    sig = 7;
+  }
+
   /* Log détaillé sur le port série */
   KLOG_ERROR("USER_FAULT", "========================================");
   KLOG_ERROR("USER_FAULT", "   FATAL USER PROCESS FAULT DETECTED    ");
@@ -1769,5 +1811,27 @@ void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
 
   for (;;) {
     asm volatile("hlt");
+  }
+}
+
+void process_terminate_fault(uint64_t int_no, uint64_t rip, uint64_t fault_addr,
+                             uint64_t error_code) {
+  terminate_fault(int_no, rip, fault_addr, error_code, false);
+}
+
+void process_terminate_mapping_fault(uint64_t rip, uint64_t fault_addr,
+                                     uint64_t error_code) {
+  terminate_fault(14, rip, fault_addr, error_code, true);
+}
+
+void process_log_fault_context(const interrupt_frame_t *frame, uint64_t address) {
+  KLOG_ERROR_DEC("USER_FAULT", "TID: ", thread_get_tid());
+  KLOG_ERROR_HEX64("USER_FAULT", "RSP: ", frame->rsp);
+  KLOG_ERROR_HEX64("USER_FAULT", "RAX: ", frame->rax);
+  KLOG_ERROR_HEX64("USER_FAULT", "RFLAGS: ", frame->rflags);
+  process_t *process = process_current();
+  if (process && process->pml4) {
+    KLOG_ERROR_HEX64("USER_FAULT", "Fault page entry: ",
+        vmm_get_page_entry((page_directory_t *)process->pml4, address));
   }
 }

@@ -62,3 +62,17 @@ long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5) {
                    : "memory", "rcx", "r11");
   return result;
 }
+
+long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5,
+               long arg6) {
+  long result;
+  register long r10 __asm__("r10") = arg4;
+  register long r8 __asm__("r8") = arg5;
+  register long r9 __asm__("r9") = arg6;
+  __asm__ volatile("int $0x80"
+                   : "=a"(result)
+                   : "a"(num), "D"(arg1), "S"(arg2), "d"(arg3), "r"(r10),
+                     "r"(r8), "r"(r9)
+                   : "memory", "rcx", "r11");
+  return result;
+}

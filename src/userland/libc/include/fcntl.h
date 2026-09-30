@@ -17,6 +17,9 @@
 #define SEEK_CUR 1
 #define SEEK_END 2
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 int open(const char *pathname, int flags, ...);
 
 /**
@@ -27,4 +30,7 @@ int open(const char *pathname, int flags, ...);
  */
 int creat(const char *pathname, int mode);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

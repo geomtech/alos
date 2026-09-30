@@ -75,6 +75,9 @@ static void free_table(page_entry_t* table)
 static page_entry_t* get_or_create_table(page_entry_t* table, uint64_t index, uint64_t flags)
 {
     if (table[index] & PAGE_PRESENT) {
+        if (table[index] & PAGE_HUGE) {
+            return NULL;
+        }
         /* Table existe déjà - ajouter PAGE_USER si demandé */
         if (flags & PAGE_USER) {
             table[index] |= PAGE_USER;
@@ -214,53 +217,10 @@ uint64_t vmm_get_kernel_cr3(void)
 
 void vmm_map_page(uint64_t phys, uint64_t virt, uint64_t flags)
 {
-    /* Aligner les adresses */
-    phys = PAGE_ALIGN_DOWN(phys);
-    virt = PAGE_ALIGN_DOWN(virt);
-    
-    /* Extraire les index */
-    uint64_t pml4_idx = PML4_INDEX(virt);
-    uint64_t pdpt_idx = PDPT_INDEX(virt);
-    uint64_t pd_idx = PD_INDEX(virt);
-    uint64_t pt_idx = PT_INDEX(virt);
-    
-    /* Traverser/créer les tables */
-    page_entry_t* pml4 = current_directory->pml4;
-    
-    page_entry_t* pdpt = get_or_create_table(pml4, pml4_idx, flags);
-    if (pdpt == NULL) {
-        KLOG_ERROR("VMM", "Failed to allocate PDPT");
-        return;
+    if (vmm_map_page_in_dir(current_directory, PAGE_ALIGN_DOWN(phys),
+                            PAGE_ALIGN_DOWN(virt), flags | PAGE_PRESENT) != 0) {
+        KLOG_ERROR("VMM", "Failed to map page");
     }
-    
-    page_entry_t* pd = get_or_create_table(pdpt, pdpt_idx, flags);
-    if (pd == NULL) {
-        KLOG_ERROR("VMM", "Failed to allocate PD");
-        return;
-    }
-    
-    page_entry_t* pt = get_or_create_table(pd, pd_idx, flags);
-    if (pt == NULL) {
-        /* Log une seule fois pour éviter le spam */
-        static int pt_fail_count = 0;
-        if (pt_fail_count < 5) {
-            KLOG_ERROR("VMM", "Failed to allocate PT");
-            KLOG_ERROR_HEX("VMM", "  virt (high): ", (uint32_t)(virt >> 32));
-            KLOG_ERROR_HEX("VMM", "  virt (low):  ", (uint32_t)virt);
-            KLOG_ERROR_HEX("VMM", "  phys (high): ", (uint32_t)(phys >> 32));
-            KLOG_ERROR_HEX("VMM", "  phys (low):  ", (uint32_t)phys);
-            pt_fail_count++;
-        }
-        return;
-    }
-    
-    /* Mapper la page
-     * Note: On garde les flags complets (incluant NX bit 63) pour permettre
-     * la protection d'exécution sur les régions MMIO et données. */
-    pt[pt_idx] = phys | (flags & (0xFFF | PAGE_NX)) | PAGE_PRESENT;
-    
-    /* Invalider le TLB */
-    invlpg(virt);
 }
 
 void vmm_unmap_page(uint64_t virt)
@@ -587,6 +547,7 @@ void vmm_free_directory(page_directory_t* dir)
         
         for (int j = 0; j < 512; j++) {
             if (!(pdpt[j] & PAGE_PRESENT)) continue;
+            if (pdpt[j] & PAGE_HUGE) continue;
             
             page_entry_t* pd = get_table(pdpt, j);
             if (pd == NULL) continue;
@@ -599,7 +560,7 @@ void vmm_free_directory(page_directory_t* dir)
                 if (pt != NULL) {
                     for (int l = 0; l < 512; l++) {
                         page_entry_t pte = pt[l];
-                        if ((pte & PAGE_PRESENT) && (pte & PAGE_OWNED)) {
+                        if (pte & PAGE_OWNED) {
                             void *page =
                                 hhdm_phys_to_virt(pte & PAGE_FRAME_MASK);
                             pmm_free_block(page);
@@ -628,23 +589,131 @@ uint64_t vmm_get_phys_addr(page_directory_t* dir, uint64_t virt_addr)
 
 int vmm_map_page_in_dir(page_directory_t* dir, uint64_t phys, uint64_t virt, uint64_t flags)
 {
-    if (dir == NULL) {
+    if (dir == NULL || dir->pml4 == NULL ||
+        (phys & (PAGE_SIZE - 1)) || (virt & (PAGE_SIZE - 1))) {
         return -1;
     }
-    
-    KLOG_DEBUG_HEX("VMM", "map_page_in_dir: virt=", (uint32_t)virt);
-    KLOG_DEBUG_HEX("VMM", "  phys=", (uint32_t)phys);
-    KLOG_DEBUG_HEX("VMM", "  dir->pml4=", (uint32_t)(uint64_t)dir->pml4);
-    
-    /* Sauvegarder le directory courant */
-    page_directory_t* saved = current_directory;
-    current_directory = dir;
-    
-    vmm_map_page(phys, virt, flags);
-    
-    /* Restaurer */
-    current_directory = saved;
-    
+
+    page_entry_t *pdpt =
+        get_or_create_table(dir->pml4, PML4_INDEX(virt), flags);
+    if (pdpt == NULL) return -1;
+    page_entry_t *pd = get_or_create_table(pdpt, PDPT_INDEX(virt), flags);
+    if (pd == NULL) return -1;
+    page_entry_t *pt = get_or_create_table(pd, PD_INDEX(virt), flags);
+    if (pt == NULL) return -1;
+    pt[PT_INDEX(virt)] = phys | (flags & (0xFFF | PAGE_NX));
+    invlpg(virt);
+    return 0;
+}
+
+static page_entry_t *page_entry_at(page_directory_t *dir, uint64_t virt,
+                                   uint64_t *next) {
+    *next = (virt | ((1ULL << 39) - 1)) + 1;
+    if (dir == NULL || dir->pml4 == NULL) return NULL;
+    page_entry_t *pdpt = get_table(dir->pml4, PML4_INDEX(virt));
+    if (pdpt == NULL) return NULL;
+    *next = (virt | ((1ULL << 30) - 1)) + 1;
+    if (pdpt[PDPT_INDEX(virt)] & PAGE_HUGE) return NULL;
+    page_entry_t *pd = get_table(pdpt, PDPT_INDEX(virt));
+    if (pd == NULL) return NULL;
+    *next = (virt | ((1ULL << 21) - 1)) + 1;
+    if (pd[PD_INDEX(virt)] & PAGE_HUGE) return NULL;
+    page_entry_t *pt = get_table(pd, PD_INDEX(virt));
+    if (pt == NULL) return NULL;
+    *next = PAGE_ALIGN_DOWN(virt) + PAGE_SIZE;
+    return &pt[PT_INDEX(virt)];
+}
+
+uint64_t vmm_get_page_entry(page_directory_t *dir, uint64_t virt) {
+    uint64_t next;
+    page_entry_t *pte = page_entry_at(dir, virt, &next);
+    return pte != NULL ? *pte : 0;
+}
+
+static bool table_empty(page_entry_t *table) {
+    for (int i = 0; i < ENTRIES_PER_TABLE; i++) {
+        if (table[i] != 0) return false;
+    }
+    return true;
+}
+
+static void prune_empty_tables(page_directory_t *dir, uint64_t start,
+                                uint64_t end) {
+    for (uint64_t i = PML4_INDEX(start); i <= PML4_INDEX(end - 1); i++) {
+        page_entry_t *pdpt = get_table(dir->pml4, i);
+        if (pdpt == NULL) continue;
+        for (int j = 0; j < ENTRIES_PER_TABLE; j++) {
+            if (pdpt[j] & PAGE_HUGE) continue;
+            page_entry_t *pd = get_table(pdpt, j);
+            if (pd == NULL) continue;
+            for (int k = 0; k < ENTRIES_PER_TABLE; k++) {
+                if (pd[k] & PAGE_HUGE) continue;
+                page_entry_t *pt = get_table(pd, k);
+                if (pt != NULL && table_empty(pt)) {
+                    pd[k] = 0;
+                    free_table(pt);
+                }
+            }
+            if (table_empty(pd)) {
+                pdpt[j] = 0;
+                free_table(pd);
+            }
+        }
+        if (table_empty(pdpt)) {
+            dir->pml4[i] = 0;
+            free_table(pdpt);
+        }
+    }
+    if ((read_cr3() & PAGE_FRAME_MASK) == dir->pml4_phys) flush_tlb();
+}
+
+void vmm_update_range(page_directory_t *dir, uint64_t start, uint64_t end,
+                      uint64_t flags, bool release) {
+    for (uint64_t address = start; address < end;) {
+        uint64_t next;
+        page_entry_t *pte = page_entry_at(dir, address, &next);
+        if (pte != NULL && *pte != 0) {
+            uint64_t old = *pte;
+            if (release) {
+                *pte = 0;
+            } else {
+                *pte = (old & ~(PAGE_PRESENT | PAGE_RW | PAGE_NX)) |
+                       (flags & (PAGE_PRESENT | PAGE_RW | PAGE_NX));
+            }
+
+            invlpg(address);
+            if (release && (old & PAGE_OWNED)) {
+                pmm_free_block(hhdm_phys_to_virt(old & PAGE_FRAME_MASK));
+            }
+        }
+        address = next;
+    }
+    if (release && end > start) prune_empty_tables(dir, start, end);
+}
+
+uint64_t vmm_resident_pages(page_directory_t *dir, uint64_t start, uint64_t end) {
+    uint64_t count = 0;
+    for (uint64_t address = start; address < end;) {
+        uint64_t next;
+        page_entry_t *pte = page_entry_at(dir, address, &next);
+        if (pte != NULL && (*pte & PAGE_FRAME_MASK)) count++;
+        address = next;
+    }
+    return count;
+}
+
+uint64_t vmm_first_occupied_end(page_directory_t *dir, uint64_t start,
+                                uint64_t end) {
+    for (uint64_t address = start; address < end;) {
+        uint64_t next;
+        page_entry_t *pte = page_entry_at(dir, address, &next);
+        if (pte != NULL && *pte != 0) return next;
+        if (pte == NULL) {
+            vmm_mapping_info_t info;
+            if (vmm_query_mapping(dir, address, &info) == 0) return next;
+        }
+        address = next;
+    }
     return 0;
 }
 
@@ -686,7 +755,7 @@ page_directory_t* vmm_clone_directory(page_directory_t* src)
                 if (src_pt == NULL) continue;
                 for (int l = 0; l < 512; l++) {
                     page_entry_t pte = src_pt[l];
-                    if (!(pte & PAGE_PRESENT) || !(pte & PAGE_USER)) continue;
+                    if (pte == 0 || !(pte & PAGE_USER)) continue;
 
                     uint64_t virt = ((uint64_t)i << 39) |
                                     ((uint64_t)j << 30) |

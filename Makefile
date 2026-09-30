@@ -41,20 +41,23 @@ LDFLAGS = -nostdlib -z max-page-size=0x1000
 
 # Architecture (x86_64)
 # Note: boot.s est remplacé par le protocole Limine
-ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupts.s src/arch/x86_64/switch.s src/arch/x86_64/tss.c src/arch/x86_64/usermode.c src/arch/x86_64/cpu.c
-ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o
+ARCH_SRC = src/arch/x86_64/gdt.c src/arch/x86_64/idt.c src/arch/x86_64/interrupts.s src/arch/x86_64/switch.s src/arch/x86_64/tss.c src/arch/x86_64/usermode.c src/arch/x86_64/cpu.c src/arch/x86_64/xstate.c
+ARCH_OBJ = src/arch/x86_64/gdt.o src/arch/x86_64/idt.o src/arch/x86_64/interrupts.o src/arch/x86_64/switch.o src/arch/x86_64/tss.o src/arch/x86_64/usermode.o src/arch/x86_64/cpu.o src/arch/x86_64/xstate.o
 
 # Kernel core
 KERNEL_SRC = src/kernel/kernel.c src/kernel/console.c src/kernel/fb_console.c src/kernel/keyboard.c src/kernel/keymap.c src/kernel/timer.c src/kernel/klog.c src/kernel/process.c src/kernel/thread.c src/kernel/sync.c src/kernel/workqueue.c src/kernel/syscall.c src/kernel/elf.c src/kernel/mouse.c src/kernel/input.c src/kernel/string.c src/kernel/uaccess.c src/kernel/shared_memory.c src/kernel/ipc.c src/kernel/display.c
-KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o src/kernel/uaccess.o src/kernel/shared_memory.o src/kernel/ipc.o src/kernel/display.o
+KERNEL_OBJ = src/kernel/kernel.o src/kernel/console.o src/kernel/fb_console.o src/kernel/keyboard.o src/kernel/keymap.o src/kernel/timer.o src/kernel/klog.o src/kernel/process.o src/kernel/thread.o src/kernel/sync.o src/kernel/workqueue.o src/kernel/syscall.o src/kernel/elf.o src/kernel/mouse.o src/kernel/input.o src/kernel/string.o src/kernel/uaccess.o src/kernel/shared_memory.o src/kernel/ipc.o src/kernel/display.o src/kernel/tls.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
 MMIO_OBJ = src/kernel/mmio/mmio.o src/kernel/mmio/pci_mmio.o
 
 # Memory management
-MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c
-MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o
+MM_SRC = src/mm/pmm.c src/mm/kheap.c src/mm/vmm.c src/mm/vm.c
+MM_OBJ = src/mm/pmm.o src/mm/kheap.o src/mm/vmm.o src/mm/vm.o
+KERNEL_OBJ += src/kernel/futex.o
+KERNEL_OBJ += src/kernel/thread_lifecycle.o
+KERNEL_SRC += src/kernel/tls.c src/kernel/futex.c src/kernel/thread_lifecycle.c
 
 # Drivers
 DRIVERS_SRC = src/drivers/pci.c src/drivers/ata.c src/drivers/net/pcnet.c src/drivers/net/virtio_net.c src/drivers/net/e1000e.c src/drivers/virtio/virtio_mmio.c src/drivers/virtio/virtio_transport.c src/drivers/virtio/virtio_pci_modern.c
@@ -352,6 +355,8 @@ fs_root: disk_structure userland
 	@cp -v src/userland/crash-test fs_root/bin/
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
+	@cp -v src/userland/mmap-test fs_root/bin/
+	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
 	@cp -v src/userland/gui-demo fs_root/bin/gui-demo

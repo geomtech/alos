@@ -5,9 +5,16 @@
 #include "../fs/file.h"
 #include "../fs/vfs.h"
 #include "../include/string.h"
+#include "../include/mman.h"
+#include "../include/errno.h"
+#include "../include/time.h"
+#include "../arch/x86_64/cpu.h"
+#include "futex.h"
+#include "thread_lifecycle.h"
 #include "../mm/kheap.h"
 #include "../mm/pmm.h"
 #include "../mm/vmm.h"
+#include "../mm/vm.h"
 #include "../net/core/net.h"
 #include "../net/l4/tcp.h"
 #include "../shell/shell.h"
@@ -87,14 +94,9 @@ static int sys_exit(int status) {
  * Note: Implémentation simplifiée - accepte des ms au lieu de struct timespec
  */
 static int sys_nanosleep(uint64_t milliseconds) {
-  (void)milliseconds; /* Ignore for now - just yield */
-  
-  /* Simple yield to let other threads run */
-  thread_t *current = thread_current();
-  if (current) {
-    /* Mark that we want to yield, scheduler will handle it */
-    current->needs_yield = true;
-  }
+  if (milliseconds > UINT32_MAX) return -EINVAL;
+  if (milliseconds) thread_sleep_ms((uint32_t)milliseconds);
+  else thread_yield();
   return 0;
 }
 
@@ -162,6 +164,7 @@ static int sys_write(int fd, const char *buf, uint64_t count) {
     KLOG_ERROR("SYSCALL", "sys_write: NULL buffer");
     return -1;
   }
+  if (!user_range_valid(buf, count, false)) return -1;
 
   /* Logging disabled for performance:
    * KLOG_INFO("SYSCALL", "sys_write called:");
@@ -329,6 +332,7 @@ static int sys_read(int fd, void *buf, uint64_t count) {
   if (buf == NULL || fd < 0 || fd >= MAX_FD) {
     return -1;
   }
+  if (!user_range_valid(buf, count, true)) return -1;
 
   open_file_description_t *description = current_fd_get(fd);
   if (description == NULL) {
@@ -1466,13 +1470,14 @@ static void *sys_brk(void *addr) {
 
 void syscall_dispatcher(syscall_regs_t *regs) {
   uint32_t syscall_num = regs->rax;
-  int result = -1;
+  int64_t result = -1;
+  thread_t *caller = thread_current();
+  if (caller && caller->should_terminate) thread_exit(caller->exit_status);
 
   /* DEBUG: Vérification de sanité du RIP */
-  uint64_t entry_rip_low = regs->rip & 0xFFFFFFFF;
   /* La vérification précédente était trop restrictive - elle bloquait les adresses légitimes dans la plage utilisateur */
   /* Nouvelle vérification: seulement bloquer les adresses clairement invalides */
-  if (entry_rip_low == 0 || entry_rip_low >= 0xFFFFFFFF) {
+  if (regs->rip == 0 || regs->rip > USER_SPACE_END) {
     KLOG_ERROR("SYSCALL", "FATAL: Entry RIP invalid!");
     KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
     KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
@@ -1483,7 +1488,7 @@ void syscall_dispatcher(syscall_regs_t *regs) {
   }
 
   /* Vérifier si l'adresse de retour est dans la plage utilisateur valide */
-  if ((regs->rip & 0xFFFFFFFF) < 0x400000 || (regs->rip & 0xFFFFFFFF) >= 0xBFFFF000) {
+  if (regs->rip < USER_CODE_BASE) {
     KLOG_ERROR("SYSCALL", "FATAL: Entry RIP out of user space range!");
     KLOG_ERROR_HEX("SYSCALL", "  RIP (high): ", (uint32_t)(regs->rip >> 32));
     KLOG_ERROR_HEX("SYSCALL", "  RIP (low): ", (uint32_t)regs->rip);
@@ -1497,6 +1502,14 @@ void syscall_dispatcher(syscall_regs_t *regs) {
   case SYS_EXIT:
     result = sys_exit((int)regs->rdi);
     break;
+  case SYS_EXIT_GROUP: {
+    process_t *process = process_current();
+    process->exit_status = (int)regs->rdi;
+    for (thread_t *thread = process->thread_list; thread; thread = thread->proc_next)
+      if (thread != thread_current()) thread_kill(thread, (int)regs->rdi);
+    thread_exit((int)regs->rdi);
+    break;
+  }
 
   case SYS_READ:
     result = sys_read((int)regs->rdi, (void *)regs->rsi, regs->rdx);
@@ -1512,6 +1525,127 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_GETPID:
     result = sys_getpid();
+    break;
+
+  case SYS_GETTID:
+    result = thread_get_tid();
+    break;
+  case SYS_ISATTY: {
+    open_file_description_t *description = current_fd_get((int)regs->rdi);
+    result = !description ? -EBADF :
+             description->type == FILE_TYPE_CONSOLE ? 1 : -ENOTTY;
+    break;
+  }
+
+  case SYS_CONTEXT_SWITCHES:
+    result = thread_current()->context_switches;
+    break;
+  case SYS_FUTEX_WAIT:
+    result = futex_wait_private((uint32_t *)regs->rdi, (uint32_t)regs->rsi,
+                                (uint32_t)regs->rdx);
+    break;
+  case SYS_FUTEX_WAKE:
+    result = futex_wake_private((uint32_t *)regs->rdi, (int)regs->rsi);
+    break;
+  case SYS_THREAD_JOIN:
+    result = thread_user_join((uint32_t)regs->rdi);
+    break;
+  case SYS_THREAD_DETACH:
+    result = thread_user_detach((uint32_t)regs->rdi);
+    break;
+  case SYS_THREAD_REGISTER:
+    result = thread_user_register((uint32_t)regs->rdi, regs->rsi, regs->rdx,
+                                  regs->r10, regs->r8);
+    break;
+  case SYS_GET_FS:
+    result = (int64_t)thread_current()->fs_base;
+    break;
+  case SYS_SET_FS:
+    if (regs->rdi > USER_SPACE_END) result = -EINVAL;
+    else {
+      thread_current()->fs_base = regs->rdi;
+      wrmsr(0xC0000100, regs->rdi);
+      result = 0;
+    }
+    break;
+  case SYS_CLOCK_GETTIME: {
+    uint64_t ms;
+    if (regs->rdi == CLOCK_MONOTONIC) ms = timer_get_uptime_ms();
+    else if (regs->rdi == CLOCK_REALTIME) ms = timer_get_realtime_ms();
+    else { result = -EINVAL; break; }
+    struct timespec time = {(int64_t)(ms / 1000), (int64_t)(ms % 1000) * 1000000};
+    result = copy_to_user((void *)regs->rsi, &time, sizeof(time)) ? -EFAULT : 0;
+    break;
+  }
+  case SYS_NANOSLEEP_POSIX: {
+    struct timespec time;
+    if (copy_from_user(&time, (void *)regs->rdi, sizeof(time))) {
+      result = -EFAULT;
+      break;
+    }
+    if (time.tv_sec < 0 || time.tv_nsec < 0 || time.tv_nsec >= 1000000000 ||
+        (uint64_t)time.tv_sec > UINT32_MAX / 1000 ||
+        (regs->rsi && !user_range_valid((void *)regs->rsi, sizeof(time), true))) {
+      result = -EINVAL;
+      break;
+    }
+    uint64_t ms = (uint64_t)time.tv_sec * 1000 +
+                  ((uint64_t)time.tv_nsec + 999999) / 1000000;
+    if (ms) ms++; /* Inclure la fraction du tick courant. */
+    result = sys_nanosleep(ms);
+    break;
+  }
+
+  case SYS_VMINFO: {
+    vm_info_t info;
+    preempt_disable();
+    vm_get_info(process_current(), &info);
+    result = copy_to_user((void *)regs->rdi, &info, sizeof(info)) == 0
+                 ? 0 : -EFAULT;
+    preempt_enable();
+    break;
+  }
+
+  case SYS_ERRNO_LOCATION: {
+    thread_t *thread = thread_current();
+    preempt_disable();
+    result = thread != NULL ? (int64_t)thread->errno_address : -EINVAL;
+    if (thread != NULL && result == 0) {
+      result = vm_mmap(process_current(), 0, PAGE_SIZE,
+                        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+                        -1, 0);
+      if (result > 0) thread->errno_address = (uint64_t)result;
+    }
+    preempt_enable();
+    break;
+  }
+
+  case SYS_MMAP:
+    preempt_disable();
+    result = vm_mmap(process_current(), regs->rdi, regs->rsi,
+                      (int)regs->rdx, (int)regs->r10, (int)regs->r8,
+                      (int64_t)regs->r9);
+    preempt_enable();
+    break;
+
+  case SYS_MUNMAP:
+    preempt_disable();
+    result = vm_munmap(process_current(), regs->rdi, regs->rsi);
+    preempt_enable();
+    break;
+
+  case SYS_MPROTECT:
+    preempt_disable();
+    result = vm_mprotect(process_current(), regs->rdi, regs->rsi,
+                          (int)regs->rdx);
+    preempt_enable();
+    break;
+
+  case SYS_MADVISE:
+    preempt_disable();
+    result = vm_madvise(process_current(), regs->rdi, regs->rsi,
+                        (int)regs->rdx);
+    preempt_enable();
     break;
 
   /* Socket syscalls */
@@ -1716,8 +1850,9 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
   }
 
-  /* Retourner le résultat dans EAX */
-  regs->rax = (uint32_t)result;
+  thread_t *exiting = thread_current();
+  if (exiting && exiting->should_terminate) thread_exit(exiting->exit_status);
+  regs->rax = (uint64_t)result;
 
   /* NOUVEAU: Vérifier si le thread doit céder le CPU */
   thread_t *current = thread_current();
@@ -1905,6 +2040,11 @@ static int sys_create_thread(void *entry, void *stack, void *arg) {
   }
 
   /* 2. Allouer une nouvelle kernel stack pour le nouveau thread */
+  uint64_t user_stack = ((uint64_t)stack & ~15ULL) - 8;
+  uint64_t return_address = 0;
+  if (!user_range_valid(entry, 1, false) ||
+      copy_to_user((void *)user_stack, &return_address, sizeof(return_address)))
+    return -1;
   void *kernel_stack = kmalloc(THREAD_DEFAULT_STACK_SIZE);
   if (kernel_stack == NULL) {
     KLOG_ERROR("SYSCALL", "sys_create_thread: failed to allocate kernel stack");
@@ -1918,7 +2058,7 @@ static int sys_create_thread(void *entry, void *stack, void *arg) {
       proc,                     /* Processus propriétaire */
       "user_thread",            /* Nom du thread */
       (uint64_t)entry,          /* Point d'entrée user */
-      (uint64_t)stack,          /* Stack pointer user */
+      user_stack,              /* ABI SysV : RSP modulo 16 = 8 a l'entree */
       arg,                      /* Argument pour le thread */
       kernel_stack,             /* Kernel stack allouée */
       THREAD_DEFAULT_STACK_SIZE /* Taille de la kernel stack */

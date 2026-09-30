@@ -1,0 +1,12 @@
+diff --git a/libcxx/src/chrono.cpp b/libcxx/src/chrono.cpp
+--- a/libcxx/src/chrono.cpp
++++ b/libcxx/src/chrono.cpp
+@@ -36,1 +36,1 @@
+-#if defined(__APPLE__) || defined(__gnu_hurd__) || defined(__OpenBSD__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
++#if defined(__ALOS__) || defined(__APPLE__) || defined(__gnu_hurd__) || defined(__OpenBSD__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+diff --git a/libcxx/src/filesystem/filesystem_clock.cpp b/libcxx/src/filesystem/filesystem_clock.cpp
+--- a/libcxx/src/filesystem/filesystem_clock.cpp
++++ b/libcxx/src/filesystem/filesystem_clock.cpp
+@@ -32,1 +32,1 @@
+-#if defined(__APPLE__) || defined(__gnu_hurd__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
++#if defined(__ALOS__) || defined(__APPLE__) || defined(__gnu_hurd__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)

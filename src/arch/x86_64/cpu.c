@@ -2,6 +2,7 @@
 #include "cpu.h"
 #include "../../kernel/klog.h"
 #include "gdt.h"
+#include "xstate.h"
 
 /* External syscall entry point (defined in interrupts.s) */
 extern void syscall_entry(void);
@@ -17,7 +18,7 @@ void cpu_init(void) {
 
   /* Enable SSE */
   uint64_t cr0 = read_cr0();
-  cr0 &= ~CR0_EM; /* Clear Emulation bit */
+  cr0 &= ~(CR0_EM | (1ULL << 3)); /* EM et TS : sauvegarde eager. */
   cr0 |= CR0_MP;  /* Set Monitor Coprocessor bit */
   /* Recommended: Set NE (Numeric Error) for internal FPU error reporting */
   cr0 |= CR0_NE;
@@ -27,6 +28,7 @@ void cpu_init(void) {
   cr4 |= CR4_OSFXSR;     /* Enable FXSAVE/FXRSTOR */
   cr4 |= CR4_OSXMMEXCPT; /* Enable SIMD Exceptions */
   write_cr4(cr4);
+  xstate_init();
 
   KLOG_INFO("CPU", "x86-64 CPU initialized (SSE Enabled)");
   KLOG_INFO_HEX("CPU", "EFER: ", efer);

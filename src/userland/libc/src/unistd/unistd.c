@@ -1,6 +1,7 @@
 /* src/userland/libc/src/unistd/unistd.c - Standard Unix functions */
 #include "internal/syscall.h"
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <sys/meminfo.h>
@@ -90,4 +91,16 @@ int meminfo(struct meminfo *info) {
 void _exit(int status) {
   syscall3(SYS_EXIT, status, 0, 0);
   __builtin_unreachable();
+}
+
+long sysconf(int name) {
+  if (name == _SC_PAGESIZE) return 4096;
+  errno = EINVAL;
+  return -1;
+}
+
+int isatty(int fd) {
+  long result = syscall1(SYS_ISATTY, fd);
+  if (result < 0) { errno = (int)-result; return 0; }
+  return (int)result;
 }

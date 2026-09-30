@@ -233,6 +233,16 @@ uint64_t vmm_get_phys_addr(page_directory_t* dir, uint64_t virt_addr);
  */
 int vmm_map_page_in_dir(page_directory_t* dir, uint64_t phys, uint64_t virt, uint64_t flags);
 
+/* Inclut les pages residentes rendues non presentes par PROT_NONE. */
+uint64_t vmm_get_page_entry(page_directory_t *dir, uint64_t virt);
+
+/* Parcours sparse ; release libere uniquement les frames PAGE_OWNED. */
+void vmm_update_range(page_directory_t *dir, uint64_t start, uint64_t end,
+                      uint64_t flags, bool release);
+uint64_t vmm_resident_pages(page_directory_t *dir, uint64_t start, uint64_t end);
+uint64_t vmm_first_occupied_end(page_directory_t *dir, uint64_t start,
+                                uint64_t end);
+
 /**
  * Retourne le Page Directory du kernel.
  */

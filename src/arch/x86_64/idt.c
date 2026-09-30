@@ -4,6 +4,8 @@
 #include "io.h"
 #include "../../kernel/klog.h"
 #include "../../kernel/console.h"
+#include "../../kernel/process.h"
+#include "../../mm/vm.h"
 
 /* ========================================
  * External ISR/IRQ Stubs (defined in interrupts.s)
@@ -264,9 +266,20 @@ void exception_handler(struct interrupt_frame *frame)
     if (int_no == 14) {
         uint64_t fault_addr;
         __asm__ volatile("mov %%cr2, %0" : "=r"(fault_addr));
+
+        vm_fault_result_t result =
+            vm_handle_fault(process_current(), fault_addr, error_code);
+        if (result == VM_FAULT_HANDLED) {
+            return;
+        }
         
         /* Check if the page fault originated from User Mode (Ring 3) */
         if ((frame->cs & 3) == 3 || (error_code & 0x4) != 0) {
+            process_log_fault_context(frame, fault_addr);
+            if (result == VM_FAULT_BACKING_ERROR) {
+                process_terminate_mapping_fault(frame->rip, fault_addr,
+                                                 error_code);
+            }
             process_terminate_fault(14, frame->rip, fault_addr, error_code);
             return;
         }
@@ -319,6 +332,7 @@ void exception_handler(struct interrupt_frame *frame)
     
     /* Check if any other exception originated from User Mode (Ring 3) */
     if ((frame->cs & 3) == 3) {
+        process_log_fault_context(frame, 0);
         process_terminate_fault(int_no, frame->rip, 0, error_code);
         return;
     }

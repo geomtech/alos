@@ -3,6 +3,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 size_t strlen(const char *str);
 int strcmp(const char *s1, const char *s2);
@@ -23,5 +26,10 @@ void *memcpy(void *dest, const void *src, size_t n);
 void *memmove(void *dest, const void *src, size_t n);
 int memcmp(const void *s1, const void *s2, size_t n);
 void *memchr(const void *ptr, int c, size_t n);
+char *strerror(int error);
+int strerror_r(int error, char *buffer, size_t size);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

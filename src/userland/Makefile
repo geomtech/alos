@@ -1,6 +1,8 @@
 
 # Userland Makefile
 CC = gcc
+CXX = clang++
+RUNTIME_CC = clang --target=x86_64-unknown-none-elf
 LD = ld
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Ilibc/include -Ilibgui/include -Igui/freetype/include -DFT2_BUILD_LIBRARY
 LDFLAGS = -static -nostdlib
@@ -53,7 +55,7 @@ LIBGUI_OBJ = libgui/gui.o libgui/draw.o
 LIBGUI = libgui/libgui.a
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build threads-test crash-test fork-test exec-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 .PHONY: libc_build
@@ -81,6 +83,21 @@ fork-test: libc_build fork-test.o
 
 exec-test: libc_build exec-test.o
 	$(LD) -T linker.ld -o exec-test $(CRT0) exec-test.o $(LIBC)
+
+mmap-test: libc_build mmap-test.o
+	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(LIBC)
+
+simd-context-test tls-test time-test pthread-test: %: %.o $(CRT0) $(LIBC)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
+crt-cxx-test tls-cxx-test: %: %.o $(CRT0) $(LIBC)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+
+crt-cxx-test.o tls-cxx-test.o: %.o: %.cc
+	$(CXX) --target=x86_64-unknown-none-elf -std=c++17 -fhosted -fno-builtin -O2 -m64 -fno-pic -fno-pie -fno-stack-protector -fno-exceptions -fno-rtti -ftls-model=local-exec -Ilibc/include -c $< -o $@
+
+simd-context-test.o tls-test.o time-test.o pthread-test.o: %.o: %.c runtime-test.h
+	$(RUNTIME_CC) $(CFLAGS) -ftls-model=local-exec -c $< -o $@
 
 gui_app: libc_build $(GUI_OBJ)
 	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
@@ -128,7 +145,8 @@ cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -f simd-context-test tls-test time-test pthread-test crt-cxx-test tls-cxx-test
+	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean

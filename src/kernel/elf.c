@@ -154,6 +154,23 @@ int elf_load_file(const char *filename, process_t *proc,
   for (uint16_t i = 0; i < ehdr.e_phnum; i++) {
     Elf64_Phdr *phdr = &phdrs[i];
 
+    if (phdr->p_type == PT_TLS && proc) {
+      uint64_t alignment = phdr->p_align ? phdr->p_align : 1;
+      if (proc->tls_alignment || phdr->p_filesz > phdr->p_memsz ||
+          phdr->p_memsz > 1024 * 1024 || alignment > 1024 * 1024 ||
+          (alignment & (alignment - 1)) ||
+          phdr->p_vaddr > USER_SPACE_END - phdr->p_memsz) {
+        KLOG_ERROR("ELF", "Invalid static TLS segment");
+        kfree(phdrs);
+        vfs_close(file);
+        return ELF_ERR_MEMORY;
+      }
+      proc->tls_image_address = phdr->p_vaddr;
+      proc->tls_file_size = phdr->p_filesz;
+      proc->tls_mem_size = phdr->p_memsz;
+      proc->tls_alignment = alignment;
+    }
+
     /* On ne charge que les segments PT_LOAD */
     if (phdr->p_type != PT_LOAD) {
       continue;

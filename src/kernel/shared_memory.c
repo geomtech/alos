@@ -74,6 +74,11 @@ size_t shm_size(const shm_object_t *object) {
   return object != NULL ? (size_t)object->size : 0;
 }
 
+uint64_t shm_page_physical(const shm_object_t *object, uint64_t page) {
+  if (object == NULL || page >= object->page_count) return 0;
+  return pmm_virt_to_phys(object->pages[page]);
+}
+
 static bool range_is_free(process_t *process, uint64_t address, uint64_t size) {
   page_directory_t *directory = (page_directory_t *)process->pml4;
   for (uint64_t offset = 0; offset < size; offset += PAGE_SIZE) {

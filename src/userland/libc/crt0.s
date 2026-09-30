@@ -6,6 +6,7 @@ section .text
 global _start
 extern main
 extern exit
+extern __libc_init
 
 _start:
     ; The kernel pushes arguments on the stack:
@@ -44,6 +45,11 @@ _start:
     and rsp, -16
 
     ; Call main(argc, argv)
+    push rdi
+    push rsi
+    call __libc_init
+    pop rsi
+    pop rdi
     call main
 
     ; Call exit(ret) with return value from main
