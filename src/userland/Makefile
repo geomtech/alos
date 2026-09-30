@@ -74,9 +74,10 @@ all: path-ops-test
 all: stack-protector-test stack-protector-driver
 all: base-math-test
 all: unix-socket-test
+all: epoll-test
 all: int128-runtime-test
 
-unix-socket-test int128-runtime-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+unix-socket-test epoll-test int128-runtime-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
 	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
 base-math-test.o: base-math-test.c
@@ -208,6 +209,7 @@ clean:
 	rm -f stack-protector-test stack-protector-driver
 	rm -f base-math-test
 	rm -f unix-socket-test
+	rm -f epoll-test
 	rm -f int128-runtime-test
 	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o

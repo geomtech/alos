@@ -170,9 +170,10 @@ static int ctl_epoll(int epfd, int operation, int fd,
         return -EBADF;
     }
     if (!watchable(target)) {
+        int error = target->type == FILE_TYPE_EPOLL ? -EINVAL : -EPERM;
         file_description_release(target);
         file_description_release(epoll_description);
-        return target->type == FILE_TYPE_EPOLL ? -EINVAL : -EPERM;
+        return error;
     }
 
     struct alos_epoll_event event = {0};

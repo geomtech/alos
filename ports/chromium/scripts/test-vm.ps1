@@ -153,7 +153,7 @@ if ($Fleet) {
     $startup = $startup.Replace("echo vm-suite-complete",
         "base-math-test`n$protectorCommand`necho vm-suite-complete")
     $startup = $startup.Replace("echo vm-suite-complete",
-        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`nint128-runtime-test`nunix-socket-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
+        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`nint128-runtime-test`nunix-socket-test`nepoll-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
 }
 if ($StackProtectorOnly) {
     $command = if ($EntropyUnavailable) {
@@ -413,11 +413,11 @@ try {
                 "entropy-test: unavailable PASS"
             } else { "entropy-test: source/concurrent PASS" }
             foreach ($marker in @("posix-file-test: PASSED", "stdio-file-test: PASS", "positional-io-test: PASS", "path-match-test: PASS", "mincore-test: PASS", "system-info-test: PASS", "pipe-test: PASS",
-                "socket-test: PASS", "inet-test: PASS", "vector-io-test: PASS",
+                "socket-test: PASS", "inet-test: PASS", "epoll-test: PASS", "vector-io-test: PASS",
                 "[shared-memory-test] PASS", "[resource-test] PASS", "native-compat-test PASS", "fs-attributes-test: PASS", "msync-test: PASS", "process-control-test: PASS", "path-ops-test: PASS", $entropyMarker)) {
                 if (-not $text.Contains($marker)) { throw "Resultat fleet manquant '$marker' : $log" }
             }
-            if ($text -match "(?m)^(posix-file-test|stdio-file-test|positional-io-test|path-match-test|mincore-test|system-info-test|pipe-test|socket-test|inet-test|entropy-test)(:| )\s*FAIL(?:ED)?\b") {
+            if ($text -match "(?m)^(posix-file-test|stdio-file-test|positional-io-test|path-match-test|mincore-test|system-info-test|pipe-test|socket-test|inet-test|epoll-test|entropy-test)(:| )\s*FAIL(?:ED)?\b") {
                 throw "Regression fleet : $log"
             }
             if ($text -match "(?m)^(vector-io-test(:| )|fs-attributes-test: |msync-test: |process-control-test: |path-ops-test: |\[(shared-memory-test|resource-test)\] |native-compat-test )FAIL\b") {

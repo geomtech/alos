@@ -384,6 +384,7 @@ fs_root: disk_structure userland
 	@cp -v src/userland/stack-protector-test src/userland/stack-protector-driver fs_root/bin/
 	@cp -v src/userland/base-math-test fs_root/bin/
 	@cp -v src/userland/unix-socket-test fs_root/bin/
+	@cp -v src/userland/epoll-test fs_root/bin/
 	@cp -v src/userland/int128-runtime-test fs_root/bin/
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
