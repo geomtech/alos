@@ -16,7 +16,7 @@ Next major milestones:
 3. Copy-on-Write and coherent shared file mappings
 4. AHCI/SATA DMA, then NVMe
 
-**Chromium is not yet runnable on ALOS.** GN generates an experimental Chromium 140.0.7339.80 build graph and Ninja compiles real `//base`/dependency objects, but the complete target has not been built, linked or executed. Target LLVM 18.1.8 `libc++`/`libc++abi` archives now build with localization, Unicode and C++ wide-character support enabled. Native runtime/wide-format suites and three consecutive `complex-cpp-test` runs passed on both QEMU `qemu64` and `max`. This is not a working Blink, V8, Mojo or Ozone port. See [the detailed port status](docs/chromium-port.md).
+**Chromium is not yet runnable on ALOS.** The experimental Chromium 140.0.7339.80 `base:base` target compiles with zero failed actions and produces a verified 399-member archive. Nine real Base smoke executables are linked and pass under ALOS on QEMU `qemu64` and `max`: time, atomic copy, file comparison, raw stack diagnostics, native processes, native thread priorities, mapped ELF metadata, unavailable shared purge and the native task/FD event loop. This is not a working Blink, V8, Mojo or Ozone port. Target LLVM 18.1.8 `libc++`/`libc++abi` archives build with localization, Unicode and wide-character support. See [the detailed port status](docs/chromium-port.md) for exact runtime results and limitations.
 
 ## Features implemented and future plans
 
@@ -389,7 +389,7 @@ For GUI changes, also exercise the official desktop interactively: launch GUI De
 
 This project is intended for educational purposes. Educational use is not itself a license grant.
 
-The tree contains third-party code, including FreeType and imported musl routines. Preserve their notices and consult the bundled licenses, including `ports/chromium/MUSL-LICENSE` and `src/userland/libc/COPYRIGHT.musl`.
+The tree contains third-party code, including FreeType and imported musl routines. Preserve their notices and consult the bundled licenses, including `ports/chromium/MUSL-LICENSE`, `src/userland/libc/COPYRIGHT.musl` and `src/userland/libm/COPYRIGHT.musl`. Native userland links the separate target `libm.a`; Chromium never links host libc, libm or CRT.
 
 ## Contributing
 

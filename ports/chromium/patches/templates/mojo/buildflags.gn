@@ -1,0 +1,15 @@
+# Copyright 2014 The Chromium Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/buildflag_header.gni")
+import("//mojo/public/cpp/bindings/mojo_buildflags.gni")
+
+buildflag_header("mojo_buildflags") {
+  header_dir = "mojo/public/cpp/bindings"
+  header = "mojo_buildflags.h"
+  flags = [
+    "MOJO_TRACE_ENABLED=$enable_mojo_tracing",
+    "MOJO_RANDOM_DELAYS_ENABLED=$enable_random_mojo_delays",
+  ]
+}

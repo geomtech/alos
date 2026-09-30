@@ -3,6 +3,7 @@
 #include "native_network_cleanup.h"
 #include "process.h"
 #include "uaccess.h"
+#include "unix_socket.h"
 #include "../include/errno.h"
 #include "../net/l4/tcp.h"
 #include "../net/core/net.h"
@@ -251,11 +252,19 @@ static int accept_socket(open_file_description_t *d, void *a, uint32_t *len, int
 int64_t native_socket_call(uint64_t op, uint64_t a, uint64_t b,
                            uint64_t c, uint64_t d, uint64_t e) {
     if (op == ALOS_SOCKET_CREATE) return create_socket((int)a,(int)b,(int)c);
-    if (op == ALOS_SOCKET_PAIR) return -EAFNOSUPPORT;
+    if (op == ALOS_SOCKET_PAIR) return unix_socket_pair((int)a,(int)b,(int)c,(void *)d);
     file_descriptor_t *fds = table();
     if (!fds) return -ESRCH;
     open_file_description_t *description = file_table_acquire(fds,(int)a);
     if (!description) return -EBADF;
+    if (description->type == FILE_TYPE_UNIX_SOCKET) {
+        native_network_resources_t held = {.description = description};
+        native_network_resources_register(&held);
+        int64_t result = unix_socket_call(description,op,b,c,d,e);
+        native_network_resources_unregister(&held);
+        file_description_release(description);
+        return result;
+    }
     if (description->type != FILE_TYPE_SOCKET) {
         file_description_release(description); return -ENOTSOCK;
     }

@@ -687,6 +687,161 @@ Le Base process smoke et le smoke de refus de purge sont prepares dans GN,
 mais ne sont pas declares lies ou executes ; l'archive finale Base attend
 encore la completion du backend filesystem.
 
+Le jalon filesystem suivant a leve cette derniere action :
+`out\ninja-file-util-final.log` se termine avec **0 actions FAILED** et
+`[1658/1658] AR obj/base/libbase.a`. L'archive thin contient 397 membres
+reels, dont les definitions upstream de TimeNow/TimeTicksNow ; sa petite
+taille d'index n'est pas celle des objets qu'elle reference.
+Le test natif `path-ops-test` et le runtime/fleet qemu64 dans `path-ops-vm`
+valident les operations relatives a un FD de repertoire, independantes du
+cwd, openat/fstatat/unlinkat et O_NOFOLLOW. realpath valide d'abord la
+traversee du filesystem avant de normaliser les composants. Les liens
+symboliques courts Ext2 sont crees/lus, mais leur suivi reste ENOTSUP.
+rename fonctionne dans le meme repertoire vers un nom inexistant tenant
+dans l'enregistrement ; remplacement, deplacement de repertoire et
+transaction inter-repertoires sont refuses avant mutation. chmod retourne
+ENOTSUP sans changer les bits : l'identite et les permissions ne sont pas
+encore enforcees. Un repertoire ouvert puis supprime reste accessible
+jusqu'a fermeture, sans permettre de nouvelles creations dedans.
+
+La premiere edition de liens du vrai `alos_native:base_smoke` a ensuite
+revele des dependances runtime absentes, distinctes de la compilation Base :
+protection de pile, ceilf/round/log/exp/frexp/ldexp et CollectStackTrace de
+PartitionAlloc. Le wrapper natif emploie directement le ld.lld epingle de
+Chromium, sans passer par le g++/CRT Linux de l'hote. Le toolchain est
+desormais conserve dans le depot et le script refuse d'ecraser une version
+externe divergente.
+
+La libc fournit une garde globale par processus initialisee par getentropy
+avant les tableaux preinit/init. Le hook CRT est faible : les anciens
+executables non proteges ne demandent pas d'entropie ; les references fortes
+des objets proteges extraient le runtime de l'archive. Aucun seed fixe ou
+fallback n'est utilise. Une source absente ou une garde nulle termine le
+processus avec diagnostic et statut natif 134 avant les constructeurs.
+Une corruption de garde termine le groupe de threads sans destructeurs.
+Fork copie la garde ; exec en initialise une nouvelle, sans revendication
+de canary par thread.
+
+Les six fonctions math requises utilisent les algorithmes binary32/binary64
+de musl 1.2.6, notamment les tables/polynomes Arm MIT pour exp/log, avec
+les notices conservees et adaptation errno EDOM/ERANGE. Les suites isolees
+`base-math-final-vm`, `base-math-final-max-vm` et
+`base-math-final-no-rng-vm` passent : zeros signes, subnormaux, NaN/Inf,
+points de reference, arrondi dirige x87/SSE et exceptions invalid/divzero ;
+constructeurs proteges, fork/corruption et refus d'exec protege sans RNG.
+La tentative complete `stack-protector-vm` est restee incomplete apres
+`threads-test`. Une nouvelle execution `base-runtime-final-vm` passe ensuite
+la suite runtime/fleet complete qemu64, avec les nouveaux tests de math et
+de protection de pile ; aucun correctif scheduler/TLS/xstate n'a ete ajoute
+pour masquer cette interruption.
+
+`base-smoke-secure-link.log` se termine maintenant par
+`[1658/1658] LINK ./base_smoke`, sans action FAILED. readelf confirme un
+ELF64 x86-64 EXEC statique, entree 0x400000, segment TLS et aucun interpreteur
+dynamique ; nm ne trouve aucun symbole indefini. Le script de liens ALOS
+conserve son segment ELF RWE existant : ce jalon n'apporte pas de protection
+W^X des segments ELF. L'archive Base conserve ses 397 membres.
+Les executions reelles `chromium-base-time-vm` (qemu64) et
+`chromium-base-time-max-vm` (max) affichent
+`chromium-base-smoke: Time PASS` puis `vm-suite-complete` : le programme
+appelle les implementations upstream Time/TimeTicks, attend 20 ms et
+verifie leurs contrats. Le runner copie les executables sur un disque de
+test separe, ne retire que leurs sections debug dans ces copies et verifie
+les octets de staging ; il ne modifie ni les originaux ni disk.img.
+Les autres smokes Base processus/IO/atomiques/filesystem restent a valider
+individuellement. Ce premier lien et cette execution de vrai Base ne
+constituent pas une execution de Chromium, Blink, V8, Ozone ou Mojo.
+
+`chromium-base-five-vm` a ensuite execute cinq smokes reels : Time,
+copie atomique (alignements/bornes et lecteur concurrent), comparaisons
+de fichiers, traces brutes Base/PartitionAlloc et processus. Ce dernier
+valide fork/exec, capture stdout, statut brut 37, timeout/terminaison et
+refus d'une option de groupe de processus ; aucune emulation de signaux
+POSIX n'est ajoutee. La relance globale de `ninja-base-native-final.log`
+compile toujours Base sans FAILED, puis le groupe de smokes rencontre
+deux echecs de lien : discardable et IO. Ils revelent les fonctions du
+backend thread ALOS manquantes, floor/ceil et le lecteur ELF generique.
+
+Les fonctions mathematiques sont maintenant regroupees dans
+`src/userland/libm/libm.a`, compilee avec Clang
+`--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -fno-builtin`.
+Le header public est `libm/include/math.h` ; le header libc existant le
+redirige. Les anciens helpers float/x87, y compris frexpl utilise par
+printf, ont ete deplaces, sans definitions doubles dans libc.a.
+Les liens userland utilisent un groupe libc/libm et le toolchain Chromium
+lie explicitement l'archive cible. Les smokes declarent aussi les archives
+runtime comme entrees GN pour qu'une modification provoque une relance.
+Les notices musl/Arm sont conservees dans les sources et
+`src/userland/libm/COPYRIGHT.musl`.
+
+L'audit nm des objets Base/Abseil generes trouve ceil, ceilf, exp, floor,
+frexp/frexpl, ldexp/ldexpf/ldexpl, log, round et pow. floor/ceil musl et
+ldexpl sur le scalbnl x87 natif sont ajoutes aux routines deja utilisees.
+pow apparait dans des objets mais n'est pas encore exige par les liens
+smoke observes ; aucune approximation ni support general de libm n'est
+revendique. sqrt/trunc/fmod binary64 ne sont pas ajoutes sans demande
+effective ; fmodl est le helper x87 preexistant.
+`libm-runtime-qemu64-vm` passe la reconstruction et la suite runtime/fleet
+complete, notamment floor/ceil positifs/negatifs, zeros signes, subnormaux,
+NaN/Inf et arrondi dirige, puis les tests CRT, libc, pthread et processus.
+`libm-runtime-max-vm` passe aussi la suite complete avec trois executions
+de complex-cpp-test relie a libc/libm/libc++ cibles, et
+`libm-runtime-no-rng-vm` passe le runtime/fleet en absence de RNG, y compris
+le refus de demarrage de l'executable protege.
+
+Le backend `platform_thread_alos.cc` utilise les cinq classes existantes
+du scheduler via alos_thread_set_nice : background 19, utility 10, default 0,
+display-critical -5 et interactive -10. Il ne compile pas le backend Linux
+et n'utilise ni uid/RLIMIT_NICE ni setpriority POSIX, toujours ENOTSUP.
+Realtime audio est refuse lors de creation et de changement de type.
+Le type Base en TLS n'est mis a jour qu'apres un changement natif reussi ;
+les erreurs d'attributs pthread sont aussi propagees avant creation.
+Les noms restent les metadonnees du gestionnaire de noms Base, sans
+pretendre renommer le thread dans le noyau. La pile utilisateur par defaut
+est au moins 2 MiB via les attributs pthread reels ; TLS/xstate et nettoyage
+restent ceux du noyau et du trampoline pthread/CRT existants.
+
+`ninja-libm-native-thread.log` leve les dependances thread et math de
+discardable/IO : sept executables smoke sont lies, dont thread et
+discardable. Il reste un echec de lien IO, avec trois fonctions de lecture
+ELF (ReadElfBuildId, GetRelocationOffset, GetElfProgramHeaders).
+Le lecteur concerne est un parseur upstream de buffers ELF entierement
+mappes, pas un backend Linux de chargement. Son integration GN et les types
+ELF64 Dyn/Nhdr sont prepares, avec un smoke de notes/build-id en memoire ;
+dladdr et la decouverte de modules charges restent explicitement ENOTSUP.
+`ninja-libm-elf-final.log` confirme ensuite la commande exacte
+`ninja -C out/alos -k 0 -j 8 base:base` avec 0 actions FAILED, puis
+`alos_native:all` avec les neuf editions de liens reussies. GN produit
+maintenant 1890 targets (deux nouveaux smokes par rapport aux 1888).
+L'archive Base contient 399 membres apres ajout du backend thread et du
+lecteur ELF. Les neuf ELF sont statiques, sans interpreteur ni section
+DYNAMIC et sans symbole indefini ; aucun CRT/libc/libm hote n'est lie.
+
+`chromium-base-nine-vm` et `chromium-base-nine-max-vm` passent le lot
+complet sous ALOS qemu64/max, avec tous les marqueurs et vm-suite-complete.
+Le smoke thread verifie les cinq valeurs de nice natives, la preservation
+du type/nice apres refus realtime, creation/join, nom Base, pile reelle
+d'au moins 2 MiB et refus EINVAL d'une pile invalide avant demarrage.
+Le smoke ELF verifie tailles ABI, en-tetes, relocation, build-id GNU
+majuscules/minuscules sur un buffer valide, magic invalide et dladdr
+explicitement indisponible. Il ne decouvre pas les modules de l'executable.
+Le smoke discardable verifie que Purge refuse ENOTSUP sans perdre la
+residence ni le contenu. Le smoke IO execute les assertions upstream/
+natives de surveillance de FD, rearmement/cancellation, boucles imbriquees,
+taches differees et reveils inter-thread. Les smokes Time, atomique,
+comparaisons de fichiers, traces brutes et processus restent PASS.
+
+La tentative precedente `chromium-base-seven-vm` a expire pendant les
+comparaisons de fichiers, sans assertion FAIL ni fin de lot ; elle n'est
+pas presentee comme une validation. Le lot final est relance sans build
+concurrent avec un delai runner plus large, sans supprimer les assertions
+ni modifier les deadlines internes des tests.
+Aucune erreur de compilation/lien ne reste dans ce groupe de neuf smokes.
+Cela ne valide pas base_unittests, l'ensemble des APIs Base, les signaux,
+la decouverte de modules, les garanties realtime ou une libm complete.
+Les besoins navigateur (Mojo/FD passing, connexion TCP/DNS, Ozone, Blink,
+V8) restent des jalons distincts non demontres.
+
 Ensuite le transport
 Mojo devra utiliser des sockets Unix/FD generiques ou un backend natif explicite,
 et l'event loop devra attendre plusieurs sources sans polling. Ces besoins

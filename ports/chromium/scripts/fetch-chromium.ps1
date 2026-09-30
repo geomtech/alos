@@ -14,6 +14,7 @@ $commit = "670b6f192f4668d2ac2c06bd77ec3e4eeda7d648"
 # outils host (generateurs Python, protoc, GRIT...).
 $sparse = @(
     "base", "build", "build_overrides", "buildtools", "chrome/enterprise_companion",
+    "crypto", "mojo", "third_party/ipcz",
     "testing", "tools/clang", "tools/gn", "tools/grit", "tools/gritsettings", "tools/protoc_wrapper",
     "third_party/abseil-cpp", "third_party/boringssl", "third_party/ced",
     "third_party/closure_compiler", "third_party/fuzztest",

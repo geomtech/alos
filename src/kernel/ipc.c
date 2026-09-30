@@ -4,12 +4,16 @@
 #include "../mm/kheap.h"
 #include "shared_memory.h"
 #include "thread.h"
+#include "../fs/file.h"
+#include "../include/errno.h"
 
 #define IPC_MAX_SERVICES 8
 
 typedef struct ipc_packet {
   uint32_t length;
   shm_object_t *attachment;
+  void *owned_context;
+  void (*destroy_context)(void *);
   struct ipc_packet *next;
   uint8_t data[IPC_MAX_PAYLOAD];
 } ipc_packet_t;
@@ -20,6 +24,7 @@ struct ipc_endpoint {
   bool listener;
   bool closed;
   bool peer_closed;
+  bool stream;
   char service_name[IPC_NAME_MAX + 1];
   struct ipc_endpoint *peer;
 
@@ -75,6 +80,7 @@ static void packet_destroy(ipc_packet_t *packet) {
   if (packet->attachment != NULL) {
     shm_release(packet->attachment);
   }
+  if (packet->destroy_context) packet->destroy_context(packet->owned_context);
   kfree(packet);
 }
 
@@ -104,6 +110,7 @@ void ipc_endpoint_release(ipc_endpoint_t *endpoint) {
     wait_queue_wake_all(&peer->wait_queue);
   }
   spinlock_irqrestore(&g_ipc_lock, flags);
+  if (endpoint->stream) file_poll_notify();
 
   ipc_endpoint_t *pending = endpoint->pending_head;
   while (pending != NULL) {
@@ -340,4 +347,128 @@ int ipc_receive(ipc_endpoint_t *endpoint, void *data, uint32_t capacity,
 
 uint32_t ipc_endpoint_id(ipc_endpoint_t *endpoint) {
   return endpoint != NULL ? endpoint->connection_id : 0;
+}
+
+int ipc_pair(ipc_endpoint_t **first, ipc_endpoint_t **second) {
+  ipc_endpoint_t *a = endpoint_create(false), *b = endpoint_create(false);
+  if (!a || !b) {
+    ipc_endpoint_release(a);
+    ipc_endpoint_release(b);
+    return -ENOMEM;
+  }
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  a->stream = b->stream = true;
+  a->peer = b;
+  b->peer = a;
+  a->connection_id = b->connection_id = g_next_connection_id++;
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  *first = a;
+  *second = b;
+  return 0;
+}
+
+int ipc_send_owned(ipc_endpoint_t *endpoint, const void *data, uint32_t length,
+                   void *context, void (*destroy)(void *)) {
+  if (!endpoint || !endpoint->stream || !length || length > IPC_MAX_PAYLOAD)
+    return -EINVAL;
+  ipc_packet_t *packet = kmalloc(sizeof(*packet));
+  if (!packet) return -ENOMEM;
+  memset(packet, 0, sizeof(*packet));
+  packet->length = length;
+  memcpy(packet->data, data, length);
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  ipc_endpoint_t *peer = endpoint->peer;
+  if (!peer || peer->closed) {
+    spinlock_irqrestore(&g_ipc_lock, flags);
+    kfree(packet);
+    return -EPIPE;
+  }
+  uint64_t queue_flags = spinlock_irqsave(&peer->queue_lock);
+  if (peer->queue_depth == IPC_QUEUE_DEPTH) {
+    spinlock_irqrestore(&peer->queue_lock, queue_flags);
+    spinlock_irqrestore(&g_ipc_lock, flags);
+    kfree(packet);
+    return -EAGAIN;
+  }
+  packet->owned_context = context;
+  packet->destroy_context = destroy;
+  if (peer->queue_tail) peer->queue_tail->next = packet;
+  else peer->queue_head = packet;
+  peer->queue_tail = packet;
+  ++peer->queue_depth;
+  wait_queue_wake_all(&peer->wait_queue);
+  spinlock_irqrestore(&peer->queue_lock, queue_flags);
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  file_poll_notify();
+  return 0;
+}
+
+int ipc_receive_owned(ipc_endpoint_t *endpoint, void *data, uint32_t capacity,
+                       uint32_t *length, void **context) {
+  if (!endpoint || !endpoint->stream) return -EINVAL;
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  uint64_t queue_flags = spinlock_irqsave(&endpoint->queue_lock);
+  ipc_packet_t *packet = endpoint->queue_head;
+  if (!packet) {
+    int result = endpoint->peer_closed ? -EPIPE : 0;
+    spinlock_irqrestore(&endpoint->queue_lock, queue_flags);
+    spinlock_irqrestore(&g_ipc_lock, flags);
+    return result;
+  }
+  if (packet->length > capacity) {
+    spinlock_irqrestore(&endpoint->queue_lock, queue_flags);
+    spinlock_irqrestore(&g_ipc_lock, flags);
+    return -EMSGSIZE;
+  }
+  endpoint->queue_head = packet->next;
+  if (!endpoint->queue_head) endpoint->queue_tail = NULL;
+  --endpoint->queue_depth;
+  memcpy(data, packet->data, packet->length);
+  *length = packet->length;
+  *context = packet->owned_context;
+  packet->destroy_context = NULL;
+  if (endpoint->peer) wait_queue_wake_all(&endpoint->peer->wait_queue);
+  spinlock_irqrestore(&endpoint->queue_lock, queue_flags);
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  packet_destroy(packet);
+  file_poll_notify();
+  return 1;
+}
+
+bool ipc_read_ready(void *opaque) {
+  ipc_endpoint_t *endpoint = opaque;
+  return endpoint->queue_head || endpoint->peer_closed ||
+         (thread_current() && thread_current()->should_terminate);
+}
+
+bool ipc_write_ready(void *opaque) {
+  ipc_endpoint_t *endpoint = opaque;
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  bool ready = !endpoint->peer || endpoint->peer->queue_depth < IPC_QUEUE_DEPTH ||
+               (thread_current() && thread_current()->should_terminate);
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  return ready;
+}
+
+wait_queue_t *ipc_waitqueue(ipc_endpoint_t *endpoint) {
+  return &endpoint->wait_queue;
+}
+
+bool ipc_peer_closed(ipc_endpoint_t *endpoint) {
+  return endpoint->peer_closed;
+}
+
+ipc_endpoint_t *ipc_peer_endpoint(ipc_endpoint_t *endpoint) {
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  ipc_endpoint_t *peer = endpoint->peer;
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  return peer;
+}
+
+void ipc_visit_owned(ipc_endpoint_t *endpoint,
+                      void (*visitor)(void *, void *), void *context) {
+  uint64_t flags = spinlock_irqsave(&endpoint->queue_lock);
+  for (ipc_packet_t *packet = endpoint->queue_head; packet; packet = packet->next)
+    if (packet->owned_context) visitor(packet->owned_context, context);
+  spinlock_irqrestore(&endpoint->queue_lock, flags);
 }

@@ -87,6 +87,8 @@ void __cxa_finalize(void *dso) {
 
 void __libc_init(char **envp) {
   environ = envp;
+  extern void __stack_chk_init(void) __attribute__((weak));
+  if (__stack_chk_init) __stack_chk_init();
   for (init_fn *p = __preinit_array_start; p != __preinit_array_end; p++) (*p)();
   for (init_fn *p = __init_array_start; p != __init_array_end; p++) (*p)();
 }

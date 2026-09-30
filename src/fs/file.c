@@ -12,6 +12,7 @@
 #include "../kernel/uaccess.h"
 #include "../kernel/native_socket.h"
 #include "../kernel/native_network_cleanup.h"
+#include "../kernel/unix_socket.h"
 #include "../include/errno.h"
 
 static spinlock_t table_lock;
@@ -32,6 +33,8 @@ int file_description_poll(open_file_description_t *description, short events) {
   if (description->type == FILE_TYPE_PIPE) return pipe_poll(description, events);
   if (description->type == FILE_TYPE_SOCKET)
     return native_socket_poll(description, events);
+  if (description->type == FILE_TYPE_UNIX_SOCKET)
+    return unix_socket_poll(description, events);
   if (description->type == FILE_TYPE_CONSOLE &&
       (description->flags & O_ACCMODE) == O_WRONLY)
     return events & 4;
@@ -80,6 +83,8 @@ void file_description_release(open_file_description_t *description) {
   } else if (description->type == FILE_TYPE_IPC &&
              description->ipc_endpoint != NULL) {
     ipc_endpoint_release(description->ipc_endpoint);
+  } else if (description->type == FILE_TYPE_UNIX_SOCKET) {
+    unix_socket_release(description->unix_socket);
   } else if (description->type == FILE_TYPE_SHM &&
              description->shm_object != NULL) {
     shm_release(description->shm_object);
@@ -280,7 +285,11 @@ int file_table_fcntl(file_descriptor_t table[MAX_FD], int fd, int command,
       if (argument & ~(O_ACCMODE | O_APPEND | O_NONBLOCK | O_SYNC)) {
         result = -ENOTSUP;
       } else if (description->type != FILE_TYPE_FILE &&
-                 description->type != FILE_TYPE_PIPE) {
+                 description->type != FILE_TYPE_PIPE &&
+                 description->type != FILE_TYPE_UNIX_SOCKET) {
+        result = -ENOTSUP;
+      } else if (description->type == FILE_TYPE_UNIX_SOCKET &&
+                 (argument & (O_APPEND | O_SYNC))) {
         result = -ENOTSUP;
       } else {
         uint32_t access = description->flags & (O_ACCMODE | O_SYNC);
@@ -491,6 +500,8 @@ int64_t file_description_read_user(open_file_description_t *description,
     return pipe_transfer_user(description, buffer, count, 0);
   if (description && description->type == FILE_TYPE_SOCKET)
     return native_socket_read(description, buffer, count, 0);
+  if (description && description->type == FILE_TYPE_UNIX_SOCKET)
+    return unix_socket_read(description, buffer, count, 0);
   return file_transfer_user(description, buffer, count, false, false, 0);
 }
 
@@ -500,6 +511,8 @@ int64_t file_description_write_user(open_file_description_t *description,
     return pipe_transfer_user(description, (void *)buffer, count, 1);
   if (description && description->type == FILE_TYPE_SOCKET)
     return native_socket_write(description, buffer, count, 0);
+  if (description && description->type == FILE_TYPE_UNIX_SOCKET)
+    return unix_socket_write(description, buffer, count, 0);
   return file_transfer_user(description, (void *)buffer, count, true, false, 0);
 }
 

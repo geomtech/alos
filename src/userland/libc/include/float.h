@@ -1,6 +1,11 @@
 #ifndef _FLOAT_H
 #define _FLOAT_H
 #define FLT_RADIX __FLT_RADIX__
+#ifdef __FLT_EVAL_METHOD__
+#define FLT_EVAL_METHOD __FLT_EVAL_METHOD__
+#else
+#define FLT_EVAL_METHOD 0
+#endif
 #define FLT_DIG __FLT_DIG__
 #define FLT_EPSILON __FLT_EPSILON__
 #define FLT_MIN_10_EXP __FLT_MIN_10_EXP__

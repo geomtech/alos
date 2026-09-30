@@ -55,6 +55,24 @@ typedef uint64_t Elf64_Off;
 #define SHT_SYMTAB 2
 #define SHT_STRTAB 3
 #define SHT_NOBITS 8
+#define NT_GNU_BUILD_ID 3
+#define DT_NULL 0
+#define DT_STRTAB 5
+#define DT_SONAME 14
+
+typedef struct {
+    Elf64_Word n_namesz;
+    Elf64_Word n_descsz;
+    Elf64_Word n_type;
+} Elf64_Nhdr;
+
+typedef struct {
+    Elf64_Sxword d_tag;
+    union {
+        Elf64_Xword d_val;
+        Elf64_Addr d_ptr;
+    } d_un;
+} Elf64_Dyn;
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];

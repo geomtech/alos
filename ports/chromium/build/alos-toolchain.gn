@@ -34,6 +34,7 @@ gcc_toolchain("clang_x64") {
   extra_ldflags = "-nostdlib -static -Wl,-T,$alos_root/src/userland/linker.ld " +
                   "$_libc/crt0.o $alos_libcxx_dir/lib/libc++.a " +
                   "$alos_libcxx_dir/lib/libc++abi.a $_libc/libc.a"
+  extra_ldflags += " $alos_root/src/userland/libm/libm.a"
   toolchain_args = {
     current_cpu = "x64"
     current_os = "alos"

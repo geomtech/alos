@@ -1,0 +1,57 @@
+diff --git a/base/threading/platform_thread_posix.cc b/base/threading/platform_thread_posix.cc
+--- a/base/threading/platform_thread_posix.cc
++++ b/base/threading/platform_thread_posix.cc
+@@ -134,12 +134,33 @@
+   base::InitThreading();
+ 
+   pthread_attr_t attributes;
+-  pthread_attr_init(&attributes);
++#if BUILDFLAG(IS_ALOS)
++  int attribute_error = pthread_attr_init(&attributes);
++  if (attribute_error) {
++    *thread_handle = PlatformThreadHandle();
++    errno = attribute_error;
++    PLOG(ERROR) << "ALOS pthread attribute initialization failed";
++    return false;
++  }
++#else
++  pthread_attr_init(&attributes);
++#endif
+ 
+   // Pthreads are joinable by default, so only specify the detached
+   // attribute if the thread should be non-joinable.
+   if (!joinable) {
++#if BUILDFLAG(IS_ALOS)
++    attribute_error = pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
++    if (attribute_error) {
++      pthread_attr_destroy(&attributes);
++      *thread_handle = PlatformThreadHandle();
++      errno = attribute_error;
++      PLOG(ERROR) << "ALOS pthread detach attribute failed";
++      return false;
++    }
++#else
+     pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
++#endif
+   }
+ 
+   // Get a better default if available.
+@@ -148,7 +169,18 @@
+   }
+ 
+   if (stack_size > 0) {
++#if BUILDFLAG(IS_ALOS)
++    attribute_error = pthread_attr_setstacksize(&attributes, stack_size);
++    if (attribute_error) {
++      pthread_attr_destroy(&attributes);
++      *thread_handle = PlatformThreadHandle();
++      errno = attribute_error;
++      PLOG(ERROR) << "ALOS pthread stack attribute failed";
++      return false;
++    }
++#else
+     pthread_attr_setstacksize(&attributes, stack_size);
++#endif
+   }
+ 
+   std::unique_ptr<ThreadParams> params(new ThreadParams);

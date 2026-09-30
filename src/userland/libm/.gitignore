@@ -1,0 +1,3 @@
+*.d
+/libm.a
+/libm.a.tmp

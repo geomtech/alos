@@ -4,15 +4,16 @@ AR = ar
 CFLAGS = -std=gnu99 -ffreestanding -O2 -Wall -Wextra -m64 -march=x86-64 -fno-stack-protector -fno-pic -fno-pie -Iinclude -Isrc
 ASFLAGS = -f elf64
 
+# Les fonctions mathematiques sont construites dans ../libm.
 SRC_DIRS = src/internal src/stdio src/stdlib src/string src/sys src/unistd src/locale src/musl src/net
 SRCS = $(shell find $(SRC_DIRS) -name '*.c')
 OBJS = $(SRCS:.c=.o) src/stdlib/setjmp.o
 
 all: libc.a crt0.o
 
-libc.a: $(OBJS)
+libc.a: $(OBJS) Makefile
 	rm -f $@.tmp
-	$(AR) rcs $@.tmp $^
+	$(AR) rcs $@.tmp $(OBJS)
 	mv $@.tmp $@
 
 crt0.o: crt0.s

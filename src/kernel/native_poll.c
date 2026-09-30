@@ -68,6 +68,7 @@ int64_t native_poll(void *output, uint64_t count, int timeout) {
             file_table_acquire(process->fd_table,p->fd);
         files[acquired] = d;
         if (d && d->type != FILE_TYPE_PIPE && d->type != FILE_TYPE_SOCKET &&
+            d->type != FILE_TYPE_UNIX_SOCKET &&
             d->type != FILE_TYPE_FILE &&
             !(d->type == FILE_TYPE_CONSOLE && (d->flags & O_ACCMODE) == O_WRONLY)) {
             result = -ENOTSUP; ++acquired; goto cleanup;

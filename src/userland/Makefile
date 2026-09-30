@@ -9,6 +9,8 @@ LDFLAGS = -static -nostdlib
 
 LIBC_DIR = libc
 LIBC = $(LIBC_DIR)/libc.a
+LIBM = libm/libm.a
+RUNTIME_LIBS = --start-group $(LIBC) $(LIBM) --end-group
 CRT0 = $(LIBC_DIR)/crt0.o
 
 # Sources GUI de base
@@ -55,7 +57,7 @@ LIBGUI_OBJ = libgui/gui.o libgui/draw.o
 LIBGUI = libgui/libgui.a
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 all: env-test uname-test
@@ -69,20 +71,44 @@ all: fs-attributes-test
 all: msync-test
 all: process-control-test
 all: path-ops-test
+all: stack-protector-test stack-protector-driver
+all: base-math-test
+all: unix-socket-test
+all: int128-runtime-test
 
-posix-file-test pipe-test socket-test inet-test entropy-test stdio-file-test positional-io-test path-match-test mincore-test system-info-test vector-io-test shared-memory-test resource-test native-compat-test fs-attributes-test msync-test process-control-test path-ops-test: %: %.o $(CRT0) $(LIBC)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+unix-socket-test int128-runtime-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
-env-test: env-test.o $(CRT0) $(LIBC)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+base-math-test.o: base-math-test.c
+	$(CC) $(CFLAGS) -fno-builtin -c $< -o $@
 
-uname-test: uname-test.o $(CRT0) $(LIBC)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+stack-protector-test.o: stack-protector-test.c
+	$(RUNTIME_CC) $(CFLAGS) -fstack-protector-all -c $< -o $@
+
+stack-protector-test stack-protector-driver base-math-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
+
+posix-file-test pipe-test socket-test inet-test entropy-test stdio-file-test positional-io-test path-match-test mincore-test system-info-test vector-io-test shared-memory-test resource-test native-compat-test fs-attributes-test msync-test process-control-test path-ops-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
+
+env-test: env-test.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
+
+uname-test: uname-test.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
 .PHONY: libc_build
 
 libc_build:
 	$(MAKE) -C $(LIBC_DIR)
+
+libm_build:
+	$(MAKE) -C libm
+
+$(LIBM): libm_build
+	@test -f $@
+
+.PHONY: libm_build
 
 $(LIBC) $(CRT0): libc_build
 	@test -f $@
@@ -90,29 +116,29 @@ $(LIBC) $(CRT0): libc_build
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-$(BIN_DIR)/%: cmd/%.o $(CRT0) $(LIBC) | $(BIN_DIR)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+$(BIN_DIR)/%: cmd/%.o $(CRT0) $(LIBC) $(LIBM) | $(BIN_DIR)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
-threads-test: libc_build threads-test.o
-	$(LD) -T linker.ld -o threads-test $(CRT0) threads-test.o $(LIBC)
+threads-test: libc_build $(LIBM) threads-test.o
+	$(LD) -T linker.ld -o threads-test $(CRT0) threads-test.o $(RUNTIME_LIBS)
 
-crash-test: libc_build crash-test.o
-	$(LD) -T linker.ld -o crash-test $(CRT0) crash-test.o $(LIBC)
+crash-test: libc_build $(LIBM) crash-test.o
+	$(LD) -T linker.ld -o crash-test $(CRT0) crash-test.o $(RUNTIME_LIBS)
 
-fork-test: libc_build fork-test.o
-	$(LD) -T linker.ld -o fork-test $(CRT0) fork-test.o $(LIBC)
+fork-test: libc_build $(LIBM) fork-test.o
+	$(LD) -T linker.ld -o fork-test $(CRT0) fork-test.o $(RUNTIME_LIBS)
 
-exec-test: libc_build exec-test.o
-	$(LD) -T linker.ld -o exec-test $(CRT0) exec-test.o $(LIBC)
+exec-test: libc_build $(LIBM) exec-test.o
+	$(LD) -T linker.ld -o exec-test $(CRT0) exec-test.o $(RUNTIME_LIBS)
 
-mmap-test: libc_build mmap-test.o
-	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(LIBC)
+mmap-test: libc_build $(LIBM) mmap-test.o
+	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(RUNTIME_LIBS)
 
-simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
-crt-cxx-test tls-cxx-test: %: %.o $(CRT0) $(LIBC)
-	$(LD) -T linker.ld -o $@ $(CRT0) $< $(LIBC)
+crt-cxx-test tls-cxx-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
 crt-cxx-test.o tls-cxx-test.o: %.o: %.cc
 	$(CXX) --target=x86_64-unknown-none-elf -std=c++17 -fhosted -fno-builtin -O2 -m64 -fno-pic -fno-pie -fno-stack-protector -fno-exceptions -fno-rtti -ftls-model=local-exec -Ilibc/include -c $< -o $@
@@ -120,44 +146,44 @@ crt-cxx-test.o tls-cxx-test.o: %.o: %.cc
 simd-context-test.o tls-test.o time-test.o pthread-test.o: %.o: %.c runtime-test.h
 	$(RUNTIME_CC) $(CFLAGS) -ftls-model=local-exec -c $< -o $@
 
-gui_app: libc_build $(GUI_OBJ)
-	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(LIBC)
+gui_app: libc_build $(LIBM) $(GUI_OBJ)
+	$(LD) -T linker.ld -o gui_app $(CRT0) $(GUI_OBJ) $(RUNTIME_LIBS)
 
-sh: libc_build sh.o
-	$(LD) -T linker.ld -o sh $(CRT0) sh.o $(LIBC)
+sh: libc_build $(LIBM) sh.o
+	$(LD) -T linker.ld -o sh $(CRT0) sh.o $(RUNTIME_LIBS)
 
-ls: libc_build ls.o
-	$(LD) -T linker.ld -o ls $(CRT0) ls.o $(LIBC)
+ls: libc_build $(LIBM) ls.o
+	$(LD) -T linker.ld -o ls $(CRT0) ls.o $(RUNTIME_LIBS)
 
-cat: libc_build cat.o
-	$(LD) -T linker.ld -o cat $(CRT0) cat.o $(LIBC)
+cat: libc_build $(LIBM) cat.o
+	$(LD) -T linker.ld -o cat $(CRT0) cat.o $(RUNTIME_LIBS)
 
-mkdir: libc_build mkdir.o
-	$(LD) -T linker.ld -o mkdir $(CRT0) mkdir.o $(LIBC)
+mkdir: libc_build $(LIBM) mkdir.o
+	$(LD) -T linker.ld -o mkdir $(CRT0) mkdir.o $(RUNTIME_LIBS)
 
-touch: libc_build touch.o
-	$(LD) -T linker.ld -o touch $(CRT0) touch.o $(LIBC)
+touch: libc_build $(LIBM) touch.o
+	$(LD) -T linker.ld -o touch $(CRT0) touch.o $(RUNTIME_LIBS)
 
-rm: libc_build rm.o
-	$(LD) -T linker.ld -o rm $(CRT0) rm.o $(LIBC)
+rm: libc_build $(LIBM) rm.o
+	$(LD) -T linker.ld -o rm $(CRT0) rm.o $(RUNTIME_LIBS)
 
-rmdir: libc_build rmdir.o
-	$(LD) -T linker.ld -o rmdir $(CRT0) rmdir.o $(LIBC)
+rmdir: libc_build $(LIBM) rmdir.o
+	$(LD) -T linker.ld -o rmdir $(CRT0) rmdir.o $(RUNTIME_LIBS)
 
-meminfo: libc_build meminfo.o
-	$(LD) -T linker.ld -o meminfo $(CRT0) meminfo.o $(LIBC)
+meminfo: libc_build $(LIBM) meminfo.o
+	$(LD) -T linker.ld -o meminfo $(CRT0) meminfo.o $(RUNTIME_LIBS)
 
-gui-test: libc_build $(GUI_OBJ)
-	$(LD) -T linker.ld -o gui-test $(CRT0) $(GUI_OBJ) $(LIBC)
+gui-test: libc_build $(LIBM) $(GUI_OBJ)
+	$(LD) -T linker.ld -o gui-test $(CRT0) $(GUI_OBJ) $(RUNTIME_LIBS)
 
 $(LIBGUI): $(LIBGUI_OBJ)
 	ar rcs $@ $^
 
-desktop_app: libc_build $(DESKTOP_OBJ)
-	$(LD) -T linker.ld -o desktop_app $(CRT0) $(DESKTOP_OBJ) $(LIBC)
+desktop_app: libc_build $(LIBM) $(DESKTOP_OBJ)
+	$(LD) -T linker.ld -o desktop_app $(CRT0) $(DESKTOP_OBJ) $(RUNTIME_LIBS)
 
-gui-demo: libc_build gui-demo.o $(LIBGUI)
-	$(LD) -T linker.ld -o gui-demo $(CRT0) gui-demo.o $(LIBGUI) $(LIBC)
+gui-demo: libc_build $(LIBM) gui-demo.o $(LIBGUI)
+	$(LD) -T linker.ld -o gui-demo $(CRT0) gui-demo.o $(LIBGUI) $(RUNTIME_LIBS)
 
 cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -166,6 +192,7 @@ cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
+	$(MAKE) -C libm clean
 	rm -f env-test uname-test
 	rm -f posix-file-test pipe-test socket-test inet-test entropy-test
 	rm -f stdio-file-test
@@ -178,6 +205,10 @@ clean:
 	rm -f msync-test
 	rm -f process-control-test
 	rm -f path-ops-test
+	rm -f stack-protector-test stack-protector-driver
+	rm -f base-math-test
+	rm -f unix-socket-test
+	rm -f int128-runtime-test
 	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a

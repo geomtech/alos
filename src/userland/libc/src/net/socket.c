@@ -54,12 +54,13 @@ ssize_t recvfrom(int fd, void *b, size_t n, int flags,
     return recv(fd,b,n,flags);
 }
 ssize_t sendmsg(int fd, const struct msghdr *m, int flags) {
-    (void)fd; (void)m; (void)flags;
-    errno = EOPNOTSUPP; return -1;
+    typedef char message_size_check[
+        sizeof(struct msghdr) == sizeof(struct alos_socket_message) ? 1 : -1];
+    (void)sizeof(message_size_check);
+    return call(ALOS_SOCKET_SENDMSG,fd,(long)m,flags,0,0);
 }
 ssize_t recvmsg(int fd, struct msghdr *m, int flags) {
-    (void)fd; (void)m; (void)flags;
-    errno = EOPNOTSUPP; return -1;
+    return call(ALOS_SOCKET_RECVMSG,fd,(long)m,flags,0,0);
 }
 int poll(struct pollfd *fds, nfds_t n, int timeout) {
     long r = syscall3(ALOS_SYS_POLL,(long)fds,(long)n,timeout);

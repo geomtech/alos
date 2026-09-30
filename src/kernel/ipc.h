@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 struct shm_object;
 typedef struct ipc_endpoint ipc_endpoint_t;
@@ -31,6 +32,16 @@ int ipc_receive(ipc_endpoint_t *endpoint, void *data, uint32_t capacity,
                 uint32_t *length, struct shm_object **attachment,
                 uint32_t timeout_ms);
 uint32_t ipc_endpoint_id(ipc_endpoint_t *endpoint);
+int ipc_pair(ipc_endpoint_t **first, ipc_endpoint_t **second);
+int ipc_send_owned(ipc_endpoint_t *, const void *, uint32_t,
+                   void *, void (*)(void *));
+int ipc_receive_owned(ipc_endpoint_t *, void *, uint32_t, uint32_t *, void **);
+bool ipc_read_ready(void *);
+bool ipc_write_ready(void *);
+bool ipc_peer_closed(ipc_endpoint_t *);
+ipc_endpoint_t *ipc_peer_endpoint(ipc_endpoint_t *);
+void ipc_visit_owned(ipc_endpoint_t *, void (*)(void *, void *), void *);
+struct wait_queue *ipc_waitqueue(ipc_endpoint_t *);
 void ipc_endpoint_retain(ipc_endpoint_t *endpoint);
 void ipc_endpoint_release(ipc_endpoint_t *endpoint);
 

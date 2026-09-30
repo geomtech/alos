@@ -1,16 +1,20 @@
 diff --git a/BUILD.gn b/BUILD.gn
 --- a/BUILD.gn
 +++ b/BUILD.gn
-@@ -9,6 +9,12 @@
+@@ -9,6 +9,16 @@
  # file to your new one or GN won't know about it.
  
  if (target_os == "alos") {
 +  declare_args() {
 +    alos_build_native_tests = false
++    alos_build_mojo_tests = false
 +  }
    group("alos_base_bootstrap") {
      deps = [ "//base:base" ]
 +    if (alos_build_native_tests) {
 +      deps += [ "//alos_native:all" ]
++    }
++    if (alos_build_mojo_tests) {
++      deps += [ "//alos_mojo:mojo_ipcz_smoke" ]
 +    }
    }

@@ -1,9 +1,20 @@
 #include "base/debug/stack_trace.h"
+#include "partition_alloc/partition_alloc_base/debug/stack_trace.h"
 
 #include <stdio.h>
 #include <string>
 
 int main() {
+  const void* allocator_capture[2] = {nullptr, nullptr};
+  if (partition_alloc::internal::base::debug::CollectStackTrace(nullptr, 0) ||
+      partition_alloc::internal::base::debug::CollectStackTrace(
+          allocator_capture, 0) ||
+      partition_alloc::internal::base::debug::CollectStackTrace(
+          allocator_capture, 2) != 1 ||
+      !allocator_capture[0] || allocator_capture[1]) {
+    puts("chromium-stack-trace-smoke: FAIL allocator single-PC capture");
+    return 1;
+  }
   using base::debug::StackTrace;
   const void* capture[2] = {nullptr, nullptr};
   if (base::debug::CollectStackTrace({}) != 0 ||

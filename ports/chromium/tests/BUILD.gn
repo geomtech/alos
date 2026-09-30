@@ -1,5 +1,16 @@
 assert(is_alos, "This executable targets native ALOS only.")
 
+set_defaults("executable") {
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}
+
 executable("base_smoke") {
   sources = [ "base-smoke.cc" ]
   deps = [ "//base" ]
@@ -29,6 +40,8 @@ group("all") {
     ":io_pump_smoke",
     ":process_smoke",
     ":discardable_capability_smoke",
+    ":thread_smoke",
+    ":elf_reader_smoke",
   ]
 }
 
@@ -44,5 +57,15 @@ executable("process_smoke") {
 
 executable("discardable_capability_smoke") {
   sources = [ "base-discardable-capability-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("thread_smoke") {
+  sources = [ "base-thread-smoke.cc" ]
+  deps = [ "//base" ]
+}
+
+executable("elf_reader_smoke") {
+  sources = [ "base-elf-reader-smoke.cc" ]
   deps = [ "//base" ]
 }

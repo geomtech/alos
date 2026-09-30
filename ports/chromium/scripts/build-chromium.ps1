@@ -5,6 +5,7 @@ param(
     [string[]]$Targets = @("base:base"),
     [switch]$GenOnly,
     [switch]$NativeTests,
+    [switch]$MojoTests,
     [switch]$KeepGoing,
     [int]$Jobs = 8
 )
@@ -21,13 +22,35 @@ if ($LASTEXITCODE -ne 0 -or
 }
 $libcxx = (Resolve-Path $LibcxxDirectory).Path
 $gn = (Resolve-Path $GnDirectory).Path
+$toolchainTemplate = Join-Path $repo "ports\chromium\build\alos-toolchain.gn"
+$toolchainDirectory = Join-Path $src "build\toolchain\alos"
+$toolchainDestination = Join-Path $toolchainDirectory "BUILD.gn"
+if (Test-Path -LiteralPath $toolchainDestination) {
+    $expected = [IO.File]::ReadAllText($toolchainTemplate).Replace("`r`n", "`n")
+    $actual = [IO.File]::ReadAllText($toolchainDestination).Replace("`r`n", "`n")
+    if ($actual -ne $expected) {
+        $beforeLibm = $expected.Replace(
+            '  extra_ldflags += " $alos_root/src/userland/libm/libm.a"' + "`n", "")
+        if ($actual -ne $beforeLibm) {
+            throw "Toolchain ALOS local divergent : $toolchainDestination"
+        }
+        Copy-Item -LiteralPath $toolchainTemplate -Destination $toolchainDestination
+    }
+} else {
+    New-Item -ItemType Directory -Force $toolchainDirectory | Out-Null
+    Copy-Item -LiteralPath $toolchainTemplate -Destination $toolchainDestination
+}
 foreach ($patchName in @(
     "chromium-140.0.7339.80-alos-clocks.patch",
     "chromium-140.0.7339.80-alos-cctz.patch",
     "chromium-140.0.7339.80-alos-raw-stack-diagnostics.patch",
+    "chromium-alos-pa-native-stack-collector.patch",
+    "chromium-alos-native-thread-platform.patch",
+    "chromium-alos-native-thread-attributes.patch",
     "abseil-alos-static-elf-diagnostics.patch",
     "abseil-alos-thread-id.patch",
     "abseil-alos-thread-identity-no-signals.patch",
+    "abseil-alos-native-mmap-allocator.patch",
     "chromium-alos-abseil-optional-signals.patch",
     "chromium-140.0.7339.80-alos-atomic-copy.patch",
     "chromium-140.0.7339.80-alos-file-comparison.patch",
@@ -98,6 +121,16 @@ foreach ($library in @("libc++.a", "libc++abi.a")) {
         }
     }
 }
+$threadTemplate = Join-Path $repo "ports\chromium\patches\templates\base\threading\platform_thread_alos.cc"
+$threadDestination = Join-Path $src "base\threading\platform_thread_alos.cc"
+if (Test-Path -LiteralPath $threadDestination) {
+    if ([IO.File]::ReadAllText($threadDestination).Replace("`r`n", "`n") -ne
+        [IO.File]::ReadAllText($threadTemplate).Replace("`r`n", "`n")) {
+        throw "Source thread ALOS divergente : $threadDestination"
+    }
+} else {
+    Copy-Item -LiteralPath $threadTemplate -Destination $threadDestination
+}
 $args_gn = @(
     'target_os = "alos"', 'target_cpu = "x64"', 'is_debug = false',
     'is_component_build = false', 'use_sysroot = false', 'enable_rust = false',
@@ -119,11 +152,52 @@ if ($NativeTests) {
     New-Item -ItemType Directory -Force $testDirectory | Out-Null
     foreach ($name in @("BUILD.gn", "base-smoke.cc", "nativeatomic-runtime-test.cc",
         "nativefile-comparison-test.cc", "base-stack-trace-smoke.cc", "base-io-pump-smoke.cc",
-        "base-process-smoke.cc", "base-discardable-capability-smoke.cc")) {
+        "base-process-smoke.cc", "base-discardable-capability-smoke.cc",
+        "base-thread-smoke.cc", "base-elf-reader-smoke.cc")) {
         Copy-Item -LiteralPath (Join-Path $repo "ports\chromium\tests\$name") -Destination $testDirectory
     }
     $args_gn += "`nalos_build_native_tests = true"
 }
+if ($MojoTests) {
+        $mojoPatch = Join-Path $repo "ports\chromium\patches\chromium-alos-mojo-unnamed-platform.patch"
+        & git -C $src apply --reverse --check $mojoPatch 2>$null
+        if ($LASTEXITCODE) {
+            & git -C $src apply --check $mojoPatch
+            if ($LASTEXITCODE) { throw "Patch Mojo ALOS incompatible." }
+            & git -C $src apply $mojoPatch
+            if ($LASTEXITCODE) { throw "Patch Mojo ALOS echoue." }
+        }
+        $source = Join-Path $repo "ports\chromium\patches\templates\mojo\named_platform_channel_alos.cc"
+        $destination = Join-Path $src "mojo\public\cpp\platform\named_platform_channel_alos.cc"
+        if ((Test-Path $destination) -and
+            [IO.File]::ReadAllText($destination).Replace("`r`n", "`n") -ne
+            [IO.File]::ReadAllText($source).Replace("`r`n", "`n")) {
+            throw "Backend Mojo ALOS local divergent."
+        }
+        Copy-Item -LiteralPath $source -Destination $destination
+        foreach ($entry in @(
+            @{ Source = "mojo_buildflags.gni"; Destination = "mojo\public\cpp\bindings\mojo_buildflags.gni" },
+            @{ Source = "buildflags.gn"; Destination = "mojo\public\cpp\bindings\buildflags\BUILD.gn" }
+        )) {
+            $source = Join-Path $repo "ports\chromium\patches\templates\mojo\$($entry.Source)"
+            $destination = Join-Path $src $entry.Destination
+            if ((Test-Path $destination) -and
+                [IO.File]::ReadAllText($destination).Replace("`r`n", "`n") -ne
+                [IO.File]::ReadAllText($source).Replace("`r`n", "`n")) {
+                throw "Metadata Mojo locale divergente : $destination"
+            }
+            New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
+            Copy-Item -LiteralPath $source -Destination $destination
+        }
+        $directory = Join-Path $src "alos_mojo"
+        New-Item -ItemType Directory -Force $directory | Out-Null
+        foreach ($name in @("BUILD.gn", "mojo-ipcz-smoke.cc")) {
+            Copy-Item -LiteralPath (Join-Path $repo "ports\chromium\tests\mojo\$name") `
+                -Destination $directory
+        }
+        $args_gn += "`nalos_build_mojo_tests = true"
+        $args_gn += "`nuse_blink = false"
+    }
 New-Item -ItemType Directory -Force (Join-Path $src "out\alos") | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "out\alos\args.gn"), "$args_gn`n")
 $mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",

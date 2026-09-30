@@ -44,7 +44,7 @@ diff --git a/base/message_loop/message_pump_for_ui.h b/base/message_loop/message
 diff --git a/base/BUILD.gn b/base/BUILD.gn
 --- a/base/BUILD.gn
 +++ b/base/BUILD.gn
-@@ -2359,9 +2359,25 @@
+@@ -2359,9 +2359,31 @@
    if (use_epoll) {
      sources += [
        "message_loop/message_pump_epoll.cc",
@@ -60,12 +60,18 @@ diff --git a/base/BUILD.gn b/base/BUILD.gn
 +      "process/process_alos.cc",
 +      "process/launch_alos.cc",
 +      "process/kill_alos.cc",
++      "threading/platform_thread_alos.cc",
++      "debug/elf_reader.cc",
++      "debug/elf_reader.h",
 +    ]
-+    sources -= [
++    if (!use_blink) {
++      sources += [ "process/launch.cc" ]
++    }
++    sources -= filter_include(sources, [
 +      "process/process_posix.cc",
 +      "process/launch_posix.cc",
 +      "process/kill_posix.cc",
-+    ]
++    ])
 +  }
  
    # Android and MacOS have their own custom shared memory handle

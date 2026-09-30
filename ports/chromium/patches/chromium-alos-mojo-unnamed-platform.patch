@@ -1,0 +1,129 @@
+diff --git a/mojo/BUILD.gn b/mojo/BUILD.gn
+index f306502c..9a28d723 100644
+--- a/mojo/BUILD.gn
++++ b/mojo/BUILD.gn
+@@ -7,6 +7,7 @@ import("//build/config/ui.gni")
+ import("//mojo/features.gni")
+ import("//testing/test.gni")
+ 
++if (!is_alos) {
+ group("mojo") {
+   # Meta-target, don't link into production code.
+   testonly = true
+@@ -22,6 +23,7 @@ group("mojo") {
+ 
+   deps += [ "//services/service_manager:all" ]
+ }
++}
+ 
+ buildflag_header("buildflags") {
+   header = "buildflags.h"
+@@ -31,6 +33,7 @@ buildflag_header("buildflags") {
+   ]
+ }
+ 
++if (!is_alos) {
+ group("tests") {
+   testonly = true
+   deps = [
+@@ -89,3 +92,4 @@ test("mojo_perftests") {
+     ]
+   }
+ }
++}
+diff --git a/mojo/core/BUILD.gn b/mojo/core/BUILD.gn
+index cea0717b..c7b5c022 100644
+--- a/mojo/core/BUILD.gn
++++ b/mojo/core/BUILD.gn
+@@ -93,7 +93,7 @@ source_set("impl_for_embedder") {
+     "//mojo:buildflags",
+     "//mojo/core/embedder:features",
+     "//mojo/public/c/system:headers",
+-    "//mojo/public/cpp/bindings:mojo_buildflags",
++    "//mojo/public/cpp/bindings/buildflags:mojo_buildflags",
+     "//mojo/public/cpp/platform",
+     "//third_party/abseil-cpp:absl",
+     "//third_party/ipcz/src:ipcz_chromium",
+diff --git a/mojo/public/cpp/bindings/BUILD.gn b/mojo/public/cpp/bindings/BUILD.gn
+index e129d291..cf6e6bfe 100644
+--- a/mojo/public/cpp/bindings/BUILD.gn
++++ b/mojo/public/cpp/bindings/BUILD.gn
+@@ -8,25 +8,10 @@ import("//build/config/compiler/compiler.gni")
+ import("//build/config/features.gni")
+ import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
+ 
+-declare_args() {
+-  # Note that even when set to false, there still exists minimal trace events
+-  # for sync calls. See https://crrev.com/952184
+-  enable_mojo_tracing = extended_tracing_enabled
++import("//mojo/public/cpp/bindings/mojo_buildflags.gni")
+ 
+-  # enable_random_mojo_delays starts a task runner that periodically pauses
+-  # random Mojo bindings and later resumes them, in order to test whether parts
+-  # of the code implicitly rely on FIFO processing of messages sent on different
+-  # message pipes (which they should not).
+-  enable_random_mojo_delays = false
+-}
+-
+-buildflag_header("mojo_buildflags") {
+-  header = "mojo_buildflags.h"
+-
+-  flags = [
+-    "MOJO_TRACE_ENABLED=$enable_mojo_tracing",
+-    "MOJO_RANDOM_DELAYS_ENABLED=$enable_random_mojo_delays",
+-  ]
++group("mojo_buildflags") {
++  public_deps = [ "//mojo/public/cpp/bindings/buildflags:mojo_buildflags" ]
+ }
+ 
+ # Logically part of the "bindings_base" target, but split out separately so code
+diff --git a/mojo/public/cpp/platform/BUILD.gn b/mojo/public/cpp/platform/BUILD.gn
+index 54805403..23510b05 100644
+--- a/mojo/public/cpp/platform/BUILD.gn
++++ b/mojo/public/cpp/platform/BUILD.gn
+@@ -50,7 +50,9 @@ component("platform") {
+ 
+   deps = [ "//mojo/core/embedder:features" ]
+ 
+-  if (is_posix && !is_mac) {
++  if (is_alos) {
++    sources += [ "named_platform_channel_alos.cc" ]
++  } else if (is_posix && !is_mac) {
+     sources += [ "named_platform_channel_posix.cc" ]
+     deps += [ "//net" ]
+   }
+diff --git a/mojo/public/cpp/platform/socket_utils_posix.cc b/mojo/public/cpp/platform/socket_utils_posix.cc
+index 2a87752d..86ca73c3 100644
+--- a/mojo/public/cpp/platform/socket_utils_posix.cc
++++ b/mojo/public/cpp/platform/socket_utils_posix.cc
+@@ -29,6 +29,7 @@ bool IsRecoverableError() {
+          errno == ENOMEM || errno == ENOBUFS;
+ }
+ 
++#if !BUILDFLAG(IS_ALOS)
+ bool GetPeerEuid(base::PlatformFile fd, uid_t* peer_euid) {
+ #if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_OPENBSD) || BUILDFLAG(IS_FREEBSD)
+   uid_t socket_euid;
+@@ -54,7 +55,14 @@ bool GetPeerEuid(base::PlatformFile fd, uid_t* peer_euid) {
+ #endif
+ }
+ 
++#endif  // !BUILDFLAG(IS_ALOS)
++
+ bool IsPeerAuthorized(base::PlatformFile fd) {
++#if BUILDFLAG(IS_ALOS)
++  errno = ENOTSUP;
++  PLOG(ERROR) << "ALOS does not implement Unix peer authorization";
++  return false;
++#else
+   uid_t peer_euid;
+   if (!GetPeerEuid(fd, &peer_euid))
+     return false;
+@@ -63,6 +71,7 @@ bool IsPeerAuthorized(base::PlatformFile fd) {
+     return false;
+   }
+   return true;
++#endif
+ }
+ 
+ }  // namespace

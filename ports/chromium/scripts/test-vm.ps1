@@ -3,6 +3,14 @@ param(
     [switch]$Runtime,
     [switch]$Fleet,
     [switch]$EntropyUnavailable,
+    [switch]$StackProtectorOnly,
+    [switch]$UnixSocketOnly,
+    [string]$BaseSmokePath,
+    [string]$MojoSmokePath,
+    [string]$BaseNativeDirectory,
+    [string[]]$BaseSmokeTargets = @("base_smoke", "atomic_smoke", "file_comparison_smoke",
+        "stack_trace_smoke", "process_smoke", "discardable_capability_smoke", "thread_smoke", "elf_reader_smoke", "io_pump_smoke"),
+    [switch]$BaseSmokeOnly,
     [switch]$ComplexCpp,
     [int]$ComplexRuns = 1,
     [string]$Cpu = "qemu64",
@@ -12,6 +20,29 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($StackProtectorOnly -and ($Runtime -or $ComplexCpp)) {
+    throw "StackProtectorOnly est une suite isolee, incompatible avec Runtime/ComplexCpp."
+}
+if ($BaseSmokePath -and $BaseNativeDirectory) {
+    throw "Choisir BaseSmokePath ou BaseNativeDirectory."
+}
+$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory)
+if ($MojoSmokePath -and ($hasBaseSmoke -or $Runtime -or $Fleet -or $ComplexCpp -or
+    $StackProtectorOnly -or $UnixSocketOnly -or $EntropyUnavailable)) {
+    throw "MojoSmokePath est une suite isolee avec source d'entropie reelle."
+}
+$hasNativeSmoke = [bool]($hasBaseSmoke -or $MojoSmokePath)
+if ($UnixSocketOnly -and ($Runtime -or $Fleet -or $ComplexCpp -or
+    $StackProtectorOnly -or $hasBaseSmoke)) {
+    throw "UnixSocketOnly est une suite isolee."
+}
+if ($BaseSmokeOnly -and (-not $hasBaseSmoke -or $Runtime -or $Fleet -or
+    $ComplexCpp -or $StackProtectorOnly)) {
+    throw "BaseSmokeOnly exige BaseSmokePath et une suite isolee."
+}
+if ($hasBaseSmoke -and $EntropyUnavailable) {
+    throw "Le smoke Base protege exige une vraie source d'entropie."
+}
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $output = (Resolve-Path $OutputDirectory).Path
@@ -110,8 +141,68 @@ if ($ComplexCpp) {
 }
 if ($Fleet) {
     $entropyCommand = if ($EntropyUnavailable) { "entropy-test --unavailable" } else { "entropy-test" }
+    $protectorCommand = if ($EntropyUnavailable) {
+        "stack-protector-driver --unavailable"
+    } else { "stack-protector-driver" }
     $startup = $startup.Replace("echo vm-suite-complete",
-        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
+        "base-math-test`n$protectorCommand`necho vm-suite-complete")
+    $startup = $startup.Replace("echo vm-suite-complete",
+        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`nint128-runtime-test`nunix-socket-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
+}
+if ($StackProtectorOnly) {
+    $command = if ($EntropyUnavailable) {
+        "stack-protector-driver --unavailable"
+    } else { "stack-protector-driver" }
+    $startup = "echo vm-suite-begin`nbase-math-test`n$command`necho vm-suite-complete"
+}
+if ($UnixSocketOnly) {
+    $startup = "echo vm-suite-begin`nint128-runtime-test`nunix-socket-test`necho vm-suite-complete"
+}
+$basePrograms = @()
+if ($hasNativeSmoke) {
+    if ($MojoSmokePath) {
+        $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $MojoSmokePath).Path
+            Name = "chromium-mojo-smoke"; Marker = "chromium-mojo-smoke: PASS" })
+    } elseif ($BaseSmokePath) {
+        $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $BaseSmokePath).Path
+            Name = "chromium-base-smoke"; Marker = "chromium-base-smoke: Time PASS" })
+    } else {
+        $availableTests = @(
+            @{ File = "base_smoke"; Name = "chromium-base-smoke"; Marker = "chromium-base-smoke: Time PASS" },
+            @{ File = "atomic_smoke"; Name = "chromium-atomic-smoke"; Marker = "nativeatomic-runtime-test: PASS" },
+            @{ File = "file_comparison_smoke"; Name = "chromium-file-smoke"; Marker = "nativefile-comparison-test: PASS" },
+            @{ File = "stack_trace_smoke"; Name = "chromium-stack-smoke"; Marker = "chromium-stack-trace-smoke: PASS" },
+            @{ File = "process_smoke"; Name = "chromium-process-smoke"; Marker = "chromium-process-smoke: PASS" },
+            @{ File = "discardable_capability_smoke"; Name = "chromium-discardable-smoke"; Marker = "chromium-discardable-smoke: PASS" },
+            @{ File = "thread_smoke"; Name = "chromium-thread-smoke"; Marker = "chromium-thread-smoke: PASS" },
+            @{ File = "elf_reader_smoke"; Name = "chromium-elf-smoke"; Marker = "chromium-elf-reader-smoke: PASS" },
+            @{ File = "io_pump_smoke"; Name = "chromium-io-smoke"; Marker = "base-io-pump-smoke: PASS" }
+        )
+        if (-not $BaseSmokeTargets.Count -or
+            @($BaseSmokeTargets | Select-Object -Unique).Count -ne $BaseSmokeTargets.Count) {
+            throw "Liste des smokes Base vide ou dupliquee."
+        }
+        foreach ($target in $BaseSmokeTargets) {
+            $test = $availableTests | Where-Object { $_.File -eq $target }
+            if (-not $test) { throw "Smoke Base inconnu : $target" }
+            $basePrograms += @{ Path = (Resolve-Path -LiteralPath (
+                Join-Path $BaseNativeDirectory $test.File)).Path
+                Name = $test.Name; Marker = $test.Marker }
+        }
+    }
+    foreach ($program in $basePrograms) {
+        Copy-Item -LiteralPath $program.Path -Destination (Join-Path $output $program.Name)
+        docker run --rm -v "${output}:/artifacts" alos-runtime `
+            strip --strip-debug "/artifacts/$($program.Name)"
+        if ($LASTEXITCODE) { throw "Strip copie smoke echoue : $($program.Name)" }
+    }
+    $commands = ($basePrograms | ForEach-Object { $_.Name }) -join "`n"
+    if ($BaseSmokeOnly -or $MojoSmokePath) {
+        $startup = "echo vm-suite-begin`n$commands`necho vm-suite-complete"
+    } else {
+        $startup = $startup.Replace("echo vm-suite-complete",
+            "$commands`necho vm-suite-complete")
+    }
 }
 [IO.File]::WriteAllText((Join-Path $output "startup.sh"), $startup.Replace("`r", "") + "`n")
 [IO.File]::WriteAllBytes((Join-Path $output "wide-io-valid"), [byte[]](0xc3,0xa9,0xf0,0x9f,0x98,0x80,0))
@@ -143,6 +234,14 @@ docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" alos-build sh -
     'truncate -s 64M /artifacts/test.disk && mkfs.ext2 -q -F -d fs_root /artifacts/test.disk && debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk && debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk && for name in wide-io-valid wide-io-output wide-io-invalid wide-io-incomplete fd-io-data fd-io-zero; do debugfs -w -R "write /artifacts/$name /$name" /artifacts/test.disk || exit; done && debugfs -w -f /artifacts/metadata.commands /artifacts/test.disk' `
     *> (Join-Path $output "image.log")
 if ($LASTEXITCODE -ne 0) { throw "Creation image echouee : $output\image.log" }
+foreach ($program in $basePrograms) {
+    $name = $program.Name
+    docker run --rm -v "${output}:/artifacts" alos-build sh -c `
+        "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk && debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk && cmp /artifacts/$name /artifacts/verify-$name" `
+        *> (Join-Path $output "$name-image.log")
+    if ($LASTEXITCODE -ne 0) { throw "Staging smoke Base echoue : $name" }
+    Remove-Item -LiteralPath (Join-Path $output "verify-$name")
+}
 
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = $Qemu
@@ -155,7 +254,7 @@ foreach ($argument in @(
     "-display", "none", "-serial", "file:$log", "-monitor", "none",
     "-no-reboot", "-no-shutdown"
 )) { $start.ArgumentList.Add($argument) }
-if ($Fleet -and -not $EntropyUnavailable) {
+if (($Fleet -or $StackProtectorOnly -or $hasNativeSmoke) -and -not $EntropyUnavailable) {
     foreach ($argument in @("-object", "rng-builtin,id=alos_rng", "-device",
         "virtio-rng-pci,rng=alos_rng,disable-modern=on")) {
         $start.ArgumentList.Add($argument)
@@ -176,7 +275,9 @@ try {
         }
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
-    foreach ($marker in @(
+    if (-not $StackProtectorOnly -and -not $BaseSmokeOnly -and -not $UnixSocketOnly -and
+        -not $MojoSmokePath) {
+      foreach ($marker in @(
         "mmap-test: ALL PASS", "fork-test: PASS",
         "exec-test: PASS after 40", "Compteur final", "Reply received, seq:"
     )) {
@@ -184,6 +285,7 @@ try {
     }
     if ($text.Contains("mmap-test: FAIL") -or $text.Contains("fork-test: FAIL") -or
         $text.Contains("exec-test: FAIL")) { throw "Regression detectee : $log" }
+    }
     if ($Runtime) {
         foreach ($envMarker in @("uname-test: PASS", "env-test: PASS",
             "env-test: exec inherited constructor PASS", "env-test: exec empty PASS")) {
@@ -232,6 +334,38 @@ try {
             $text.Contains("complex-cpp-test: FAIL")) {
             throw "Echec complex-cpp-test : $log"
         }
+    }
+        if ($Fleet -or $StackProtectorOnly) {
+            if (-not $text.Contains("base-math-test: PASS") -or
+                $text.Contains("base-math-test: FAIL")) {
+                throw "Regression math Base : $log"
+            }
+            $protectorMarker = if ($EntropyUnavailable) {
+                "stack-protector-driver: unavailable PASS"
+            } else { "stack-protector-driver: PASS" }
+            if (-not $text.Contains($protectorMarker) -or
+                $text.Contains("stack-protector-driver: FAIL") -or
+                $text.Contains("stack-protector-test: FAIL")) {
+                throw "Regression stack protector : $log"
+            }
+            if ($EntropyUnavailable) {
+                if (-not $text.Contains("stack-protector: secure guard unavailable") -or
+                    $text.Contains("stack-protector-test: PASS")) {
+                    throw "Guard non fail-closed : $log"
+                }
+            } elseif (-not $text.Contains("stack-protector-test: PASS") -or
+                      -not $text.Contains("stack-protector: stack corruption detected")) {
+                throw "Protection de pile non verifiee : $log"
+            }
+        }
+        foreach ($program in $basePrograms) {
+            if (-not $text.Contains($program.Marker)) {
+                throw "Smoke natif Chromium Base incomplet : $($program.Name) : $log"
+            }
+        }
+        if ($hasNativeSmoke -and $text -match "(?m)^(chromium-.*smoke|base-io-pump-smoke|nativeatomic-runtime-test|nativefile-comparison-test): FAIL\b") {
+            throw "Smoke natif Chromium Base echoue : $log"
+        }
         if ($Fleet) {
             $entropyMarker = if ($EntropyUnavailable) {
                 "entropy-test: unavailable PASS"
@@ -248,8 +382,24 @@ try {
                 throw "Regression frontier : $log"
             }
         }
-    }
     $suite = if ($Runtime) { "runtime" } else { "VM" }
+    if ($Fleet -and (-not $text.Contains("unix-socket-test: PASS") -or
+        -not $text.Contains("int128-runtime-test: PASS") -or
+        $text.Contains("unix-socket-test: FAIL") -or
+        $text.Contains("int128-runtime-test: FAIL"))) {
+        throw "New local transport/runtime regression : $log"
+    }
+    if ($MojoSmokePath -and -not $text.Contains("chromium-mojo-smoke: child shared-handle PASS")) {
+        throw "Mojo child shared-buffer result missing : $log"
+    }
+    if ($UnixSocketOnly -and (-not $text.Contains("unix-socket-test: PASS") -or
+        $text.Contains("unix-socket-test: FAIL"))) {
+        throw "Unix socket regression : $log"
+    }
+    if ($UnixSocketOnly -and (-not $text.Contains("int128-runtime-test: PASS") -or
+        $text.Contains("int128-runtime-test: FAIL"))) {
+        throw "Int128 compiler runtime regression : $log"
+    }
     Write-Host "ALOS $suite suite PASS : $log"
 } finally {
     if (-not $process.HasExited) { Stop-Process -Id $process.Id }

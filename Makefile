@@ -57,6 +57,8 @@ KERNEL_SRC += src/kernel/path_ops.c
 KERNEL_OBJ += src/kernel/path_ops.o
 KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/entropy.c src/drivers/virtio_rng.c
 KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/entropy.o src/drivers/virtio_rng.o
+KERNEL_SRC += src/kernel/unix_socket.c
+KERNEL_OBJ += src/kernel/unix_socket.o
 
 # MMIO subsystem
 MMIO_SRC = src/kernel/mmio/mmio.c src/kernel/mmio/pci_mmio.c
@@ -379,6 +381,10 @@ fs_root: disk_structure userland
 	@cp -v src/userland/msync-test fs_root/bin/
 	@cp -v src/userland/process-control-test fs_root/bin/
 	@cp -v src/userland/path-ops-test fs_root/bin/
+	@cp -v src/userland/stack-protector-test src/userland/stack-protector-driver fs_root/bin/
+	@cp -v src/userland/base-math-test fs_root/bin/
+	@cp -v src/userland/unix-socket-test fs_root/bin/
+	@cp -v src/userland/int128-runtime-test fs_root/bin/
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
 	@cp -v src/userland/gui-demo fs_root/bin/gui-demo

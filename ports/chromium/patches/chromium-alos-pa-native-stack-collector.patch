@@ -1,0 +1,21 @@
+diff --git a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
+--- a/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
++++ b/base/allocator/partition_allocator/src/partition_alloc/partition_alloc_base/debug/stack_trace_posix.cc
+@@ -428,6 +428,17 @@
+ 
+ }  // namespace
+ 
++#if PA_BUILDFLAG(IS_ALOS)
++__attribute__((noinline)) size_t CollectStackTrace(const void** trace,
++                                                  size_t count) {
++  if (!trace || !count) {
++    return 0;
++  }
++  trace[0] = __builtin_extract_return_addr(__builtin_return_address(0));
++  return trace[0] ? 1 : 0;
++}
++#endif
++
+ void PrintStackTrace(const void** trace, size_t count) {
+   PrintStackTraceInternal(trace, count);
+ }
