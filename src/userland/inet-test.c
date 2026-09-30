@@ -5,7 +5,7 @@
 #include <string.h>
 static int failures;
 #define CHECK(x) do { if (!(x)) { printf("inet-test FAIL line %d: %s\n",__LINE__,#x); ++failures; } } while (0)
-int main(void) {
+int main(int argc, char **argv) {
     const char *valid[] = {"::", "::1", "2001:db8::1", "1:2:3:4:5:6:7:8",
                            "::ffff:192.0.2.1", "1::", "1:2:3:4:5:6:192.0.2.1"};
     const char *invalid[] = {"", ":", "1:", "1::2::3", "12345::", "1:2:3:4:5:6:7",
@@ -47,7 +47,20 @@ int main(void) {
     CHECK(getaddrinfo(NULL,"80",&h,&r) == 0);
     if (r) {
         CHECK(((struct sockaddr_in *)r->ai_addr)->sin_addr.s_addr == htonl(INADDR_LOOPBACK));
-        freeaddrinfo(r);
+        freeaddrinfo(r); r = NULL;
+    }
+    if (argc > 1 && !strcmp(argv[1],"--dns")) {
+        h.ai_flags = AI_ADDRCONFIG;
+        int dns_result = getaddrinfo("example.com","80",&h,&r);
+        CHECK(dns_result == 0 && r != NULL);
+        if (r) {
+            char resolved[INET_ADDRSTRLEN];
+            CHECK(inet_ntop(AF_INET,&((struct sockaddr_in *)r->ai_addr)->sin_addr,
+                            resolved,sizeof(resolved)) != NULL);
+            printf("inet-test: DNS example.com -> %s\n", resolved);
+            freeaddrinfo(r); r = NULL;
+        }
+        if (!failures) printf("inet-test: DNS PASS\n");
     }
     printf("inet-test: %s (%d failures)\n",failures ? "FAIL" : "PASS",failures);
     return failures ? 1 : 0;

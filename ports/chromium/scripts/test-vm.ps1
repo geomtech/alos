@@ -5,6 +5,7 @@ param(
     [switch]$EntropyUnavailable,
     [switch]$StackProtectorOnly,
     [switch]$UnixSocketOnly,
+    [switch]$DnsOnly,
     [string]$BaseSmokePath,
     [string]$MojoSmokePath,
     [string]$BaseNativeDirectory,
@@ -33,8 +34,13 @@ if ($MojoSmokePath -and ($hasBaseSmoke -or $Runtime -or $Fleet -or $ComplexCpp -
 }
 $hasNativeSmoke = [bool]($hasBaseSmoke -or $MojoSmokePath)
 if ($UnixSocketOnly -and ($Runtime -or $Fleet -or $ComplexCpp -or
-    $StackProtectorOnly -or $hasBaseSmoke)) {
+    $StackProtectorOnly -or $hasBaseSmoke -or $DnsOnly)) {
     throw "UnixSocketOnly est une suite isolee."
+}
+if ($DnsOnly -and ($Runtime -or $Fleet -or $ComplexCpp -or
+    $StackProtectorOnly -or $hasBaseSmoke -or $MojoSmokePath -or
+    $EntropyUnavailable)) {
+    throw "DnsOnly est une suite isolee avec reseau/DNS reel."
 }
 if ($BaseSmokeOnly -and (-not $hasBaseSmoke -or $Runtime -or $Fleet -or
     $ComplexCpp -or $StackProtectorOnly)) {
@@ -158,6 +164,9 @@ if ($StackProtectorOnly) {
 if ($UnixSocketOnly) {
     $startup = "echo vm-suite-begin`nint128-runtime-test`nunix-socket-test`necho vm-suite-complete"
 }
+if ($DnsOnly) {
+    $startup = "echo vm-suite-begin`ninet-test --dns`necho vm-suite-complete"
+}
 $basePrograms = @()
 if ($hasNativeSmoke) {
     if ($MojoSmokePath) {
@@ -276,7 +285,7 @@ try {
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
     if (-not $StackProtectorOnly -and -not $BaseSmokeOnly -and -not $UnixSocketOnly -and
-        -not $MojoSmokePath) {
+        -not $DnsOnly -and -not $MojoSmokePath) {
       foreach ($marker in @(
         "mmap-test: ALL PASS", "fork-test: PASS",
         "exec-test: PASS after 40", "Compteur final", "Reply received, seq:"
@@ -399,6 +408,11 @@ try {
     if ($UnixSocketOnly -and (-not $text.Contains("int128-runtime-test: PASS") -or
         $text.Contains("int128-runtime-test: FAIL"))) {
         throw "Int128 compiler runtime regression : $log"
+    }
+    if ($DnsOnly -and (-not $text.Contains("inet-test: DNS PASS") -or
+        -not $text.Contains("inet-test: PASS") -or
+        $text.Contains("inet-test FAIL"))) {
+        throw "DNS/getaddrinfo regression : $log"
     }
     Write-Host "ALOS $suite suite PASS : $log"
 } finally {

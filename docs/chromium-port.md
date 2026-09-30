@@ -865,6 +865,11 @@ Le front reseau actif est maintenant en cours : le noyau possede un chemin
 SYN sortant natif et un etat SYN_SENT exploite par connect(), avec completion
 par poll/SO_ERROR pour les sockets non bloquants. Ce chemin doit encore etre
 revalide dans la flotte QEMU et ne doit pas etre presente comme fournissant
-des retransmissions/temporisations TCP completes. Le resolver libc
-getaddrinfo reste numeric-only ; le raccord au resolver DNS ALOS reste un
-jalon suivant.
+des retransmissions/temporisations TCP completes. Le resolver libc getaddrinfo dispose maintenant d'un chemin IPv4 A vers le
+resolver DNS ALOS via un syscall dedie. Le resolver noyau serialise son unique
+requete en vol, bloque sur une wait queue avec delai borne et refait un envoi
+court pour laisser ARP amorcer la route DNS. Les chemins numeriques et
+localhost restent locaux a la libc. Le mode optionnel test-vm.ps1 -DnsOnly
+execute inet-test --dns contre example.com sans rendre la flotte deterministe
+dependante d'un DNS externe. Cette integration reste a confirmer sous QEMU ;
+IPv6, services nommes et resolution inverse POSIX complete restent hors profil.

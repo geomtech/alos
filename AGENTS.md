@@ -257,8 +257,11 @@ descriptor passing are implemented for the Chromium/Mojo transport path, but
 named Unix sockets and peer credentials are not. A native active TCP connect
 SYN path exists; keep it regression-tested before treating it as established,
 and do not assume retransmission/timeout coverage that has not been observed.
-getaddrinfo is still numeric-only; IPv6 and full socket-option support remain
-unsupported. Authentication, permissions, sandboxing and ASLR are not complete.
+getaddrinfo now has an IPv4 A-record resolver syscall backed by the native DNS
+client; it serializes the resolver's single outstanding query and uses a wait
+queue rather than userland polling. Keep external-DNS tests separate from the
+deterministic fleet; use test-vm.ps1 -DnsOnly when the environment permits
+real DNS. IPv6 and full socket-option support remain unsupported. Authentication, permissions, sandboxing and ASLR are not complete.
 getentropy uses a trusted host-backed legacy VirtIO RNG,
 blocks with a bounded wait and fails closed when unavailable; native tests
 are not cryptographic health tests. See docs/entropy.md for deployment trust
