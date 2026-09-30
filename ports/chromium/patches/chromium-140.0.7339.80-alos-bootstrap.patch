@@ -1,0 +1,65 @@
+diff --git a/build/build_config.h b/build/build_config.h
+--- a/build/build_config.h
++++ b/build/build_config.h
+@@ -64,7 +64,9 @@
+ // IWYU pragma: always_keep
+ 
+ // A set of macros to use for platform detection.
+-#if defined(ANDROID)
++#if defined(__ALOS__)
++#define OS_ALOS 1
++#elif defined(ANDROID)
+ #define OS_ANDROID 1
+ #elif defined(__APPLE__)
+ // Only include TargetConditionals after testing ANDROID as some Android builds
+@@ -137,7 +139,7 @@
+ 
+ // For access to standard POSIXish features, use OS_POSIX instead of a
+ // more specific macro.
+-#if defined(OS_AIX) || defined(OS_ANDROID) || defined(OS_ASMJS) ||   \
++#if defined(OS_AIX) || defined(OS_ALOS) || defined(OS_ANDROID) || defined(OS_ASMJS) ||   \
+     defined(OS_FREEBSD) || defined(OS_IOS) || defined(OS_LINUX) ||   \
+     defined(OS_CHROMEOS) || defined(OS_MAC) || defined(OS_NETBSD) || \
+     defined(OS_OPENBSD) || defined(OS_QNX) || defined(OS_SOLARIS) || \
+diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
+--- a/build/config/BUILDCONFIG.gn
++++ b/build/config/BUILDCONFIG.gn
+@@ -253,6 +253,8 @@ if (target_os == "android") {
+   # Targeting android on Mac is best-effort and not guaranteed to work.
+   assert(host_os == "linux", "Android builds are only supported on Linux.")
+   _default_toolchain = "//build/toolchain/android:android_clang_$target_cpu"
++} else if (target_os == "alos") {
++  _default_toolchain = "//build/toolchain/alos:clang_$target_cpu"
+ } else if (target_os == "chromeos" || target_os == "linux") {
+   # See comments in build/toolchain/cros/BUILD.gn about board compiles.
+   if (is_clang) {
+@@ -322,6 +324,7 @@ if (custom_toolchain != "") {
+ # current_os value directly.
+ 
+ is_android = current_os == "android"
++is_alos = current_os == "alos"
+ is_chromeos = current_os == "chromeos"
+ is_fuchsia = current_os == "fuchsia"
+ is_ios = current_os == "ios"
+diff --git a/build/toolchain/alos/BUILD.gn b/build/toolchain/alos/BUILD.gn
+new file mode 100644
+--- /dev/null
++++ b/build/toolchain/alos/BUILD.gn
+@@ -0,0 +1,17 @@
++# Initial ALOS x86-64 bootstrap toolchain. The ALOS sysroot is mounted at
++# /alos and the independently built libc++ headers at /libcxx.
++import("//build/toolchain/gcc_toolchain.gni")
++
++gcc_toolchain("clang_x64") {
++  cc = "clang --target=x86_64-unknown-none-elf -D__ALOS__ -fno-builtin"
++  cxx = "clang++ --target=x86_64-unknown-none-elf -D__ALOS__ -fno-builtin -nostdinc++"
++  ld = cxx
++  ar = "ar"
++  extra_cppflags = "-I/libcxx/include/c++/v1 -I/alos/src/userland/libc/include"
++  extra_ldflags = "-nostdlib -L/libcxx/lib -lc++ -lc++abi -L/alos/src/userland/libc -lc"
++  toolchain_args = {
++    current_cpu = "x64"
++    current_os = "alos"
++    use_remoteexec = false
++  }
++}

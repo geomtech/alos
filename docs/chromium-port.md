@@ -178,14 +178,36 @@ Pas de libc/headers Linux empruntes. Le patch `llvm-18.1.8-alos-clock.patch`
 selectionne les vraies clock_gettime ALOS pour chrono, sans annoncer tout
 `_POSIX_TIMERS`.
 
-**Compile :** `libc++abi.a` pour la cible ALOS. **Non termine :** `libc++.a`.
+**Compile :** `libc++abi.a` et `libc++.a` pour la cible ALOS, avec LLVM
+`llvmorg-18.1.8`. Les deux archives ont ete produites par le build cible isole.
 Les erreurs upstream ont guide les corrections de stddef/stdint/limits,
 divisions/conversions entieres, allocations alignees, stdio, assertions,
 sched_yield, mutex recursifs, error messages et horloges.
-Le blocage de compilation restant observe dans `libcxx/src/string.cpp`
-concerne les vraies conversions `strtof`, `strtod`, `strtold`. Aucun stub de
-conversion ne les remplace. La classification flottante est disponible,
-pas encore une libm ou une libc de conversion flottante complete.
+`strtof`, `strtod`, `strtold` utilisent le scanner decimal/hexadecimal de musl
+adapte au flux memoire ALOS, avec endptr, Inf/NaN et ERANGE. Les auxiliaires
+long double x86-64 utilisent egalement les algorithmes musl sous licence MIT.
+L'ABI cible est explicitement `LDBL_MANT_DIG=64`, `LDBL_MAX_EXP=16384`,
+distincte de `double`. Un comparatif hote de 10 000 chaines decimales aleatoires
+entre cette implementation et glibc n'a montre aucun ecart binaire ou `endptr`
+pour `strtof` et `strtod`. Les cas limites et malformes sont verifies dans
+`/bin/strtod-test`.
+
+Le moteur de formatage printf de musl est adapte aux flux ALOS non bufferises
+et aux buffers memoire, sans utiliser la structure FILE de musl. `printf`,
+`vprintf`, `fprintf`, `vfprintf`, `sprintf` et `snprintf` partagent ce moteur :
+formats entiers, flottants/long double, caracteres UTF-8, largeur/precision
+et arguments positionnels. `snprintf` renvoie la longueur totale requise,
+meme si la sortie est tronquee, et accepte `(NULL, 0)` pour mesurer celle-ci.
+Les sorties longues de `printf` ne sont plus limitees a une stack de 1024
+octets ; les erreurs d'ecriture remontent via EOF et l'etat du flux.
+`inttypes.h` fournit les macros PRI pour les types exacts, least, fast,
+max et pointeurs selon l'ABI LP64 ALOS ; les APIs de scan/conversion
+specifiques a inttypes ne sont pas encore fournies.
+`/bin/printf-test`, inclus dans le runner `-Runtime`, couvre ces contrats,
+les limites des entiers, la troncature, les sorties longues et les erreurs.
+Le lot runtime avec ce moteur a passe sous QEMU `qemu64` et `max`.
+La construction de libc.a remplace desormais l'archive complete, afin de
+ne pas conserver les anciens membres apres suppression d'une source.
 
 **Profil provisoire documente :** exceptions et RTTI desactivees ; filesystem
 C++, locale, wide characters, Unicode, timezone database et random_device
@@ -200,10 +222,53 @@ Ce service n'est simplement pas requis par ce premier bootstrap libc++.
 
 ## Blocages suivants
 
-Terminer libc++ et compiler-rt si les erreurs de lien le requierent, puis
-executer le vrai complex-cpp-test utilisant la STL et std::thread ensemble.
-Ce test n'a pas encore passe : le runtime C++ complet n'est pas qualifie stable.
-Chromium base n'a donc pas encore ete lance, conformement a cette barriere.
+`complex-cpp-test` compile, se lie avec les deux archives C++ et la libc ALOS,
+et affiche `ALL PASS` dans QEMU `qemu64`. Il exerce std::string, vector,
+unique_ptr, shared_ptr, atomic, quatre std::thread, mutex, recursive_mutex,
+condition_variable, chrono, TLS, mmap/mprotect, allocations et destructeurs.
+Dix executions consecutives dans QEMU `max`/XSAVE-AVX ont aussi passe. Le suivi
+detaille des fuites progressives PMM/VM entre executions reste a faire. Aucun
+builtin compiler-rt supplementaire n'a ete requis pour ce lien.
+
+Le premier essai sur le vrai Chromium `base/time/time.cc` a ete lance sur le
+tag `140.0.7339.80`, commit `670b6f192f4668d2ac2c06bd77ec3e4eeda7d648`,
+dans un checkout externe au depot. Il a atteint le controle de plateforme de
+`build/build_config.h` et les buildflags generes manquants. Le patch initial
+`ports/chromium/patches/chromium-140.0.7339.80-alos-bootstrap.patch`
+introduit `OS_ALOS`, `is_alos` et une toolchain GN x86-64 experimentale.
+Le checkout externe a ensuite ete complete et adapte jusqu'a produire le
+graphe GN et lancer Ninja sur `base:base`. Ces adaptations supplementaires
+du checkout ne sont pas encore toutes consolidees dans le patch bootstrap
+du depot : le petit patch initial seul ne reproduit pas ce graphe.
+Des objets sont compiles, mais `//base` n'est pas encore construit dans
+son ensemble, lie ni execute. Les erreurs observees incluent les headers
+`sys/time.h`, `signal.h`, `link.h`, les sockets POSIX et `pthread_rwlock_t`.
+Les headers libc++ externes utilises par ce checkout correspondent encore
+au profil sans localisation : la regeneration de libc++ avec les nouvelles
+options musl/localisation reste a effectuer avant de conclure sur cette API.
+
+Reproduction du test C++ avec les archives upstream :
+
+```powershell
+.\ports\chromium\scripts\build-complex.ps1 -LibcxxBuildDirectory <repertoire-build-llvm>
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -Runtime -ComplexCpp -Cpu qemu64
+```
+
+Le patch Chromium s'applique au checkout du tag avec `git apply`. Les sources
+Chromium et les produits de build restent externes au depot ALOS.
+Le checkout utilise a ete obtenu par :
+
+```powershell
+git clone --depth 1 --filter=blob:none --sparse --branch 140.0.7339.80 https://github.com/chromium/chromium.git <repertoire-externe>
+git -C <repertoire-externe> sparse-checkout set base build buildtools tools/gn third_party/abseil-cpp third_party/partition_alloc third_party/boringssl third_party/zlib
+git -C <repertoire-externe> apply C:\Projets\Alos\ports\chromium\patches\chromium-140.0.7339.80-alos-bootstrap.patch
+```
+
+Le `gn gen out/alos` experimental utilise `target_os="alos"`,
+`target_cpu="x64"`, `enable_rust=false`, `use_sysroot=false`. Il exige encore
+les dependances `DEPS`/gclient, les buildflags generes et les adaptations de
+configuration de `//base`. Ce n'est pas une recette de build aboutie.
+
 Ensuite le transport
 Mojo devra utiliser des sockets Unix/FD generiques ou un backend natif explicite,
 et l'event loop devra attendre plusieurs sources sans polling. Ces besoins

@@ -1,6 +1,8 @@
 param(
     [switch]$SkipBuild,
     [switch]$Runtime,
+    [switch]$ComplexCpp,
+    [int]$ComplexRuns = 1,
     [string]$Cpu = "qemu64",
     [string]$Qemu = "C:\Program Files\qemu\qemu-system-x86_64.exe",
     [string]$OutputDirectory = (Join-Path ([IO.Path]::GetTempPath()) ("alos-vm-" + [guid]::NewGuid())),
@@ -27,6 +29,12 @@ if (-not $SkipBuild) {
         *> (Join-Path $output "build.log")
     if ($LASTEXITCODE -ne 0) { throw "Build echoue : $output\build.log" }
 }
+if ($ComplexCpp) {
+    if ($ComplexRuns -lt 1 -or $ComplexRuns -gt 100) { throw "ComplexRuns doit etre entre 1 et 100." }
+    $complex = Join-Path $repo "src\userland\complex-cpp-test"
+    if (-not (Test-Path $complex)) { throw "complex-cpp-test non compile : $complex" }
+    Copy-Item -LiteralPath $complex -Destination (Join-Path $repo "fs_root\bin\complex-cpp-test")
+}
 
 # Ne jamais reformater le disque de travail de l'utilisateur.
 $startup = @"
@@ -49,6 +57,8 @@ tls-test
 tls-test
 tls-test
 time-test
+strtod-test
+printf-test
 pthread-test
 pthread-test
 crt-cxx-test
@@ -61,6 +71,10 @@ ls /bin
 ping 10.0.2.2 -c 1
 echo vm-suite-complete
 "@
+}
+if ($ComplexCpp) {
+    $startup = $startup.Replace("echo vm-suite-complete", ("complex-cpp-test`n" * $ComplexRuns) +
+        "echo vm-suite-complete")
 }
 [IO.File]::WriteAllText((Join-Path $output "startup.sh"), $startup.Replace("`r", "") + "`n")
 docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" alos-build sh -c `
@@ -104,12 +118,12 @@ try {
         $text.Contains("exec-test: FAIL")) { throw "Regression detectee : $log" }
     if ($Runtime) {
         foreach ($marker in @("simd-context-test: PASS", "tls-test: PASS",
-            "time-test: PASS", "pthread-test: PASS", "crt-cxx-test: PASS",
+            "time-test: PASS", "strtod-test: PASS", "printf-test: PASS", "pthread-test: PASS", "crt-cxx-test: PASS",
             "tls-cxx-test: PASS", "GLOBAL CTOR", "TLS CTOR",
             "TLS DTOR", "GLOBAL DTOR")) {
             if (-not $text.Contains($marker)) { throw "Resultat manquant '$marker' : $log" }
         }
-        if ($text -match "(simd-context-test|tls-test|time-test|pthread-test|crt-cxx-test): FAIL") {
+        if ($text -match "(simd-context-test|tls-test|time-test|strtod-test|printf-test|pthread-test|crt-cxx-test): FAIL") {
             throw "Regression runtime : $log"
         }
         foreach ($expected in @(
@@ -123,6 +137,13 @@ try {
         }
         if ($text -notmatch '(?s)GLOBAL CTOR.*TLS CTOR.*MAIN.*TLS DTOR.*GLOBAL DTOR') {
             throw "Ordre des constructeurs/destructeurs incorrect : $log"
+        }
+    }
+    if ($ComplexCpp) {
+        if ([regex]::Matches($text, "complex-cpp-test: ALL PASS").Count -ne $ComplexRuns -or
+            [regex]::Matches($text, "complex-cpp-test: GLOBAL DTOR PASS").Count -ne $ComplexRuns -or
+            $text.Contains("complex-cpp-test: FAIL")) {
+            throw "Echec complex-cpp-test : $log"
         }
     }
     $suite = if ($Runtime) { "runtime" } else { "VM" }

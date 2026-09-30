@@ -6,14 +6,17 @@ ALOS is a minimalist x86-64 operating system kernel written in C and x86-64 Asse
 
 ## Current development focus
 
-The current priority is to keep the x86-64 scheduler, Ring 0/Ring 3 transitions, TSS handling, and `iretq` context restoration regression-free before expanding process semantics.
+The current priority is to keep the x86-64 scheduler, Ring 0/Ring 3 transitions, TSS handling, and `iretq` context restoration regression-free while developing the native runtime and multiprocess desktop.
+
+`fork`, `execve`, `waitpid`, sparse demand-paged `mmap`, static ELF TLS, SIMD context preservation and basic pthread support are implemented. Automated QEMU regression scripts exercise these features on actual ALOS executables.
 
 Next major milestones:
-1. Automated QEMU smoke/regression tests
-2. `fork()` / `exec()` / `wait()`
-3. Pipes and POSIX-like signals
-4. Demand paging, Copy-on-Write, and `mmap()`
-5. AHCI/SATA, then NVMe
+1. Continue the Chromium/C++ runtime bootstrap and upstream build integration
+2. Complete missing POSIX services: pipes, signals, socket APIs and event multiplexing
+3. Copy-on-Write and coherent shared file mappings
+4. AHCI/SATA DMA, then NVMe
+
+**Chromium is not yet runnable on ALOS.** Target LLVM 18.1.8 `libc++`/`libc++abi` archives and a native C++ integration test have been built, but the experimental Chromium GN/platform patch still has dependency and configuration blockers. This is not a working Blink, V8, Mojo or Ozone port. See [the detailed port status](docs/chromium-port.md).
 
 ## Features implemented and future plans
 
@@ -21,7 +24,7 @@ Next major milestones:
 - [x] GDT/IDT setup
 - [x] Physical Memory Manager
 - [x] Kernel Heap
-- [x] Virtual Memory (Paging) - Identity mapping
+- [x] Virtual Memory (Paging) and separate user process address spaces
 - [x] RTC Real-Time Clock
 - [x] PIT Programmable Interval Timer
 - [x] Kernel Logging System (file-based, /system/logs)
@@ -32,11 +35,13 @@ Next major milestones:
 - [ ] Kernel modules loading (dynamic drivers)
 
 ### Memory Management
-- [x] Virtual Memory (Paging) - Identity mapping
-- [ ] Demand paging / Page fault handler
+- [x] Per-process page tables and VM region management
+- [x] Sparse demand paging for mmap regions
 - [ ] Copy-on-Write (COW)
-- [ ] Memory-mapped files (mmap)
-- [ ] Shared memory (SHM)
+- [x] Anonymous mmap and private file mappings
+- [x] mmap protections, munmap and private MADV_DONTNEED
+- [x] Shared memory objects and shared anonymous mappings
+- [ ] Coherent shared mappings of ordinary files
 - [ ] Swap support
 
 ### Process & Scheduling
@@ -47,7 +52,9 @@ Next major milestones:
 - [x] System Calls (POSIX/BSD-like interface)
 - [x] Priority-based scheduler
 - [ ] Process groups and sessions
-- [ ] Fork/exec implementation
+- [x] Fork, execve and waitpid (with current ALOS limitations)
+- [x] Static ELF TLS and per-thread FS base
+- [x] x87/SSE/AVX context preservation (FXSAVE or XSAVE)
 - [ ] Signals (POSIX-like)
 - [ ] Real-time scheduling (SCHED_FIFO, SCHED_RR)
 
@@ -55,7 +62,8 @@ Next major milestones:
 - [ ] Pipes (anonymous and named/FIFO)
 - [ ] Message queues
 - [ ] Semaphores
-- [ ] Shared memory segments
+- [x] Native named IPC channels with blocking waits
+- [x] Shared memory objects and controlled SHM descriptor transfer
 - [ ] Unix domain sockets
 
 ### Storage & File Systems
@@ -121,14 +129,16 @@ Next major milestones:
 - [ ] Multi-monitor support
 
 ### User Space & Applications
-- [x] ELF Loader (32-bit executables)
-- [x] ELF 64-bit support
+- [x] Static ELF64 loading
 - [ ] Dynamic linking (shared libraries .so)
-- [x] Standard C library (libc)
-- [ ] POSIX thread library (pthread)
+- [x] Native libc subset with thread-local errno
+- [x] Basic pthread create/join/detach, mutexes, condition variables, once and keys
+- [x] C/C++ constructors, global/TLS destructors and static TLS runtime
+- [x] Target libc++/libc++abi bootstrap (limited profile)
 - [ ] Math library (libm)
 - [ ] Compression libraries (zlib, gzip)
-- [ ] Core utilities (ls, cp, mv, rm, cat, grep, etc.)
+- [x] Basic utilities (sh, ls, cat, mkdir, touch, rm, rmdir, ps, ping, wget, etc.)
+- [ ] Broader POSIX utility coverage (cp, mv, grep, etc.)
 - [ ] Text editor (vi/nano-like)
 - [ ] Package manager
 - [ ] GCC/Compiler toolchain port
@@ -151,7 +161,9 @@ Next major milestones:
 - [ ] Sandboxing/containers
 - [ ] Secure boot support
 - [ ] ASLR (Address Space Layout Randomization)
-- [ ] DEP/NX bit enforcement
+- [x] RW/NX protections for mmap regions; RWX mappings rejected
+- [ ] Complete executable-memory protection policy across ELF/heap mappings
+- [ ] Cryptographic entropy service
 - [ ] Encrypted filesystems
 - [ ] SELinux/AppArmor-like MAC
 
@@ -175,20 +187,32 @@ Next major milestones:
 - [ ] Hot-plug devices support
 
 ### Documentation & Testing
-- [ ] API documentation
+- [x] GUI client API documentation
 - [ ] User manual
-- [ ] Automated testing suite
+- [x] Automated native QEMU VM/runtime regression suites
 - [ ] Continuous integration
 - [ ] Benchmarking suite
 
-## Project Structure 
+## Current limitations
+
+ALOS remains an educational OS, not a production-secure or fully POSIX-compatible system:
+
+- Fork rejects multithreaded processes and copies resident private pages rather than using COW. Waitpid returns the raw ALOS status.
+- Demand paging and mprotect apply to managed mmap regions; mprotect does not yet cover ELF segments or the brk heap. Shared file mappings, swap and COW are not implemented.
+- Shared anonymous/SHM backing is currently eager and limited to 16 MiB per object. Shared MADV_DONTNEED is unsupported.
+- Ring 3 threads are preempted, but historical Ring 0 sections remain cooperative. SMP is not implemented, even when a launch script configures multiple virtual CPUs.
+- TLS is static only. Pthread cancellation, rwlocks, barriers, creation attributes and process-shared synchronization are not complete.
+- Native IPC is not Unix sockets or Mojo. Full POSIX socket, signal and event-wait APIs remain incomplete.
+- Authentication, file permissions, sandboxing, ASLR and cryptographic entropy are not complete. Older libc wrappers do not all use uniform POSIX errno conventions.
+
+## Project Structure
 
 ```
 src/
-├── arch/x86_64/       # x86-64 code (GDT, IDT, TSS, interrupts, context switching, usermode)
+├── arch/x86_64/       # GDT/IDT/TSS, interrupts, context switching, CPU and xstate
 ├── config/            # Kernel configuration
-├── kernel/            # Kernel core (main, console, keyboard, syscalls, elf)
-├── mm/                # Memory Management (PMM, heap, VMM)
+├── kernel/            # Boot, scheduling, syscalls, ELF, TLS, futex, IPC, SHM and display
+├── mm/                # PMM, heap, VMM and per-process VM regions
 ├── drivers/           # Hardware drivers
 │   ├── ata.c/h        # ATA/IDE disk driver
 │   ├── pci.c/h        # PCI bus driver
@@ -202,32 +226,46 @@ src/
 │   ├── l2/            # Layer 2 (Ethernet, ARP)
 │   ├── l3/            # Layer 3 (IPv4, ICMP, Routing)
 │   └── l4/            # Layer 4 (UDP, TCP, DHCP, DNS)
-├── shell/             # Command interpreter
+├── shell/             # Kernel command interpreter
 │   ├── shell.c/h      # Shell core (readline, history, parsing)
 │   └── commands.c/h   # Built-in commands (help, ping, exec, etc.)
-├── userland/          # User space programs (server, hello, test)
-└── include/           # Shared headers (Multiboot, linker script, ELF)
+├── userland/
+│   ├── cmd/           # Installed shell and utilities
+│   ├── libc/          # Native libc, CRT and syscall wrappers
+│   ├── desktop/       # Official desktop, window manager and compositor
+│   ├── libgui/        # Client GUI library
+│   ├── gui/           # Legacy GUI, rendering helpers, fonts and FreeType
+│   └── *-test.c/cc    # Native regression programs
+└── include/           # Shared kernel headers, Limine and ELF definitions
+
+disk_structure/        # Filesystem template and application manifests
+ports/chromium/        # Runtime build environment, scripts, patches and licenses
+docs/                  # GUI/API, drivers, MMIO and Chromium port documentation
 ```
 
 ## Architecture Overview
 
+The official GUI is a userland display server: `/bin/gui` is built from `src/userland/desktop/`. Independent ELF applications use `libgui.a`, native IPC and shared ARGB surfaces. Only the display owner accesses the framebuffer and hardware input. `/bin/gui-test` is the legacy GUI, not the official desktop.
+
+The launcher reads `/share/applications/*.desktop` manifests. See [desktop architecture](docs/GUI.md) and [the client API](docs/GUI-API.md) for application integration.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │              User Space (Ring 3)                        │
-│         ELF Programs  │  Userland libc                  │
+│       Desktop + apps  │  Shell  │  libc / libgui          │
 ├─────────────────────────────────────────────────────────┤
 │                  System Calls (int 0x80)                │
 ├─────────────────────────────────────────────────────────┤
 │              Kernel Space (Ring 0)                      │
 ├─────────────────────────────────────────────────────────┤
-│     VFS API              │         Network API          │
+│       VFS / VM / IPC / SHM / Display / Network APIs       │
 │  (open, read, readdir)   │    (send, recv, socket)      │
 ├──────────────────────────┼──────────────────────────────┤
 │   Ext2   │  (Future FS)  │  TCP/UDP  │ ICMP │ DHCP/DNS  │
 ├──────────────────────────┼──────────────────────────────┤
 │      ATA Driver          │     IPv4  │  ARP  │ Ethernet │
 ├──────────────────────────┼──────────────────────────────┤
-│      IDE Controller      │       PCnet Driver           │
+│      IDE Controller      │  VirtIO / PCnet / E1000E      │
 ├──────────────────────────┴──────────────────────────────┤
 │                    PCI Bus                              │
 ├─────────────────────────────────────────────────────────┤
@@ -239,14 +277,32 @@ src/
 
 ### Prerequisites
 
+- Windows workflow: PowerShell, Docker Desktop (Linux containers), QEMU and its bundled EDK2 firmware
 - Compiler: `x86_64-elf-gcc` / `x86_64-elf-ld` when available (the Makefile can fall back to the native GCC toolchain)
 - Assembler: `nasm`
 - ISO tooling: `xorriso`
 - Disk utilities: `e2fsprogs` / `mkfs.ext2`
 - Emulator: `qemu-system-x86_64` and/or VirtualBox
 - Bootloader: Limine v10.x (downloaded/built automatically by the Makefile)
+- Runtime/C++ builds: Clang and related tools supplied by the runtime Docker image
 
-### Compilation
+### Windows quick start
+
+Run from the repository root:
+
+```powershell
+docker build -t alos-runtime -f ports\chromium\build\Dockerfile.runtime .
+.\run.ps1 build          # Build kernel, userland, disk and ISO via Docker
+.\run.ps1 run            # Run existing images in QEMU
+.\run.ps1 debug          # Rebuild, then start paused for GDB on port 1234
+Get-Content .\serial.log -Wait
+```
+
+`run.ps1` expects QEMU under `C:\Program Files\qemu` and uses the bundled `share\edk2-x86_64-code.fd` firmware. Adjust these paths in the script for a different installation. No native Windows cross-toolchain is required with Docker.
+
+> **Disk data warning:** `make disk.img`, `make iso` and `run.ps1 build` recreate the 64 MiB `disk.img` from the template and built applications. Back up guest data before rebuilding. The regression runner below creates a separate test disk instead.
+
+### Linux / Docker compilation
 
 ```bash
 # Build the kernel
@@ -283,7 +339,28 @@ make clean               # Remove build artifacts
 make distclean           # Also remove Limine
 ```
 
-On Windows, `run-debug.ps1` starts the runtime and follows `serial.log` using `logs.ps1`.
+`make run-qemu` currently invokes `qemu-system-amd64` and uses firmware paths under `/usr/share/OVMF/`; ensure the executable and firmware exist on your distribution. Fast targets configure host-side KVM/SDL/OpenGL, not an ALOS OpenGL implementation.
+
+On Windows, `run-debug.ps1` builds and runs the OS in a second PowerShell window and follows `serial.log` using `logs.ps1`. It does not enable GDB pause mode; use `run.ps1 debug` for that.
+
+## Regression testing
+
+Build the runtime image as above. The runner also uses an image named `alos-build` for Ext2 disk creation; the runtime image provides the required utilities and can be tagged for this role:
+
+```powershell
+docker tag alos-runtime alos-build
+.\ports\chromium\scripts\test-vm.ps1
+.\ports\chromium\scripts\test-vm.ps1 -Runtime -Cpu qemu64
+.\ports\chromium\scripts\test-vm.ps1 -Runtime -SkipBuild -Cpu max
+```
+
+The runner builds kernel/userland, refreshes staging, creates a separate temporary Ext2 disk and executes native tests in headless QEMU with one CPU and virtio-net. It preserves the working `disk.img` and writes build/image/serial logs into its output directory. `-SkipBuild` requires existing binaries and ISO to match the sources.
+
+The default suite covers mmap, fork, exec, threads, VFS and SLIRP gateway ping. `-Runtime` adds SIMD context switching, TLS, clocks, pthread, floating-point parsing/printf and C++ CRT/TLS tests. `qemu64` covers the FXSAVE path; `max` exercises XSAVE/AVX. Some mmap tests deliberately fault child processes; completion markers and assertions determine success.
+
+The optional `-ComplexCpp` suite requires a separately built `complex-cpp-test` linked against the target upstream C++ archives. See [Chromium runtime build instructions](docs/chromium-port.md).
+
+For GUI changes, also exercise the official desktop interactively: launch GUI Demo from Apps, move/resize windows, check focus and input, and close clients. A legacy `/bin/gui-test` run does not validate the multiprocess desktop.
 
 ## QEMU Configuration
 
@@ -293,8 +370,8 @@ On Windows, `run-debug.ps1` starts the runtime and follows `serial.log` using `l
 - Planned next-generation storage: AHCI/SATA DMA, then NVMe
 
 ### Networking
-- QEMU targets use VirtIO-net with user-mode networking
-- The default QEMU configuration forwards host TCP port `8080` to guest port `80`
+- The Windows runner and default QEMU Make target use VirtIO-net with user-mode networking; TAP and other network targets are also available
+- `run.ps1` and `make run-qemu` forward host TCP port `8080` to guest port `80` (for example, `curl http://localhost:8080/` when the guest HTTP server is running)
 - PCnet and Intel E1000E drivers are also present in the tree
 
 ### Debugging
@@ -304,8 +381,12 @@ On Windows, `run-debug.ps1` starts the runtime and follows `serial.log` using `l
 
 ## License
 
-This project is intended for educational purposes.
+This project is intended for educational purposes. Educational use is not itself a license grant.
+
+The tree contains third-party code, including FreeType and imported musl routines. Preserve their notices and consult the bundled licenses, including `ports/chromium/MUSL-LICENSE` and `src/userland/libc/COPYRIGHT.musl`.
 
 ## Contributing
 
 Contributions are welcome!
+
+Read [AGENTS.md](AGENTS.md) for repository conventions and architectural constraints. Keep kernel compilation flags intact, use French comments where consistent with surrounding code, and include native regression coverage for runtime/ABI changes.

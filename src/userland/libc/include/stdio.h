@@ -9,11 +9,13 @@ extern "C" {
 #include <stddef.h>
 #define EOF (-1)
 
-typedef struct {
+#include <bits/alos_wchar.h>
+
+struct _IO_FILE {
   int fd;
   int error;
   int eof;
-} FILE;
+};
 
 extern FILE *stdin;
 extern FILE *stdout;

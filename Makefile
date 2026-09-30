@@ -356,7 +356,7 @@ fs_root: disk_structure userland
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
 	@cp -v src/userland/mmap-test fs_root/bin/
-	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
+	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/strtod-test src/userland/printf-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
 	@cp -v src/userland/gui-demo fs_root/bin/gui-demo

@@ -3,4 +3,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential binutils clang cmake ninja-build git ca-certificates wget \
     nasm xorriso e2fsprogs qemu-system-x86 python3 \
     && rm -rf /var/lib/apt/lists/*
+# Dependances HOST uniquement : GN evalue la toolchain Linux de l'hote
+# (//build/toolchain/linux:clang_x64) pour les generateurs et outils du build,
+# qui interroge pkg-config pour GLib. Rien de ceci n'entre dans le sysroot ALOS.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libglib2.0-dev \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /root/env

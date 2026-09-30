@@ -32,6 +32,16 @@ long strtol(const char *nptr, char **endptr, int base);
 long long strtoll(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
 unsigned long long strtoull(const char *nptr, char **endptr, int base);
+float strtof(const char *nptr, char **endptr);
+double strtod(const char *nptr, char **endptr);
+long double strtold(const char *nptr, char **endptr);
+#define MB_CUR_MAX ((size_t)4)
+size_t __ctype_get_mb_cur_max(void);
+int mblen(const char *, size_t);
+int mbtowc(__WCHAR_TYPE__ *__restrict, const char *__restrict, size_t);
+int wctomb(char *, __WCHAR_TYPE__);
+size_t mbstowcs(__WCHAR_TYPE__ *__restrict, const char *__restrict, size_t);
+size_t wcstombs(char *__restrict, const __WCHAR_TYPE__ *__restrict, size_t);
 void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *));
 
 
