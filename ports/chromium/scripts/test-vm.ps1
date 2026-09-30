@@ -272,19 +272,35 @@ foreach ($program in $basePrograms) {
 $start = [Diagnostics.ProcessStartInfo]::new()
 $start.FileName = $Qemu
 $start.UseShellExecute = $false
-foreach ($argument in @(
+
+# ProcessStartInfo.ArgumentList n'existe que sur les runtimes .NET modernes.
+# Windows PowerShell 5.1 (.NET Framework) expose la propriete mais elle peut
+# etre absente/null selon le runtime. Construire d'abord une liste neutre puis
+# utiliser ArgumentList quand disponible, sinon .Arguments.
+$qemuArguments = @(
     "-cdrom", (Join-Path $repo "alos.iso"),
     "-drive", "file=$(Join-Path $output 'test.disk'),format=raw,if=ide",
     "-m", "1024M", "-cpu", $Cpu, "-smp", "1",
     "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0",
     "-display", "none", "-serial", "file:$log", "-monitor", "none",
     "-no-reboot", "-no-shutdown"
-)) { $start.ArgumentList.Add($argument) }
+)
 if (($Fleet -or $StackProtectorOnly -or $hasNativeSmoke) -and -not $EntropyUnavailable) {
-    foreach ($argument in @("-object", "rng-builtin,id=alos_rng", "-device",
-        "virtio-rng-pci,rng=alos_rng,disable-modern=on")) {
-        $start.ArgumentList.Add($argument)
+    $qemuArguments += @("-object", "rng-builtin,id=alos_rng", "-device",
+        "virtio-rng-pci,rng=alos_rng,disable-modern=on")
+}
+
+if ($null -ne $start.ArgumentList) {
+    foreach ($argument in $qemuArguments) {
+        $start.ArgumentList.Add([string]$argument)
     }
+} else {
+    # Tous les arguments QEMU utilises ici sont sans guillemets embarques.
+    # Les entourer systematiquement protege aussi les chemins contenant des espaces.
+    $quotedArguments = foreach ($argument in $qemuArguments) {
+        '"' + ([string]$argument).Replace('"', '\"') + '"'
+    }
+    $start.Arguments = $quotedArguments -join " "
 }
 
 $process = [Diagnostics.Process]::Start($start)
