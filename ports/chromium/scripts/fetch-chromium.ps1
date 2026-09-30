@@ -18,7 +18,7 @@ $sparse = @(
     "testing", "tools/clang", "tools/gn", "tools/grit", "tools/gritsettings", "tools/nocompile", "tools/protoc_wrapper",
     "third_party/abseil-cpp", "third_party/boringssl", "third_party/ced",
     "third_party/closure_compiler", "third_party/fuzztest",
-    "third_party/google_benchmark", "third_party/googletest",
+    "third_party/google_benchmark", "third_party/google-closure-library", "third_party/googletest",
     "third_party/jsoncpp", "third_party/libxml", "third_party/modp_b64",
     "third_party/partition_alloc", "third_party/protobuf",
     "third_party/protobuf-javascript", "third_party/re2", "third_party/sqlite",
