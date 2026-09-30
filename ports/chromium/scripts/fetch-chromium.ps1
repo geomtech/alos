@@ -33,6 +33,14 @@ $deps = @(
        Rev = "0a0009998fa180695f3e2071805dc03c9a5f3124"; Sparse = $null },
     @{ Path = "third_party/ced/src"; Url = "https://chromium.googlesource.com/external/github.com/google/compact_enc_det.git";
        Rev = "ba412eaaacd3186085babcd901679a48863c7dd5"; Sparse = $null },
+    @{ Path = "third_party/google_benchmark/src"; Url = "https://chromium.googlesource.com/external/github.com/google/benchmark.git";
+       Rev = "761305ec3b33abf30e08d50eb829e19a802581cc"; Sparse = $null },
+    @{ Path = "third_party/fuzztest/src"; Url = "https://chromium.googlesource.com/external/github.com/google/fuzztest.git";
+       Rev = "7bab06ff5fbbf8b8cce05a8661369dc2e11cde66"; Sparse = $null },
+    @{ Path = "third_party/re2/src"; Url = "https://chromium.googlesource.com/external/github.com/google/re2.git";
+       Rev = "8451125897dd7816a5c118925e8e42309d598ecc"; Sparse = $null },
+    @{ Path = "third_party/sqlite/src"; Url = "https://chromium.googlesource.com/chromium/deps/sqlite.git";
+       Rev = "cc08c79629643fdd5b592f1391e738815f5577b6"; Sparse = $null },
     @{ Path = "third_party/icu"; Url = "https://chromium.googlesource.com/chromium/deps/icu.git";
        Rev = "1b2e3e8a421efae36141a7b932b41e315b089af8"; Sparse = @("source", "common") },
     @{ Path = "third_party/perfetto"; Url = "https://chromium.googlesource.com/external/github.com/google/perfetto.git";
