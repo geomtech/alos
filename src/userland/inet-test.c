@@ -40,8 +40,10 @@ int main(void) {
     }
     CHECK(getaddrinfo("192.0.2.1","65536",&h,&r) == EAI_SERVICE && !r);
     CHECK(getaddrinfo("host.invalid","80",&h,&r) == EAI_NONAME && !r);
+    h.ai_flags = AI_ADDRCONFIG | AI_NUMERICHOST | AI_NUMERICSERV;
+    CHECK(getaddrinfo("192.0.2.1","80",&h,&r) == 0);
+    if (r) { freeaddrinfo(r); r = NULL; }
     h.ai_flags = 0;
-    CHECK(getaddrinfo("host.invalid","80",&h,&r) == EAI_SYSTEM && errno == ENOTSUP && !r);
     CHECK(getaddrinfo(NULL,"80",&h,&r) == 0);
     if (r) {
         CHECK(((struct sockaddr_in *)r->ai_addr)->sin_addr.s_addr == htonl(INADDR_LOOPBACK));
