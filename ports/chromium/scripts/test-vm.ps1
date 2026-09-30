@@ -239,16 +239,33 @@ $metadataCommands = @(
     "set_inode_field /metadata-fixture/malformed mode 040755"
 ) -join "`n"
 [IO.File]::WriteAllText((Join-Path $output "metadata.commands"), $metadataCommands + "`n")
-docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" alos-build sh -c `
-    'truncate -s 64M /artifacts/test.disk && mkfs.ext2 -q -F -d fs_root /artifacts/test.disk && debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk && debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk && for name in wide-io-valid wide-io-output wide-io-invalid wide-io-incomplete fd-io-data fd-io-zero; do debugfs -w -R "write /artifacts/$name /$name" /artifacts/test.disk || exit; done && debugfs -w -f /artifacts/metadata.commands /artifacts/test.disk' `
-    *> (Join-Path $output "image.log")
-if ($LASTEXITCODE -ne 0) { throw "Creation image echouee : $output\image.log" }
+# Windows PowerShell 5 transforme les lignes stderr des programmes natifs en
+# ErrorRecord. debugfs ecrit sa banniere/version sur stderr meme quand il
+# reussit, ce qui devenait une erreur terminante avec ErrorActionPreference=Stop.
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" alos-build sh -c `
+        'truncate -s 64M /artifacts/test.disk && mkfs.ext2 -q -F -d fs_root /artifacts/test.disk && debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk && debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk && for name in wide-io-valid wide-io-output wide-io-invalid wide-io-incomplete fd-io-data fd-io-zero; do debugfs -w -R "write /artifacts/$name /$name" /artifacts/test.disk || exit; done && debugfs -w -f /artifacts/metadata.commands /artifacts/test.disk' `
+        *> (Join-Path $output "image.log")
+    $imageExitCode = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+}
+if ($imageExitCode -ne 0) { throw "Creation image echouee : $output\image.log" }
 foreach ($program in $basePrograms) {
     $name = $program.Name
-    docker run --rm -v "${output}:/artifacts" alos-build sh -c `
-        "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk && debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk && cmp /artifacts/$name /artifacts/verify-$name" `
-        *> (Join-Path $output "$name-image.log")
-    if ($LASTEXITCODE -ne 0) { throw "Staging smoke Base echoue : $name" }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        docker run --rm -v "${output}:/artifacts" alos-build sh -c `
+            "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk && debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk && cmp /artifacts/$name /artifacts/verify-$name" `
+            *> (Join-Path $output "$name-image.log")
+        $stageExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($stageExitCode -ne 0) { throw "Staging smoke Base echoue : $name" }
     Remove-Item -LiteralPath (Join-Path $output "verify-$name")
 }
 
