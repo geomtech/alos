@@ -536,9 +536,9 @@ static void tcp_send_rst(uint8_t* dest_ip, uint16_t dest_port, uint16_t src_port
 /**
  * Envoie un paquet TCP.
  */
-void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int len)
+bool tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int len)
 {
-    if (sock == NULL) return;
+    if (sock == NULL) return false;
     
     /* Buffer pour le paquet TCP (header + payload) */
     uint8_t buffer[1500];
@@ -546,7 +546,7 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     /* Vérifier que le paquet n'est pas trop grand */
     if (len > (int)(sizeof(buffer) - TCP_HEADER_SIZE)) {
         KLOG_ERROR_DEC("TCP", "Payload too large: ", len);
-        return;
+        return false;
     }
     
     /* === Construire le header TCP === */
@@ -588,7 +588,7 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     /* Trouver le next hop (gateway si nécessaire) */
     if (!route_get_next_hop(sock->remote_ip, next_hop)) {
         KLOG_ERROR("TCP", "No route to destination");
-        return;
+        return false;
     }
     
     /* Résoudre le MAC via ARP cache */
@@ -598,8 +598,8 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
         
         /* Envoyer une requête ARP */
         arp_send_request(netif, next_hop);
-        /* TODO: Mettre le paquet en file d'attente et réessayer plus tard */
-        return;
+        /* La couche appelante peut reessayer une fois l'ARP resolu. */
+        return false;
     }
     
     /* === Log debug === */
@@ -628,6 +628,7 @@ void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int le
     
     /* === Debug: afficher l'avancement du SEQ === */
     (void)seq_advance; /* Avoid unused warning */
+    return true;
 }
 
 /* ===========================================
@@ -683,7 +684,8 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
         return;
     }
     if (sock->native_posix && (flags & TCP_FLAG_RST)) {
-        sock->socket_error = ECONNRESET;
+        sock->socket_error =
+            sock->state == TCP_STATE_SYN_SENT ? ECONNREFUSED : ECONNRESET;
         sock->state = TCP_STATE_CLOSED;
         wait_queue_wake_all(&sock->state_waitqueue);
         wait_queue_wake_all(&sock->recv_waitqueue);
@@ -724,6 +726,22 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len)
     
     /* === Machine à états TCP === */
     switch (sock->state) {
+        case TCP_STATE_SYN_SENT:
+            if ((flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) ==
+                    (TCP_FLAG_SYN | TCP_FLAG_ACK) &&
+                ack_num == sock->seq) {
+                sock->ack = seq_num + 1;
+                if (!tcp_send_packet(sock, TCP_FLAG_ACK, NULL, 0)) {
+                    sock->socket_error = EHOSTUNREACH;
+                    sock->state = TCP_STATE_CLOSED;
+                } else {
+                    sock->state = TCP_STATE_ESTABLISHED;
+                }
+                wait_queue_wake_all(&sock->state_waitqueue);
+                native_poll_notify();
+            }
+            break;
+
         case TCP_STATE_LISTEN:
             /* En écoute - on attend un SYN */
             if (flags & TCP_FLAG_SYN) {
@@ -1065,6 +1083,50 @@ int tcp_bind(tcp_socket_t* sock, uint16_t port)
     }
     
     sock->local_port = port;
+    return 0;
+}
+
+int tcp_connect_start(tcp_socket_t* sock, const uint8_t remote_ip[4],
+                      uint16_t remote_port)
+{
+    if (!sock || !remote_ip || !remote_port) return -EINVAL;
+    if (!(remote_ip[0] | remote_ip[1] | remote_ip[2] | remote_ip[3]))
+        return -EADDRNOTAVAIL;
+    if (sock->state == TCP_STATE_ESTABLISHED ||
+        sock->state == TCP_STATE_CLOSE_WAIT)
+        return -EISCONN;
+    if (sock->state == TCP_STATE_SYN_SENT) return -EALREADY;
+    if (sock->state != TCP_STATE_CLOSED) return -EINVAL;
+
+    if (!sock->local_port) {
+        int bound = -1;
+        for (uint32_t port = 49152; port <= 65535; ++port) {
+            if (!tcp_bind(sock, (uint16_t)port)) {
+                bound = 0;
+                break;
+            }
+        }
+        if (bound) return -EADDRINUSE;
+    }
+
+    for (int i = 0; i < 4; ++i) sock->remote_ip[i] = remote_ip[i];
+    sock->remote_port = remote_port;
+    sock->seq = ((uint32_t)timer_get_ticks() * 1103515245u) ^
+                ((uint32_t)sock->local_port << 16) ^ remote_port;
+    sock->ack = 0;
+    sock->socket_error = 0;
+    sock->read_shutdown = false;
+    sock->write_shutdown = false;
+    sock->window = TCP_RECV_BUFFER_SIZE;
+    sock->state = TCP_STATE_SYN_SENT;
+
+    if (!tcp_send_packet(sock, TCP_FLAG_SYN, NULL, 0)) {
+        sock->state = TCP_STATE_CLOSED;
+        sock->remote_port = 0;
+        for (int i = 0; i < 4; ++i) sock->remote_ip[i] = 0;
+        return -EHOSTUNREACH;
+    }
+    native_poll_notify();
     return 0;
 }
 

@@ -103,21 +103,10 @@ static tcp_socket_t* tcp_connect_timeout(const uint8_t* ip, uint16_t port, int t
     tcp_socket_t* sock = tcp_socket_create();
     if (!sock) return NULL;
     
-    /* Bind to a random local port */
-    static uint16_t local_port = 50000;
-    if (tcp_bind(sock, local_port++) != 0) {
+    if (tcp_connect_start(sock, ip, port) != 0) {
         tcp_close(sock);
         return NULL;
     }
-    
-    /* Set remote endpoint */
-    memcpy(sock->remote_ip, ip, 4);
-    sock->remote_port = port;
-    
-    /* Send SYN */
-    sock->state = TCP_STATE_SYN_SENT;
-    sock->seq = 1000;  /* Initial sequence number */
-    tcp_send_packet(sock, TCP_FLAG_SYN, NULL, 0);
     
     /* Wait for connection (state becomes ESTABLISHED) */
     int elapsed = 0;

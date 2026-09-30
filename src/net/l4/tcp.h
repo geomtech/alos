@@ -198,7 +198,7 @@ void tcp_handle_packet(ipv4_header_t* ip_hdr, uint8_t* data, int len);
  * @param payload Données à envoyer (peut être NULL)
  * @param len     Longueur des données
  */
-void tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int len);
+bool tcp_send_packet(tcp_socket_t* sock, uint8_t flags, uint8_t* payload, int len);
 
 /**
  * Retourne le nom d'un état TCP (pour debug).
@@ -223,6 +223,15 @@ tcp_socket_t* tcp_socket_create(void);
  * @return 0 si succès, -1 si erreur
  */
 int tcp_bind(tcp_socket_t* sock, uint16_t port);
+
+/**
+ * Demarre une connexion TCP sortante sur un socket CLOSED.
+ *
+ * Le SYN est emis immediatement. Le passage a ESTABLISHED est effectue
+ * par tcp_handle_packet() a reception du SYN-ACK.
+ */
+int tcp_connect_start(tcp_socket_t* sock, const uint8_t remote_ip[4],
+                      uint16_t remote_port);
 
 /**
  * Lit des données depuis le buffer de réception d'un socket.

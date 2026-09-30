@@ -44,6 +44,14 @@ int main(void) {
         CHECK(fcntl(fd,F_GETFD,0) & FD_CLOEXEC);
         int type = 0; socklen_t n = sizeof(type);
         CHECK(getsockopt(fd,SOL_SOCKET,SO_TYPE,&type,&n) == 0 && type == SOCK_STREAM);
+        CHECK(connect(fd,(const struct sockaddr *)1,sizeof(struct sockaddr_in)) == -1 && errno == EFAULT);
+        struct sockaddr_in target = {0};
+        target.sin_family = AF_INET;
+        target.sin_addr.s_addr = htonl(0x0a000202);
+        CHECK(connect(fd,(struct sockaddr *)&target,sizeof(target)) == -1 && errno == EINVAL);
+        target.sin_port = htons(80);
+        target.sin_addr.s_addr = 0;
+        CHECK(connect(fd,(struct sockaddr *)&target,sizeof(target)) == -1 && errno == EADDRNOTAVAIL);
         CHECK(bind(fd,(const struct sockaddr *)1,sizeof(struct sockaddr_in)) == -1 && errno == EFAULT);
         struct sockaddr_in a = {0};
         a.sin_family = AF_INET;

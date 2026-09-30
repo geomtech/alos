@@ -75,6 +75,10 @@ static bool accept_ready(void *ctx) {
     return tcp_native_ready_client(s->local_port) ||
            s->state != TCP_STATE_LISTEN || terminating();
 }
+static bool connect_ready(void *ctx) {
+    tcp_socket_t *s = ctx;
+    return s->state != TCP_STATE_SYN_SENT || s->socket_error || terminating();
+}
 short native_socket_poll(open_file_description_t *d, short events) {
     tcp_socket_t *s = d->socket;
     short r = 0;
@@ -201,6 +205,37 @@ static int create_socket(int family, int type, int protocol) {
     native_poll_notify();
     return fd;
 }
+static int connect_socket(open_file_description_t *description,
+                          const void *p, uint64_t n) {
+    sockaddr_in_t address;
+    int result = address_input(&address, p, n);
+    if (result) return result;
+    uint16_t port = ntohs(address.sin_port);
+    uint8_t remote[4];
+    for (int i = 0; i < 4; ++i)
+        remote[i] = ((const uint8_t *)&address.sin_addr)[i];
+
+    net_lock();
+    result = tcp_connect_start(description->socket, remote, port);
+    net_unlock();
+    if (result) return result;
+    if (description->flags & O_NONBLOCK) return -EINPROGRESS;
+
+    wait_queue_wait(&description->socket->state_waitqueue,
+                    connect_ready, description->socket);
+    if (terminating()) return -EINTR;
+
+    net_lock();
+    if (description->socket->socket_error)
+        result = -description->socket->socket_error;
+    else if (description->socket->state == TCP_STATE_ESTABLISHED)
+        result = 0;
+    else
+        result = -ECONNABORTED;
+    net_unlock();
+    return result;
+}
+
 static int bind_socket(tcp_socket_t *s, const void *p, uint64_t n) {
     sockaddr_in_t a;
     int error = address_input(&a, p, n);
@@ -331,11 +366,7 @@ int64_t native_socket_call(uint64_t op, uint64_t a, uint64_t b,
         break;
     case ALOS_SOCKET_SETOPT: result = -ENOPROTOOPT; break;
     case ALOS_SOCKET_CONNECT:
-        {
-            sockaddr_in_t addr;
-            result = address_input(&addr,(void *)b,c);
-            if (!result) result = -EOPNOTSUPP;
-        }
+        result = connect_socket(description, (void *)b, c);
         break;
     case ALOS_SOCKET_SHUTDOWN:
         if ((int)b < 0 || (int)b > 2) result = -EINVAL;
