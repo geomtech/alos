@@ -839,10 +839,32 @@ ni modifier les deadlines internes des tests.
 Aucune erreur de compilation/lien ne reste dans ce groupe de neuf smokes.
 Cela ne valide pas base_unittests, l'ensemble des APIs Base, les signaux,
 la decouverte de modules, les garanties realtime ou une libm complete.
-Les besoins navigateur (Mojo/FD passing, connexion TCP/DNS, Ozone, Blink,
-V8) restent des jalons distincts non demontres.
+Les besoins navigateur au-dela de ces smokes (connexion TCP/DNS complete,
+Ozone, Blink, V8 et integration multiprocessus du navigateur) restent des
+jalons distincts non demontres.
 
-Ensuite le transport
-Mojo devra utiliser des sockets Unix/FD generiques ou un backend natif explicite,
-et l'event loop devra attendre plusieurs sources sans polling. Ces besoins
-ne sont pas declares satisfaits par les tests d'IPC natif.
+Le transport local a ensuite franchi un jalon reel. ALOS fournit maintenant
+des paires AF_UNIX SOCK_STREAM anonymes, sendmsg/recvmsg, SCM_RIGHTS,
+CLOEXEC/non-bloquant, EOF/HUP/EPIPE et attente poll multi-source, en reutilisant
+les files IPC bornees sans presenter l'ancien protocole IPC nomme comme Unix.
+Le test natif `unix-socket-test` couvre notamment le transfert d'un backing
+SHM entre processus, le partage d'offset de fichier, les erreurs EMFILE,
+la troncature de controle, le refus de cycles de droits et la liberation
+iterative d'une chaine acyclique de 128 transferts.
+
+Le smoke `mojo_ipcz_smoke` utilise le chemin Chromium default-ipcz reel :
+le parent lance un enfant, transmet l'endpoint de plateforme, envoie une
+invitation et un message contenant un SharedBufferHandle de 4096 octets.
+L'enfant mappe le buffer, modifie un octet, renvoie un acquittement puis attend
+la confirmation finale ; le parent observe la modification avant la fermeture
+du pair. Les marqueurs parent/enfant et la sortie PASS ont ete observes sous
+ALOS. Ce jalon ne valide pas les sockets Unix nommes, les credentials de pair,
+la sandbox, l'ensemble des tests Mojo ni un navigateur Chromium complet.
+
+Le front reseau actif est maintenant en cours : le noyau possede un chemin
+SYN sortant natif et un etat SYN_SENT exploite par connect(), avec completion
+par poll/SO_ERROR pour les sockets non bloquants. Ce chemin doit encore etre
+revalide dans la flotte QEMU et ne doit pas etre presente comme fournissant
+des retransmissions/temporisations TCP completes. Le resolver libc
+getaddrinfo reste numeric-only ; le raccord au resolver DNS ALOS reste un
+jalon suivant.

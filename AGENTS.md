@@ -251,12 +251,15 @@ NIC -> Ethernet -> IPv4 -> TCP/UDP and the reverse for transmit.
 QEMU Windows/regression scripts use virtio-net; other launch targets differ.
 Inspect their flags rather than assuming PCnet everywhere.
 
-The native TCP/IP stack is not a complete POSIX socket API: connect,
-setsockopt/getaddrinfo and Unix sockets/FD passing still need work for Chromium.
-Passive IPv4 sockets/poll are natively tested, but connect returns EOPNOTSUPP
-and getaddrinfo is numeric-only; AF_UNIX/SCM_RIGHTS, IPv6 and full socket
-options remain unsupported. Authentication, permissions, sandboxing and ASLR
-are not complete. getentropy uses a trusted host-backed legacy VirtIO RNG,
+The native TCP/IP stack is not a complete POSIX socket API. Passive IPv4
+sockets/poll are natively tested. Unnamed AF_UNIX stream pairs and SCM_RIGHTS
+descriptor passing are implemented for the Chromium/Mojo transport path, but
+named Unix sockets and peer credentials are not. A native active TCP connect
+SYN path exists; keep it regression-tested before treating it as established,
+and do not assume retransmission/timeout coverage that has not been observed.
+getaddrinfo is still numeric-only; IPv6 and full socket-option support remain
+unsupported. Authentication, permissions, sandboxing and ASLR are not complete.
+getentropy uses a trusted host-backed legacy VirtIO RNG,
 blocks with a bounded wait and fails closed when unavailable; native tests
 are not cryptographic health tests. See docs/entropy.md for deployment trust
 and driver limits. Never replace required entropy with a deterministic PRNG.
