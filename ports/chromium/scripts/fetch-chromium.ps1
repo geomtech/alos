@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$ChromiumDirectory,
-    [switch]$SkipPatch
+    [switch]$SkipPatch,
+    [switch]$FullCheckout
 )
 # Checkout Chromium 140.0.7339.80 reproductible pour le bootstrap ALOS :
 # clone sparse de chromium/src puis dependances DEPS aux revisions figees.
@@ -63,7 +64,15 @@ if ($src.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Le checkout Chromium doit rester externe au depot ALOS."
 }
 if ((git -C $src rev-parse HEAD) -ne $commit) { throw "Chromium $tag ($commit) requis." }
-Invoke-Git -C $src sparse-checkout set @sparse
+if ($FullCheckout) {
+    # Le build "all" traverse des sources/outils vendored bien au-dela du
+    # bootstrap //base. Desactiver le sparse checkout evite de courir apres
+    # chaque dossier du depot principal manquant.
+    Invoke-Git -C $src sparse-checkout disable
+    Write-Host "Checkout Chromium principal complet active."
+} else {
+    Invoke-Git -C $src sparse-checkout set @sparse
+}
 
 foreach ($dep in $deps) {
     $dir = Join-Path $src $dep.Path
