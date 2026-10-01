@@ -1,0 +1,61 @@
+diff --git a/mojo/public/tools/bindings/mojom.gni b/mojo/public/tools/bindings/mojom.gni
+index b8d5bad7ac..4e41af1b21 100644
+--- a/mojo/public/tools/bindings/mojom.gni
++++ b/mojo/public/tools/bindings/mojom.gni
+@@ -23,6 +23,8 @@ import("//build/toolchain/kythe.gni")
+ import("//third_party/jinja2/jinja2.gni")
+ import("//third_party/ply/ply.gni")
+ declare_args() {
++  # Profil bootstrap natif : aucune generation Java/JS/TS ni dependance V8.
++  alos_mojom_cpp_only = false
+   # Indicates whether typemapping should be supported in this build
+   # configuration. This may be disabled when building external projects which
+   # depend on //mojo but which do not need/want all of the Chromium tree
+@@ -702,6 +704,11 @@ template("mojom") {
+   generate_js_fuzzing =
+       (!defined(invoker.enable_js_fuzzing) || invoker.enable_js_fuzzing) &&
+       enable_mojom_fuzzer && (!defined(invoker.testonly) || !invoker.testonly)
++  if (alos_mojom_cpp_only) {
++    not_needed([ "generate_js_fuzzing" ])
++    not_needed(invoker, [ "generate_java" ])
++    not_needed(invoker, [ "cpp_only" ])
++  }
+ 
+   generate_mojolpm_fuzzing =
+       (!defined(invoker.enable_mojolpm_fuzzing) ||
+@@ -1218,9 +1225,9 @@ template("mojom") {
+     enabled_configurations = [ default_variant ]
+   }
+   foreach(bindings_configuration, enabled_configurations) {
+-    cpp_only = false
++    cpp_only = alos_mojom_cpp_only
+     if (defined(invoker.cpp_only)) {
+-      cpp_only = invoker.cpp_only
++      cpp_only = alos_mojom_cpp_only || invoker.cpp_only
+     }
+     variant_suffix = ""
+     if (defined(bindings_configuration.variant)) {
+@@ -2048,11 +2055,11 @@ template("mojom") {
+ 
+   use_typescript_for_target = defined(invoker.webui_module_path)
+ 
+-  generate_legacy_js = !use_typescript_for_target ||
++  generate_legacy_js = !alos_mojom_cpp_only && (!use_typescript_for_target ||
+                        (defined(invoker.generate_legacy_js_bindings) &&
+-                        invoker.generate_legacy_js_bindings)
++                        invoker.generate_legacy_js_bindings))
+ 
+-  if (!use_typescript_for_target &&
++  if ((!use_typescript_for_target || alos_mojom_cpp_only) &&
+       defined(invoker.generate_legacy_js_bindings)) {
+     not_needed(invoker, [ "generate_legacy_js_bindings" ])
+   }
+@@ -2189,7 +2196,7 @@ template("mojom") {
+       }
+     }
+   }
+-  if ((generate_js_fuzzing || !defined(invoker.cpp_only) ||
++  if (!alos_mojom_cpp_only && (generate_js_fuzzing || !defined(invoker.cpp_only) ||
+        !invoker.cpp_only) && use_typescript_for_target) {
+     if (sources_list != []) {
+       source_filelist = []

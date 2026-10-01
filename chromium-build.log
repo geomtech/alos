@@ -1,0 +1,27 @@
+*********************************************************************
+WARNING: Support for linking against a C++ standard library other 
+  than the one in-tree (buildtools/third_party/libc++) is deprecated
+  and support for this will end. We plan to remove this option in 
+  M138.
+*********************************************************************
+Done. Made 1880 targets from 376 files in 1442ms
+ninja: Entering directory `out/alos'
+[1/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/alias.o
+[2/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/check.o
+[3/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/rand_util.o
+[4/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/string_util.o
+[5/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/cstring_builder.o
+[6/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/logging.o
+[7/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/log_message.o
+[8/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/stack_trace.o
+[9/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/safe_sprintf.o
+[10/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/ref_counted.o
+[11/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/cpu.o
+[12/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/page_size_posix.o
+[13/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/stringprintf.o
+[14/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/time_override.o
+[15/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/platform_thread.o
+[16/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/stack_trace_posix.o
+[17/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/file_util_posix.o
+[18/19] CXX obj/base/allocator/partition_allocator/src/partition_alloc/allocator_base/time.o
+[19/19] AR obj/base/allocator/partition_allocator/src/partition_alloc/liballocator_base.a

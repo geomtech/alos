@@ -20,6 +20,8 @@ Next major milestones:
 
 ## Features implemented and future plans
 
+The opt-in `-MojoBindings` bootstrap now also generates, builds and executes a typed C++ Mojo `Remote`/`Receiver` request/reply across parent and child processes, with a transferred shared-buffer handle. This targeted smoke passes on ALOS under both QEMU `qemu64` and `max`; it does not establish general Mojo bindings or browser support.
+
 ### Core System ✓
 - [x] GDT/IDT setup
 - [x] Physical Memory Manager

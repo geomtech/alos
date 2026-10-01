@@ -1,0 +1,9 @@
+*********************************************************************
+WARNING: Support for linking against a C++ standard library other 
+  than the one in-tree (buildtools/third_party/libc++) is deprecated
+  and support for this will end. We plan to remove this option in 
+  M138.
+*********************************************************************
+Done. Made 1880 targets from 376 files in 2056ms
+ninja: Entering directory `out/alos'
+ninja: error: '../../third_party/google-closure-library/closure/goog/array/array.js', needed by 'gen/third_party/protobuf/js_proto.js_library', missing and no known rule to make it

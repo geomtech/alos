@@ -1,4 +1,36 @@
 assert(is_alos)
+declare_args() {
+  alos_build_mojo_bindings = false
+}
+if (alos_build_mojo_bindings) {
+  import("//mojo/public/tools/bindings/mojom.gni")
+
+mojom("echo") {
+  sources = [ "echo.mojom" ]
+  cpp_only = true
+}
+
+executable("mojo_bindings_smoke") {
+  sources = [ "mojo-bindings-smoke.cc" ]
+  deps = [
+    ":echo",
+    "//base",
+    "//mojo/core/embedder",
+    "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/platform",
+    "//mojo/public/cpp/system",
+  ]
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}
+
+}
 
 executable("mojo_ipcz_smoke") {
   sources = [ "mojo-ipcz-smoke.cc" ]

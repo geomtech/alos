@@ -1,0 +1,6 @@
+module alos.mojom;
+
+interface Echo {
+  Exchange(string text, handle<shared_buffer> buffer) => (string reply, uint8 value);
+  Finish() => ();
+};

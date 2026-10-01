@@ -56,7 +56,7 @@ $deps = @(
 function Invoke-Git { & git @args; if ($LASTEXITCODE) { throw "git $args" } }
 
 if (-not (Test-Path (Join-Path $ChromiumDirectory ".git"))) {
-    Invoke-Git clone --depth 1 --filter=blob:none --sparse --branch $tag `
+    Invoke-Git clone -c core.longpaths=true --depth 1 --filter=blob:none --sparse --branch $tag `
         https://github.com/chromium/chromium.git $ChromiumDirectory
 }
 $src = (Resolve-Path $ChromiumDirectory).Path
@@ -64,6 +64,9 @@ if ($src.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Le checkout Chromium doit rester externe au depot ALOS."
 }
 if ((git -C $src rev-parse HEAD) -ne $commit) { throw "Chromium $tag ($commit) requis." }
+# Git for Windows doit pouvoir materialiser les chemins longs Chromium.
+# Configuration locale uniquement, avant toute expansion du checkout.
+Invoke-Git -C $src config core.longpaths true
 if ($FullCheckout) {
     # Le build "all" traverse des sources/outils vendored bien au-dela du
     # bootstrap //base. Desactiver le sparse checkout evite de courir apres

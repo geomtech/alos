@@ -6,6 +6,7 @@ param(
     [switch]$GenOnly,
     [switch]$NativeTests,
     [switch]$MojoTests,
+    [switch]$MojoBindings,
     [switch]$KeepGoing,
     [int]$Jobs = 8
 )
@@ -13,6 +14,7 @@ param(
 # (gn, python, protoc...) sont Linux host ; les objets du toolchain par defaut
 # //build/toolchain/alos:clang_x64 visent ALOS avec la libc et libc++ ALOS.
 $ErrorActionPreference = "Stop"
+if ($MojoBindings) { $MojoTests = $true }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $src = (Resolve-Path $ChromiumDirectory).Path
 $revision = & git -C $src rev-parse HEAD
@@ -191,19 +193,36 @@ if ($MojoTests) {
         }
         $directory = Join-Path $src "alos_mojo"
         New-Item -ItemType Directory -Force $directory | Out-Null
-        foreach ($name in @("BUILD.gn", "mojo-ipcz-smoke.cc")) {
+        foreach ($name in @("BUILD.gn", "mojo-ipcz-smoke.cc",
+            "echo.mojom", "mojo-bindings-smoke.cc")) {
             Copy-Item -LiteralPath (Join-Path $repo "ports\chromium\tests\mojo\$name") `
                 -Destination $directory
         }
-        $args_gn += "`nalos_build_mojo_tests = true"
+        if (-not $MojoBindings) { $args_gn += "`nalos_build_mojo_tests = true" }
         $args_gn += "`nuse_blink = false"
+        if ($MojoBindings) {
+            $patch = Join-Path $repo "ports\chromium\patches\chromium-alos-mojom-cpp-only.patch"
+            & git -C $src apply --reverse --check $patch 2>$null
+            if ($LASTEXITCODE) {
+                & git -C $src apply --check $patch
+                if ($LASTEXITCODE) { throw "Patch bindings C++ incompatible." }
+                & git -C $src apply $patch
+                if ($LASTEXITCODE) { throw "Patch bindings C++ echoue." }
+            }
+            $args_gn += "`nalos_mojom_cpp_only = true"
+            $args_gn += "`nalos_build_mojo_bindings = true"
+        }
     }
 New-Item -ItemType Directory -Force (Join-Path $src "out\alos") | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "out\alos\args.gn"), "$args_gn`n")
 $mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",
             "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro",
             "-w", "/chromium", "alos-runtime")
-& docker @mounts /gn/gn gen out/alos
+$generate = @("/gn/gn", "gen", "out/alos")
+if ($MojoBindings) {
+    $generate += "--root-target=//alos_mojo:mojo_bindings_smoke"
+}
+& docker @mounts @generate
 if ($LASTEXITCODE) { throw "gn gen out/alos echoue." }
 if ($GenOnly) { return }
 $ninja = @("ninja", "-C", "out/alos", "-j", "$Jobs")

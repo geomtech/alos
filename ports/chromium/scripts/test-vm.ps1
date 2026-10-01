@@ -8,6 +8,7 @@ param(
     [switch]$DnsOnly,
     [string]$BaseSmokePath,
     [string]$MojoSmokePath,
+    [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
     [string[]]$BaseSmokeTargets = @("base_smoke", "atomic_smoke", "file_comparison_smoke",
         "stack_trace_smoke", "process_smoke", "discardable_capability_smoke", "thread_smoke", "elf_reader_smoke", "io_pump_smoke"),
@@ -21,6 +22,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($MojoBindings -and -not $MojoSmokePath) {
+    throw "MojoBindings exige le chemin du smoke genere."
+}
 if ($StackProtectorOnly -and ($Runtime -or $ComplexCpp)) {
     throw "StackProtectorOnly est une suite isolee, incompatible avec Runtime/ComplexCpp."
 }
@@ -172,6 +176,10 @@ if ($hasNativeSmoke) {
     if ($MojoSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $MojoSmokePath).Path
             Name = "chromium-mojo-smoke"; Marker = "chromium-mojo-smoke: PASS" })
+        if ($MojoBindings) {
+            $basePrograms[0].Name = "chromium-mojo-bindings-smoke"
+            $basePrograms[0].Marker = "chromium-mojo-bindings-smoke: PASS"
+        }
     } elseif ($BaseSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $BaseSmokePath).Path
             Name = "chromium-base-smoke"; Marker = "chromium-base-smoke: Time PASS" })
@@ -431,8 +439,13 @@ try {
         $text.Contains("int128-runtime-test: FAIL"))) {
         throw "New local transport/runtime regression : $log"
     }
-    if ($MojoSmokePath -and -not $text.Contains("chromium-mojo-smoke: child shared-handle PASS")) {
-        throw "Mojo child shared-buffer result missing : $log"
+    if ($MojoSmokePath) {
+        $childMarker = if ($MojoBindings) {
+            "chromium-mojo-bindings-smoke: child typed request PASS"
+        } else { "chromium-mojo-smoke: child shared-handle PASS" }
+        if (-not $text.Contains($childMarker)) {
+            throw "Mojo child result missing : $log"
+        }
     }
     if ($UnixSocketOnly -and (-not $text.Contains("unix-socket-test: PASS") -or
         $text.Contains("unix-socket-test: FAIL"))) {

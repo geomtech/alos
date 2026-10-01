@@ -885,3 +885,51 @@ localhost restent locaux a la libc. Le mode optionnel test-vm.ps1 -DnsOnly
 execute inet-test --dns contre example.com sans rendre la flotte deterministe
 dependante d'un DNS externe. Cette integration reste a confirmer sous QEMU ;
 IPv6, services nommes et resolution inverse POSIX complete restent hors profil.
+
+### Bindings C++ Mojo generes : premier appel type natif
+
+Le 2026-10-01, `mojo-current-next-vm` revalide le binaire ipcz reconstruit
+par l'utilisateur avant d'ouvrir le jalon des bindings. Le graphe upstream
+des bindings chargeait aussi des targets JavaScript demandant `v8/gni/v8.gni`.
+Le profil opt-in `build-chromium.ps1 -MojoBindings` active
+`alos_mojom_cpp_only=true` : generation C++ uniquement, sans Java/JS/TS,
+sans compiler V8, Blink ou un navigateur. Le profil par defaut reste inchange.
+Les typemaps natifs, les sources de validation et les assertions upstream
+restent actifs ; aucune API kernel/libc ni faux support POSIX n'est ajoute.
+
+La compilation du vrai target `mojo/public/cpp/bindings:bindings` termine
+avec 77 actions reussies jusqu'a `AR .../libbindings.a`. Le nouveau
+`alos_mojo:mojo_bindings_smoke` utilise `echo.mojom`, genere par les outils
+upstream, et les vrais `mojo::Remote` / `mojo::Receiver` sur default-ipcz.
+GN genere 2114 targets depuis 415 fichiers. Le dernier build
+`ninja-mojo-typed-final.log` termine par `LINK ./mojo_bindings_smoke`, sans
+FAILED. L'archive bindings contient 28 membres ; le smoke est un ELF64
+x86-64 EXEC statique, entree 0x400000, sans symboles indefinis, interpreteur
+ou segment DYNAMIC. La relance exacte `base:base` repond no work to do.
+
+`mojo-typed-qemu64-vm` et `mojo-typed-max-vm` terminent PASS avec
+`chromium-mojo-bindings-smoke: child typed request PASS`,
+`chromium-mojo-bindings-smoke: PASS (generated C++, default ipcz)` et
+`vm-suite-complete`. Le parent lance l'enfant avant de creer des threads,
+envoie une invitation et appelle Exchange avec une chaine et un handle de
+buffer partage de 4096 octets. L'enfant verifie la requete, mappe le buffer,
+modifie l'octet 19 de 73 a 91 et repond avec une chaine et la valeur 91.
+Le parent verifie le callback et la coherence de son mapping, attend Finish,
+ferme son Remote ; l'enfant observe la deconnexion puis sort avec statut 0.
+
+Reproduction avec le profil libc++ localise valide :
+
+```powershell
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory $Chromium -LibcxxDirectory $Libcxx `
+  -MojoBindings -Targets alos_mojo:mojo_bindings_smoke -KeepGoing -Jobs 8
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -MojoBindings `
+  -MojoSmokePath "$Chromium\out\alos\mojo_bindings_smoke" -Cpu qemu64
+```
+
+Les nouveaux fichiers du graphe ont ete disponibles dans le checkout
+Chromium enrichi de cette machine. Ce resultat ne prouve pas que le fetch
+sparse minimal fournit deja toutes les dependances du generateur.
+Les suites kernel/runtime ne sont pas refaites pour ce jalon C++ uniquement.
+Cela ne valide ni l'ensemble des bindings/tests Mojo, ni les interfaces du
+navigateur, ni JavaScript/V8, les sockets nommes ou les credentials de pair.
