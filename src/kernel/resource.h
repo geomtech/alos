@@ -6,5 +6,6 @@
 int sys_resource_limit(int resource, alos_resource_limit_t *destination);
 int sys_resource_set_limit(int resource, const alos_resource_limit_t *source);
 int sys_thread_nice(int operation, int value, int *destination);
+int sys_resource_usage(int who, alos_rusage_t *destination);
 
 #endif

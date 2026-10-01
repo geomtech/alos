@@ -220,8 +220,12 @@ static void remove_range(process_t *process, uint64_t start, uint64_t end) {
   while (*link) {
     vm_area_t *area = *link;
     if (area->start >= start && area->end <= end) {
+      uint64_t released =
+          vmm_resident_pages((page_directory_t *)process->pml4,
+                             area->start, area->end);
       vmm_update_range((page_directory_t *)process->pml4, area->start,
                         area->end, 0, true);
+      process_note_resident_pages(process, -(int64_t)released);
       *link = area->next;
       free_area(area);
     } else {
@@ -407,7 +411,10 @@ int vm_madvise(process_t *process, uint64_t address, uint64_t length,
     if (area->end <= address) continue;
     if (area->flags & MAP_SHARED) return -ENOTSUP;
   }
+  uint64_t released =
+      vmm_resident_pages((page_directory_t *)process->pml4, address, end);
   vmm_update_range((page_directory_t *)process->pml4, address, end, 0, true);
+  process_note_resident_pages(process, -(int64_t)released);
   return 0;
 }
 
@@ -455,6 +462,7 @@ vm_fault_result_t vm_handle_fault(process_t *process, uint64_t address,
     flags |= PAGE_OWNED;
   }
   if (vmm_map_page_in_dir(dir, phys, page, flags) != 0) goto failure;
+  process_note_resident_pages(process, 1);
   result = VM_FAULT_HANDLED;
   goto done;
 failure:

@@ -184,6 +184,7 @@ void *shm_map_process(process_t *process, shm_object_t *object) {
     }
     return (void *)-1;
   }
+  process_note_resident_pages(process, object->page_count);
 
   shm_retain(object);
   process->shm_mappings[mapping_index].object = object;
@@ -207,6 +208,8 @@ int shm_unmap_process(process_t *process, void *address_pointer) {
     for (uint64_t offset = 0; offset < mapping->size; offset += PAGE_SIZE) {
       vmm_unmap_page_in_dir(directory, mapping->address + offset);
     }
+    process_note_resident_pages(process,
+                                -(int64_t)mapping->object->page_count);
     shm_release(mapping->object);
     memset(mapping, 0, sizeof(*mapping));
     return 0;

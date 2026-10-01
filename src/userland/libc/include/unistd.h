@@ -10,7 +10,10 @@
 #define _SC_PAGESIZE 30
 #define _SC_PAGE_SIZE _SC_PAGESIZE
 #define _SC_NPROCESSORS_CONF 31
+#define _SC_NPROCESSORS_ONLN 32
+#define _SC_PHYS_PAGES 33
 #define _PC_NAME_MAX 1
+#define _PC_PATH_MAX 2
 #define F_OK 0
 #define X_OK 1
 #define W_OK 2
@@ -28,6 +31,7 @@ int dup2(int fd, int target);
 int unlink(const char *pathname);
 int unlinkat(int dirfd, const char *path, int flags);
 int symlink(const char *target, const char *path);
+int link(const char *old_path, const char *new_path);
 ssize_t readlink(const char *path, char *buffer, size_t size);
 long pathconf(const char *path, int name);
 off_t lseek(int fd, off_t offset, int whence);
@@ -47,6 +51,7 @@ ssize_t pread(int fd, void *buffer, size_t count, off_t offset);
 ssize_t pwrite(int fd, const void *buffer, size_t count, off_t offset);
 int ftruncate(int fd, off_t length);
 int ftruncate64(int fd, off_t length);
+int truncate(const char *path, off_t length);
 int chdir(const char *path);
 char *getcwd(char *buf, size_t size);
 int mkdir(const char *pathname, ...);

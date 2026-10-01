@@ -58,6 +58,12 @@ Types :
 - `GUI_EVENT_KEY_UP`
 - `GUI_EVENT_CLOSE`
 
+`gui_connection_fd()` retourne le descripteur IPC de la connexion au desktop
+(`-1` avant la première fenêtre). Il est pollable (`poll`/`epoll`,
+`POLLIN` quand un message attend) et permet d'intégrer `libgui` dans une
+boucle d'événements existante. `libgui` n'est pas thread-safe : tous les
+appels `gui_*` doivent venir du même thread.
+
 Les coordonnées souris sont relatives à la zone cliente. Les interactions
 avec les décorations ne sont pas envoyées à l'application.
 

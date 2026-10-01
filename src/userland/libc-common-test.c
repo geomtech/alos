@@ -135,6 +135,34 @@ static void check_atan2(void) {
   CHECK(callf(0, 0) == 0 && calll(0, 0) == 0 && errno == EDOM);
 }
 
+static uint64_t bits64(double x) {
+  return ((union { double f; uint64_t u; }){ .f = x }).u;
+}
+
+static void check_sign_math(void) {
+  double (*volatile abs64)(double) = fabs;
+  float (*volatile abs32)(float) = fabsf;
+  double (*volatile sign64)(double, double) = copysign;
+  float (*volatile sign32)(float, float) = copysignf;
+  const uint64_t qnan64 = 0x7ff8000000000123ull;
+  const uint32_t qnan32 = 0x7fc00123u;
+  double nan64 = ((union { uint64_t u; double f; }){ .u = qnan64 }).f;
+  double negnan64 = ((union { uint64_t u; double f; }){ .u = qnan64 | (1ull << 63) }).f;
+  CHECK(bits64(abs64(-0.0)) == 0 && bits64(abs64(-INFINITY)) == bits64(INFINITY));
+  CHECK(bits64(abs64(-0x1p-1074)) == 1 && abs64(-1.5) == 1.5);
+  CHECK(bits64(abs64(negnan64)) == qnan64);
+  CHECK(bits(abs32(-0.0f)) == 0 && bits(abs32(-INFINITY)) == 0x7f800000u);
+  CHECK(bits(abs32(from_bits(0x80000001u))) == 1 && abs32(-2.5f) == 2.5f);
+  CHECK(bits(abs32(from_bits(qnan32 | 0x80000000u))) == qnan32);
+  CHECK(bits64(sign64(0.0, -0.0)) == (1ull << 63) && sign64(-3.0, 0.0) == 3.0);
+  CHECK(sign64(INFINITY, -1) == -INFINITY && sign64(2.0, negnan64) == -2.0);
+  CHECK(bits64(sign64(nan64, -1)) == (qnan64 | (1ull << 63)));
+  CHECK(bits(sign32(0.0f, -0.0f)) == 0x80000000u && sign32(-3.0f, 0.0f) == 3.0f);
+  CHECK(sign32(INFINITY, -1) == -INFINITY &&
+        sign32(2.0f, from_bits(qnan32 | 0x80000000u)) == -2.0f);
+  CHECK(bits(sign32(from_bits(qnan32), -1)) == (qnan32 | 0x80000000u));
+}
+
 static void check_atol(void) {
   CHECK(atol(" \t\n\r\v\f-123tail") == -123);
   CHECK(atol("+456!") == 456);
@@ -210,11 +238,61 @@ static void check_output(void) {
   }
 }
 
+static int atexit_sequence;
+static void atexit_first(void) {
+  /* Enregistre en premier : doit s'executer apres atexit_second (LIFO). */
+  if (atexit_sequence == 1) puts("libc-common-test: atexit LIFO");
+  else printf("libc-common-test: FAIL atexit order %d\n", atexit_sequence);
+}
+static void atexit_second(void) { atexit_sequence = 1; }
+
+static void check_setvbuf_limits(void) {
+  /* Les macros de limites suivent le type promu (int pour 8/16 bits). */
+  CHECK(-1 < UINT16_MAX && -1 < UINT8_MAX);
+  CHECK(sizeof(INT32_MIN) == sizeof(int) && INT32_MIN < 0);
+  CHECK(setvbuf(stdout, NULL, _IOLBF, 0) == 0);
+  CHECK(setvbuf(stdout, NULL, _IONBF, 0) == 0);
+  errno = 0;
+  CHECK(setvbuf(stdout, NULL, 42, 0) == -1 && errno == EINVAL);
+}
+
+static void check_sqrt_rewind(void) {
+  double (*volatile s64)(double) = sqrt;
+  float (*volatile s32)(float) = sqrtf;
+  long double (*volatile s80)(long double) = sqrtl;
+  CHECK(s64(4.0) == 2.0 && s64(2.0) == 0x1.6a09e667f3bcdp0);
+  CHECK(bits64(s64(-0.0)) == (1ull << 63) && s64(INFINITY) == INFINITY);
+  CHECK(isnan(s64(-1.0)) && isnan(s64(NAN)));
+  CHECK(s64(0x1p-1074) == 0x1p-537);
+  CHECK(s32(9.0f) == 3.0f && bits(s32(2.0f)) == 0x3fb504f3u);
+  CHECK(bits(s32(-0.0f)) == 0x80000000u && isnan(s32(-1.0f)));
+  CHECK(s80(16.0L) == 4.0L && isnan(s80(-1.0L)));
+  CHECK(fabsl(s80(2.0L) - 1.414213562373095048801688724209698079L) <= 0x1p-63L);
+
+  int fd = open("/libc-common-rewind", O_RDWR | O_CREAT | O_TRUNC, 0600);
+  CHECK(fd >= 0);
+  if (fd >= 0) {
+    FILE file = {.fd = fd};
+    CHECK(fputs("rewind", &file) >= 0);
+    file.error = EIO;
+    file.eof = 1;
+    rewind(&file);
+    CHECK(!ferror(&file) && !feof(&file) && ftell(&file) == 0);
+    char data[8] = {0};
+    CHECK(fread(data, 1, 6, &file) == 6 && !memcmp(data, "rewind", 6));
+    CHECK(close(fd) == 0 && unlink("/libc-common-rewind") == 0);
+  }
+  CHECK(atexit(atexit_first) == 0 && atexit(atexit_second) == 0);
+}
+
 int main(void) {
   check_expf();
   check_atan2();
+  check_sign_math();
   check_atol();
   check_output();
+  check_sqrt_rewind();
+  check_setvbuf_limits();
   if (failures) {
     printf("libc-common-test: FAIL %d\n", failures);
     return 1;

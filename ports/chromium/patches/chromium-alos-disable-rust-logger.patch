@@ -1,0 +1,24 @@
+diff --git a/base/BUILD.gn b/base/BUILD.gn
+--- a/base/BUILD.gn
++++ b/base/BUILD.gn
+@@ -2585,7 +2585,7 @@ if (is_android) {
+   }
+ }
+ 
+-if (enable_rust) {
++if (enable_rust && enable_rust_cxx) {
+ rust_bindgen("logging_log_severity_bindgen") {
+   # TODO(danakj): Maybe combine all base bindgen targets, or all base/logging
+   # ones even) into a single GN target? But the GN rule needs to handle multiple
+diff --git a/base/test/BUILD.gn b/base/test/BUILD.gn
+--- a/base/test/BUILD.gn
++++ b/base/test/BUILD.gn
+@@ -35,7 +35,7 @@ static_library("test_config") {
+   ]
+ }
+ 
+-if (enable_rust) {
++if (enable_rust && enable_rust_cxx) {
+ rust_static_library("test_rust_logger_consumer") {
+   allow_unsafe = true  # Unsafe needed for FFI
+   testonly = true

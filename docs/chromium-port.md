@@ -20,7 +20,7 @@ suivant porte sur les services runtime manquants et l'integration upstream.
 | Reseau | Pile Ethernet/IPv4/TCP/DNS/DHCP et outils natifs. socket/bind/listen/accept/connect/send/recv, poll, un sous-ensemble epoll, AF_UNIX socketpair/SCM_RIGHTS et getaddrinfo IPv4/DNS sont disponibles ; setsockopt, IPv6 et les sockets Unix nommes restent incomplets. |
 | Temps/signaux | Horloges monotonic/realtime 64 bits, nanosleep bloquant, echeances de wait queues. Abort/assert terminent tout le processus, y compris les threads CPU-bound ; handlers POSIX de signaux non implementes. |
 | Entropie/devices | getentropy via legacy VirtIO RNG host-backed, avec prerequis de confiance du deploiement et echec ferme sans device. Pas de getrandom ni de devfs `/dev/urandom` ; aucun test de sante cryptographique/profil production etabli. |
-| C++ | Clang 18, TLS ELF statique Variant II, init/fini arrays et destructeurs globaux/TLS executes. Archives libc++/libc++abi cibles compilees avec localisation ; complex-cpp-test recompile/lie avec ce profil et execute trois fois avec succes sous QEMU max, y compris locale classique et streams narrow. |
+| C++ | Clang Chromium 21 (`bd809ffb`), TLS ELF statique Variant II, init/fini arrays et destructeurs globaux/TLS executes. Archives libc++/libc++abi cibles compilees avec localisation, wide chars et filesystem ; complex-cpp-test valide streams, `std::atomic_ref`, fstream et filesystem sous QEMU `qemu64`/`max`. |
 
 ## Support ajoute
 
@@ -121,6 +121,37 @@ ABI `main` sans tirer un CRT ou des headers de l'hote.
   garantie FIFO ; attributs, timed locks et process-shared non implementes.
   Les acquisitions try utilisent aussi trylock sur la gate interne, sans
   attente bloquante lorsque celle-ci est occupee.
+- `<semaphore.h>` fournit les semaphores POSIX non nommes prives
+  (`sem_init/destroy/post/wait/trywait/timedwait/getvalue`) sur futex
+  prive, avec attente bloquante reelle. `pshared != 0` retourne `ENOSYS`,
+  les semaphores nommes (`sem_open`) ne sont pas implementes ; `sem_destroy`
+  avec attente en cours retourne `EBUSY`. `sem_timedwait` utilise une
+  echeance absolue `CLOCK_REALTIME` arrondie a la milliseconde superieure.
+  `semaphore-test: PASS` (erreurs, timeout 100 ms, reveil tardif, tampon
+  borne 2 producteurs x 2 consommateurs) dans la suite `-Runtime` sous
+  qemu64 et max. Un blocage intermittent du test historique `threads-test`
+  (piles malloc de 4 KiB) a ete observe une fois puis non reproduit.
+- `<sys/resource.h>` expose `getrusage` pour `RUSAGE_SELF` et
+  `RUSAGE_THREAD`. Le noyau somme les ticks PIT des threads vivants et les
+  ticks des threads termines deja reap par le processus ; ALOS ne separe pas
+  encore temps user/systeme, donc tout est rapporte dans `ru_utime` et
+  `ru_stime` reste nul. `ru_maxrss` est le pic de pages residentes du
+  processus en KiB ; `RUSAGE_CHILDREN` retourne `EINVAL`.
+- `tmpfile()` cree un fichier exclusif avec `mkstemp` et l'ouvre en `w+b`.
+  Par prudence vis-a-vis du VFS Ext2, l'entree reste visible jusqu'a
+  `fclose`, qui la supprime ; une sortie anormale peut donc laisser le fichier.
+- `atexit` enregistre dans la meme pile LIFO que `__cxa_atexit` (ordre
+  C++ conserve) ; `rewind` reprend `fseek(0, SEEK_SET)` puis efface erreur
+  et EOF. `libm` importe les routines reelles musl 1.2.6 C99/C11
+  float/double et les variantes x86_64 `long double` utilisees par
+  libc++ `<cmath>` (`floorf`, `truncf`, `roundf`, `fmaf`, `lrintf`,
+  trigonometrie, exp/log/pow, reste, FMA, classification, etc.).
+  `sqrt`/`sqrtf`/`sqrtl` restent les wrappers `sqrtsd`/`sqrtss`/`fsqrt`
+  et ne modifient pas `errno`, comme musl x86_64 ; les helpers
+  exceptionnels ALOS positionnent `ERANGE`/`EDOM` pour overflow,
+  underflow, pole et domaine. `libc-common-test` et
+  `libm-complete-test` couvrent ces contrats ; suite `-Runtime` PASS
+  sous qemu64 et max.
 - `CLOCK_BOOTTIME=2`, `CLOCK_MONOTONIC_RAW=3` et `CLOCK_MONOTONIC_COARSE=4`
   partagent l'uptime kernel de MONOTONIC, a resolution milliseconde :
   aucun suspend/resume ni ajustement NTP n'est implemente.
@@ -288,12 +319,53 @@ les conversions flottantes `_l` sont egalement testes. Les locales restent
 limitees aux noms C/POSIX/UTF-8, aux formats C et a la collation par octets
 ou points de code, sans base de donnees de locales.
 
-**Profil courant compile :** localisation, Unicode et caracteres wide C++
-actives ; exceptions et RTTI desactivees ; filesystem C++, timezone database
-et random_device exclus.
+**Profil courant compile :** LLVM/Clang Chromium 21.0.0git
+(`bd809ffb4b5f277a661509fbbbf9ea893a545ab0`) construit depuis un sparse
+checkout externe `C:\external\llvm-project-chromium140`. Le script
+`build-libcxx.ps1` accepte maintenant la revision attendue, un prefixe de
+patches et un repertoire d'installation ; il monte le clang Chromium
+`third_party/llvm-build/Release+Asserts` et installe dans
+`C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx-21`.
+Le profil garde localisation, Unicode et caracteres wide C++ actifs ;
+`LIBCXX_ENABLE_FILESYSTEM=ON` active `<fstream>` et `std::filesystem`.
+Exceptions, RTTI, timezone database et random_device restent desactives.
 Threads, atomiques, TLS, constructeurs, synchronisation et chrono
 restent actifs. Le build upstream est Debug : les assertions ne sont pas
 supprimees pour contourner une faute.
+
+Le seul patch LLVM 21 requis est
+`ports/chromium/patches/llvm-21-bd809ffb-alos-clock.patch`, qui selectionne
+les vraies horloges ALOS pour chrono/filesystem sans definir un faux profil
+POSIX complet. Le patch musl narrow-locale de LLVM 18 n'est plus necessaire :
+le support xlocale a ete restructure en `__locale_dir/locale_base_api`.
+
+L'activation filesystem a ajoute cote libc ALOS les entrees requises par
+libc++ : `fseeko`/`ftello`, `truncate`, `utimes`, `futimens`,
+`utimensat`, `fchmod`, `fchmodat` et `link`. Les chemins soutenus s'appuient
+sur les syscalls existants (`ftruncate`, `futimes`, `openat`) ; les capacites
+absentes comme hard links et chmod par descripteur echouent avec `ENOTSUP`,
+pas avec un succes factice. `_PC_PATH_MAX` expose la limite `PATH_MAX`.
+`__divti3`/`__modti3` completent le runtime entier 128 bits utilise par la
+nouvelle implementation filesystem de libc++.
+
+Validation observee le 2026-10-01 :
+
+- `build-libcxx.ps1` a produit `libc++.a`, `libc++abi.a` et les headers dans
+  `...\work\alos-libcxx-21`.
+- `build-complex.ps1` utilise `-std=c++20` et le clang Chromium 21 ; le test
+  couvre `std::atomic_ref`, `std::ofstream`/`std::ifstream` et
+  `std::filesystem::{exists,file_size,remove}`.
+- `test-vm.ps1 -Runtime -Cpu qemu64 -OutputDirectory .\artifacts-libcxx21-qemu64`
+  : PASS.
+- `test-vm.ps1 -Runtime -SkipBuild -Cpu max -OutputDirectory .\artifacts-libcxx21-max`
+  : PASS.
+- `test-vm.ps1 -Runtime -ComplexCpp -SkipBuild` : PASS sous `qemu64` et
+  `max`, avec le marqueur
+  `complex-cpp-test: atomic_ref fstream filesystem PASS`.
+- Dans Chromium `out/alos-v8full`, le montage `/libcxx` pointe vers
+  `alos-libcxx-21` et Ninja compile
+  `obj/v8/v8_base_without_compiler/simd.o` ainsi que
+  `obj/v8/v8_compiler/turbofan-graph-visualizer.o`.
 
 Le build cible `alos-libcxx-loc-build`, sous
 `C:\Users\dacru\.copilot\session-state\31de8139-773c-483f-92cd-f69ef353a4ae\files\runtime-llvm`,
@@ -933,3 +1005,213 @@ sparse minimal fournit deja toutes les dependances du generateur.
 Les suites kernel/runtime ne sont pas refaites pour ce jalon C++ uniquement.
 Cela ne valide ni l'ensemble des bindings/tests Mojo, ni les interfaces du
 navigateur, ni JavaScript/V8, les sockets nommes ou les credentials de pair.
+
+### Closure library et relance ciblee du 2026-10-01
+
+Le checkout externe `C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80`
+a ete repasse par le workflow existant, sans regeneration destructive :
+
+```powershell
+.\ports\chromium\scripts\fetch-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -SkipPatch
+```
+
+Le sparse-checkout contient maintenant `third_party/google-closure-library` et
+le fichier requis
+`third_party/google-closure-library/closure/goog/array/array.js` est present.
+La commande a toutefois signale que des chemins Chromium suivis et deja
+modifies ont ete conserves hors des patterns sparse ; aucun fichier du depot
+ALOS n'a ete regenere. Le profil GN cible a ensuite ete regenere et compile :
+
+```powershell
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -LibcxxDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx `
+  -Targets base:base -Jobs 8
+```
+
+GN a produit 1880 targets depuis 376 fichiers. Ninja a termine les 71 actions
+de `base:base`, dont l'archive `out/alos/obj/base/libbase.a`, sans `FAILED`.
+Cela leve le blocage immediat du fichier Closure pour ce profil et ce checkout,
+mais ne constitue pas un build du graphe complet : aucun navigateur, Blink, V8
+ou backend Ozone n'est construit ou execute. Les dependances et services
+runtime necessaires a ces niveaux restent les bloqueurs racine.
+
+### Plateforme Ozone ALOS out-of-tree
+
+Le port dispose maintenant d'une vraie plateforme Ozone externe sous
+`ports/chromium/ozone/`, chargee par le mecanisme upstream
+`ozone_extra_path = "//alos_native/ozone/ozone_extra.gni"` avec
+`ozone_platform = "alos"` et `ozone_auto_platforms = false`. Le script
+`build-chromium.ps1 -OzoneProbe` stage ces sources dans le checkout externe et
+cible par defaut `//alos_native/ozone:ozone_interface_probe`.
+
+Le backend implemente `CreateOzonePlatformAlos`, `PlatformWindow`,
+`PlatformScreen` et `SurfaceFactoryOzone` en logiciel uniquement. Les fenetres
+viennent de `libgui`; les canvases enveloppent les pixels ARGB SHM via Skia et
+publient les dommages avec `gui_present`. Il n'y a pas de GL, Vulkan, pixmaps
+natifs, delegate d'affichage natif ni redimensionnement client garanti :
+ces chemins retournent `nullptr`, `false` ou `NOTIMPLEMENTED()` au lieu de
+simuler un succes. `libgui` n'est pas thread-safe : la file d'evenements,
+les reponses `WINDOW_CREATED` et le remappage de surface au resize partagent
+un etat global. Les evenements sont donc lus sur le thread UI : le noyau rend
+les extremites IPC pollables (`POLLIN` si un message est en file ou une
+connexion en attente sur un listener, `POLLOUT` si la file du pair a de la
+place, `POLLHUP` apres fermeture du pair, aussi via epoll), `libgui`
+expose `gui_connection_fd()` et `AlosPlatformEventSource` surveille ce
+descripteur avec `CurrentUIThread::WatchFileDescriptor` sur la pompe
+`MessagePumpAlos`, puis draine `gui_poll_event` par lots bornes. Aucun
+thread `libgui` separe n'est cree. `ipc-poll-test` couvre listener,
+lecture, ecriture, reveil d'un poll bloque, epoll et `POLLHUP`.
+
+Commandes executees sans lancer QEMU :
+
+```powershell
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -LibcxxDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx `
+  -OzoneProbe -GenOnly
+
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -LibcxxDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx `
+  -OzoneProbe -Targets @('alos_native/ozone:ozone_interface_probe','ui/ozone:ozone') `
+  -KeepGoing -Jobs 8
+```
+
+GN resout le graphe avec `//alos_native/ozone:alos` comme dependance Ozone
+externe. Ninja atteint la compilation reelle de Skia/Chromium, mais aucun ELF
+du probe n'est encore lie : la libc/libm ALOS expose seulement les variantes
+`double` alors que Skia utilise aussi `floorf`, `truncf`, `roundf`, `fmaf` et
+`lrintf`. Le build a egalement revele que Skia classait un OS inconnu comme
+macOS ; le patch `skia-alos-features.patch` force `__ALOS__` sur le chemin
+Unix/POSIX qui utilise les semaphores C. Ce jalon ne prouve donc toujours pas
+un rendu Chromium, Blink, V8 ou content_shell sous ALOS.
+
+### Seam V8 OS_ALOS et sonde `v8_libbase` du 2026-10-01
+
+Le checkout externe ne contenait pas V8 (`v8/` etait le placeholder vide de
+DEPS). `fetch-chromium.ps1 -WithV8` recupere maintenant V8 14.0.365.4
+(`v8_revision` `fdb12b460f148895f6af2ff0e0d870ff8889f154`) en clone superficiel
+blob-filtre, avec un sparse non-cone limite aux sources/outils et aux seuls
+`BUILD.gn`/`.gni` de `test/` que charge `//v8:gn_all`. La branche ALOS du
+`BUILD.gn` racine n'importe pas `//v8` : le profil par defaut est inchange.
+
+Le seul seam V8 clairement requis et sur est
+`ports/chromium/patches/v8-alos-os-detection.patch` : `include/v8config.h`
+ne reconnaissait pas `__ALOS__` (defini par `//build/toolchain/alos`), donc ni
+`V8_OS_POSIX` ni `V8_OS_STRING`. Le patch ajoute, sur le modele des autres OS,
+`V8_OS_ALOS`, `V8_OS_POSIX` et `V8_OS_STRING "alos"`. Il n'ajoute aucun stub,
+ne desactive ni JIT, ni WebAssembly, ni sandbox V8.
+
+```powershell
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -LibcxxDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx `
+  -V8Probe -KeepGoing
+```
+
+`-V8Probe` applique le patch, ecrit `out/alos-v8` (le profil `out/alos` n'est
+pas touche), ajoute `v8_enable_temporal_support = false` car Temporal exige des
+crates Rust absentes du profil (`enable_rust = false`), puis genere avec
+`--root-target=//v8:v8_libbase` et compile uniquement `v8:v8_libbase`.
+GN produit 2437 targets depuis 417 fichiers. Avec le patch, 24 objets de
+`v8_libbase` compilent (dont `cpu`, `ieee754`, `dtoa`, `condition-variable`,
+`once`, `region-allocator`, `random-number-generator`) ainsi que
+`libm/sincostab.o` ; 16 objets echouent sur des manques reels de la libc/libm
+ALOS, non contournes :
+
+- `<semaphore.h>`/`sem_t` : les semaphores POSIX non nommes prives sont
+  maintenant fournis et couverts par `semaphore-test`; `pshared` et les
+  semaphores nommes restent non implementes.
+- `platform-posix.cc` peut utiliser `getrusage(RUSAGE_SELF)` pour `ru_utime`
+  et `ru_maxrss`, ainsi que `tmpfile()` ; `RUSAGE_CHILDREN` reste rejete.
+- `<signal.h>` absent : `platform-posix.cc` l'inclut et utilise `sigaltstack`
+  et `SIGSTKSZ`. ALOS n'a pas de signaux ; il ne faut pas fournir un en-tete
+  factice qui pretendrait le contraire.
+- `sysconf(_SC_NPROCESSORS_ONLN)` et `_SC_PHYS_PAGES` non definis
+  (`sys-info.cc`) : seuls `_SC_PAGESIZE` et `_SC_NPROCESSORS_CONF` existent.
+  Une extension reelle renverrait 1 (noyau UP) et la capacite PMM de
+  `SYS_MEMINFO`, avec execution native sous QEMU.
+- `fabs`/`copysign` non declares par la libm ALOS (`v8/third_party/glibc`,
+  utilise par `V8_USE_LIBM_TRIG_FUNCTIONS`) ; plus largement, V8 exige une
+  libm C99 double complete.
+
+Bloqueurs suivants connus mais non encore atteints : le `BUILD.gn` de V8 ne
+selectionne pour ALOS ni `platform-<os>.cc` ni `stack_trace_*.cc`
+(`OS::GetSharedLibraryAddresses`, `SignalCodeMovingGC`,
+`CreateTimezoneCache`, `GetStackStart`, etc. resteraient non definis au link),
+le gestionnaire de traps WebAssembly et le profiler reposent sur des signaux,
+et `mksnapshot`/`torque` doivent encore etre construits pour l'hote. Aucun
+objet V8 n'est lie ni execute : ce jalon n'etablit pas V8 comme cible ALOS.
+
+#### Build V8 complet `out/alos-v8full` (passe 4)
+
+`ninja -k 0` sur le graphe V8 complet : 41 echecs sur 3133 actions. Causes
+regroupees et traitement :
+
+- Toolchain hote `clang_x64` : sans `V8_HAVE_TARGET_OS`, `v8config.h`
+  retombait sur l'OS hote et definissait `V8_TARGET_OS_LINUX` vide, cassant
+  les `#if V8_TARGET_OS_LINUX`. `v8-alos-os-detection.patch` et
+  `v8-alos-platform.patch` ajoutent `V8_TARGET_OS_ALOS` (defines GN
+  `V8_HAVE_TARGET_OS`/`V8_TARGET_OS_ALOS` quand `target_os == "alos"`,
+  `V8_TARGET_OS_STRING "alos"`). Aucun chemin Linux n'est reutilise.
+- `libsampler` : `v8-alos-no-signals.patch` exclut ALOS de `USE_SIGNALS`.
+  Le `DoSample` ALOS n'enregistre aucun echantillon : le noyau ne fournit
+  pas de capture de registres inter-threads, donc le profiler CPU de V8 ne
+  recoit aucun echantillon. C'est une limite declaree, pas un echantillonnage.
+- libc : `setvbuf`/`setbuf`, `BUFSIZ`, `_IOFBF`/`_IOLBF`/`_IONBF` (flux
+  non bufferises, modes valides acceptes, EINVAL/EBADF sinon) ;
+  `UINT8_MAX`/`UINT16_MAX` de type `int` et `INT32_MIN` sans debordement
+  (`-Wsign-compare` dans `regexp-compiler.h`).
+- `third_party/dragonbox` ajoute a `fetch-chromium.ps1`.
+- libm C99 complete : import musl 1.2.6 (voir `libm-complete-test`).
+- Le blocage libc++ est leve : avec `alos-libcxx-21`, `simd.o`
+  (`std::atomic_ref`) et `turbofan-graph-visualizer.o`
+  (`std::ofstream`/`ifstream`) compilent dans `out/alos-v8full`.
+  Les prochains echecs attendus concernent le reste du graphe V8 et les
+  outils hote, pas ces deux APIs.
+
+Le `.ninja_deps` de ce repertoire s'est corrompu (segfault de ninja 1.11.1
+au chargement) ; il a ete deplace hors de l'arbre. Regenerer avec
+`--root-target=//v8:gn_all`, sinon les cibles `mksnapshot`/`torque` hote
+sont absentes du graphe. Les outils hote ne sont pas encore construits.
+
+### Cible Rust ALOS et smoke natif du 2026-10-01
+
+Chromium 140 requiert Rust pour Blink/Skia. Le profil ALOS garde `enable_rust = false`
+par defaut, mais `build-chromium.ps1 -Rust` ecrit un profil isole `out/alos-rust`
+avec `enable_rust = true` et construit `//alos_rust:rust_smoke`. Le patch
+`chromium-alos-rust-target.patch` ajoute un target Rust JSON
+`x86_64-unknown-alos` (`target_os="alos"`, ELF statique, panic abort,
+TLS ELF `local-exec`) et force `RUST_TARGET_PATH` pour rustc et les build scripts.
+Le `std` est construit depuis les sources du toolchain Chromium 1.89.0-dev ; il
+utilise le PAL `unsupported` pour les operations OS non portees, un allocateur
+`System` branche sur la libc ALOS (`malloc`/`free`/`posix_memalign`) et
+`getentropy` pour le hasard. `std::fs`, `std::net`, `std::process` et
+`std::thread::spawn` restent donc non supportes au lieu de simuler un succes.
+Les destructeurs TLS Rust ne sont pas encore raccordes a la fin de thread ALOS.
+
+Validation observee :
+
+```powershell
+.\ports\chromium\scripts\build-chromium.ps1 `
+  -ChromiumDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80 `
+  -LibcxxDirectory C:\Users\dacru\Documents\Codex\2026-09-30\c\work\alos-libcxx `
+  -Rust -Jobs 8
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild `
+  -RustSmokePath C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80\out\alos-rust\rust_smoke `
+  -BaseSmokeOnly -OutputDirectory C:\Projets\alos\artifacts-rust-vm
+```
+
+Ninja a lie `out/alos-rust/rust_smoke`. En QEMU avec disque isole, le log serie
+`C:\Projets\alos\artifacts-rust-vm\serial.log` contient :
+
+```text
+chromium-rust-smoke: PASS a=45 b=99 main=33
+vm-suite-complete
+```
+
+Le smoke exerce `Vec`, `String` et un `thread_local!` Rust depuis deux pthreads
+natifs ALOS plus le thread principal.

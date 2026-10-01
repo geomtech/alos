@@ -37,7 +37,8 @@ static int watchable(open_file_description_t *description) {
     if (!description) return 0;
     return description->type == FILE_TYPE_PIPE ||
            description->type == FILE_TYPE_SOCKET ||
-           description->type == FILE_TYPE_UNIX_SOCKET;
+           description->type == FILE_TYPE_UNIX_SOCKET ||
+           description->type == FILE_TYPE_IPC;
 }
 
 static uint32_t ready_mask(epoll_entry_t *entry) {

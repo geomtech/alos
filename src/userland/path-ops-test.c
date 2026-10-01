@@ -72,6 +72,7 @@ int main(void) {
         errno == ENOTDIR && !strcmp(canonical, "unchanged"));
   CHECK(realpath("/posix-test/absent", canonical) == NULL && errno == ENOENT);
   CHECK(pathconf(root, _PC_NAME_MAX) == 255);
+  CHECK(pathconf(root, _PC_PATH_MAX) == 4096);
   CHECK(pathconf(root, 999) == -1 && errno == EINVAL);
   CHECK(chmod("/posix-test/at-root/file", 0000) == -1 && errno == ENOTSUP);
   CHECK(fstat(file, &metadata) == 0 && (metadata.st_mode & 0777) == 0600);

@@ -1,8 +1,16 @@
 #include "resource.h"
+#include "process.h"
 #include "thread.h"
 #include "uaccess.h"
 #include "../fs/file.h"
 #include "../include/errno.h"
+#include "../include/string.h"
+#include "../mm/vmm.h"
+
+static void rusage_set_time(alos_rusage_timeval_t *time, uint64_t ms) {
+  time->tv_sec = (int64_t)(ms / 1000);
+  time->tv_usec = (int64_t)(ms % 1000) * 1000;
+}
 
 int sys_resource_limit(int resource, alos_resource_limit_t *destination) {
   alos_resource_limit_t limit;
@@ -53,4 +61,36 @@ int sys_thread_nice(int operation, int value, int *destination) {
   }
   preempt_enable();
   return result;
+}
+
+int sys_resource_usage(int who, alos_rusage_t *destination) {
+  if (!user_range_valid(destination, sizeof(*destination), true))
+    return -EFAULT;
+  process_t *process = process_current();
+  if (process == NULL)
+    return -ESRCH;
+
+  alos_rusage_t usage;
+  memset(&usage, 0, sizeof(usage));
+  switch (who) {
+  case ALOS_RUSAGE_SELF:
+    preempt_disable();
+    rusage_set_time(&usage.ru_utime, process_cpu_time_ms(process));
+    usage.ru_maxrss =
+        (int64_t)((process_peak_resident_pages(process) * PAGE_SIZE) / 1024);
+    preempt_enable();
+    break;
+  case ALOS_RUSAGE_THREAD:
+    preempt_disable();
+    rusage_set_time(&usage.ru_utime, process_thread_cpu_time_ms());
+    usage.ru_maxrss =
+        (int64_t)((process_peak_resident_pages(process) * PAGE_SIZE) / 1024);
+    preempt_enable();
+    break;
+  case ALOS_RUSAGE_CHILDREN:
+    return -EINVAL;
+  default:
+    return -EINVAL;
+  }
+  return copy_to_user(destination, &usage, sizeof(usage)) ? -EFAULT : 0;
 }

@@ -38,6 +38,8 @@ int file_description_poll(open_file_description_t *description, short events) {
     return unix_socket_poll(description, events);
   if (description->type == FILE_TYPE_EPOLL)
     return native_epoll_poll(description, events);
+  if (description->type == FILE_TYPE_IPC)
+    return ipc_poll(description->ipc_endpoint, events);
   if (description->type == FILE_TYPE_CONSOLE &&
       (description->flags & O_ACCMODE) == O_WRONLY)
     return events & 4;

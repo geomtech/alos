@@ -52,12 +52,21 @@ int main(void) {
   CHECK(fstat(fd, &metadata) == 0 && metadata.st_atime == 1700000041 &&
         metadata.st_mtime == 1700000042 && metadata.st_atim.tv_nsec == 0 &&
         metadata.st_mtim.tv_nsec == 0);
+  struct timespec precise[2] = {{1700000051, 250000000}, {1700000052, 750000000}};
+  CHECK(futimens(fd, precise) == 0);
+  CHECK(fstat(fd, &metadata) == 0 && metadata.st_atime == 1700000051 &&
+        metadata.st_mtime == 1700000052);
+  precise[0].tv_nsec = UTIME_OMIT;
+  CHECK(futimens(fd, precise) == -1 && errno == ENOTSUP);
+  precise[0].tv_nsec = 1000000000;
+  CHECK(futimens(fd, precise) == -1 && errno == EINVAL);
+  CHECK(fchmod(fd, 0644) == -1 && errno == ENOTSUP);
   CHECK(close(fd) == 0);
   fd = open(path, O_RDONLY);
-  CHECK(fd >= 0 && fstat(fd, &metadata) == 0 && metadata.st_mtime == 1700000042);
+  CHECK(fd >= 0 && fstat(fd, &metadata) == 0 && metadata.st_mtime == 1700000052);
   times[1].tv_usec = 1000000;
   CHECK(futimes(fd, times) == -1 && errno == EINVAL);
-  CHECK(fstat(fd, &metadata) == 0 && metadata.st_mtime == 1700000042);
+  CHECK(fstat(fd, &metadata) == 0 && metadata.st_mtime == 1700000052);
   times[1].tv_usec = 0;
   times[1].tv_sec = (int64_t)UINT32_MAX + 1;
   CHECK(futimes(fd, times) == -1 && errno == EOVERFLOW);
@@ -68,6 +77,18 @@ int main(void) {
         metadata.st_atime == metadata.st_mtime &&
         metadata.st_mtime == metadata.st_ctime);
   CHECK(close(fd) == 0 && futimes(fd, NULL) == -1 && errno == EBADF);
+  times[0].tv_sec = 1700000061; times[0].tv_usec = 0;
+  times[1].tv_sec = 1700000062; times[1].tv_usec = 0;
+  CHECK(utimes(path, times) == 0);
+  CHECK(stat(path, &metadata) == 0 && metadata.st_mtime == 1700000062);
+  precise[0].tv_sec = 1700000071; precise[0].tv_nsec = 0;
+  precise[1].tv_sec = 1700000072; precise[1].tv_nsec = 0;
+  CHECK(utimensat(AT_FDCWD, path, precise, 0) == 0);
+  CHECK(stat(path, &metadata) == 0 && metadata.st_mtime == 1700000072);
+  CHECK(truncate(path, 3) == 0 && stat(path, &metadata) == 0 &&
+        metadata.st_size == 3);
+  CHECK(fchmodat(AT_FDCWD, path, 0644, 0) == -1 && errno == ENOTSUP);
+  CHECK(link(path, "/posix-test/attributes-hardlink") == -1 && errno == ENOTSUP);
   CHECK(unlink(path) == 0);
   CHECK(statvfs("/posix-test", &after) == 0 && after.f_ffree == before.f_ffree &&
         after.f_bfree == during.f_bfree +

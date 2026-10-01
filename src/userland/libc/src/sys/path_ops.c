@@ -60,7 +60,30 @@ ssize_t readlink(const char* path, char* buffer, size_t size) {
                            (long)path, 0, (long)buffer, size));
 }
 long pathconf(const char* path, int name) {
+  if (name == _PC_PATH_MAX) return PATH_MAX;
   if (name != _PC_NAME_MAX) { errno = EINVAL; return -1; }
   return checked(syscall6(SYS_NATIVE_PATH, ALOS_PATH_NAME_MAX, AT_FDCWD,
                            (long)path, 0, 0, 0));
+}
+
+int fchmod(int fd, mode_t mode) {
+  (void)fd; (void)mode;
+  errno = ENOTSUP;
+  return -1;
+}
+
+int fchmodat(int dirfd, const char* path, mode_t mode, int flags) {
+  if (flags & ~AT_SYMLINK_NOFOLLOW) { errno = EINVAL; return -1; }
+  if (flags || dirfd != AT_FDCWD) {
+    (void)path; (void)mode;
+    errno = ENOTSUP;
+    return -1;
+  }
+  return chmod(path, mode);
+}
+
+int link(const char* old_path, const char* new_path) {
+  (void)old_path; (void)new_path;
+  errno = ENOTSUP;
+  return -1;
 }

@@ -1,0 +1,192 @@
+diff --git a/build/config/clang/BUILD.gn b/build/config/clang/BUILD.gn
+index a1e635c99a..0e94525e64 100644
+--- a/build/config/clang/BUILD.gn
++++ b/build/config/clang/BUILD.gn
+@@ -303,6 +305,8 @@ clang_lib("compiler_profile") {
+     # This is only used when `toolchain_has_rust` to support Rust linking.
+     #
+     # Don't define libname which makes this target do nothing.
++  } else if (is_alos) {
++    # ALOS links statically with its libc/compiler support for now.
+   } else if (is_mac) {
+     libname = "profile_osx"
+   } else if (is_ios) {
+diff --git a/build/config/rust.gni b/build/config/rust.gni
+index 7b09b0d80f..cc21331155 100644
+--- a/build/config/rust.gni
++++ b/build/config/rust.gni
+@@ -367,6 +367,13 @@ if (is_linux || is_chromeos) {
+   } else {
+     assert(false, "Architecture not supported")
+   }
++} else if (is_alos) {
++  if (current_cpu == "x64") {
++    rust_abi_target = "x86_64-unknown-alos"
++    cargo_target_abi = ""
++  } else {
++    assert(false, "Architecture not supported")
++  }
+ }
+ 
+ if (toolchain_has_rust) {
+@@ -419,6 +426,9 @@ assert(!toolchain_has_rust || rust_target_arch != "")
+ # here. This is not the complete command-line: toolchains should add -o
+ # and probably --emit arguments too.
+ rustc_common_args = "--crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}}"
++if (is_alos) {
++  rustc_common_args += " -Ztls-model=local-exec"
++}
+ 
+ # Rust procedural macros are shared objects loaded into a prebuilt host rustc
+ # binary. To build them, we obviously need to build for the host. Not only
+diff --git a/build/rust/cargo_crate.gni b/build/rust/cargo_crate.gni
+index cb0220af07..e15455531d 100644
+--- a/build/rust/cargo_crate.gni
++++ b/build/rust/cargo_crate.gni
+@@ -140,8 +140,12 @@ template("cargo_crate") {
+   }
+ 
+   _rustenv = []
++  if (is_alos) {
++    _rustenv +=
++        [ "RUST_TARGET_PATH=" + rebase_path("//build/rust/targets", root_build_dir) ]
++  }
+   if (defined(invoker.rustenv)) {
+-    _rustenv = invoker.rustenv
++    _rustenv += invoker.rustenv
+   }
+   if (defined(invoker.cargo_pkg_authors)) {
+     _rustenv += [ "CARGO_PKG_AUTHORS=${invoker.cargo_pkg_authors}" ]
+diff --git a/build/rust/gni_impl/run_build_script.py b/build/rust/gni_impl/run_build_script.py
+index 12c40c678b..4c46db3303 100755
+--- a/build/rust/gni_impl/run_build_script.py
++++ b/build/rust/gni_impl/run_build_script.py
+@@ -74,7 +74,7 @@ def set_cargo_cfg_target_env_variables(rustc_path, env):
+   # TODO(https://crbug.com/435437947): Ideally `rustc --print=cfg
+   # --target=...` would only be invoked **once** per build (not once per
+   # `run_cxxbridge.py` and once per `run_build_script.py`).
+-  proc = subprocess.Popen(args, stdout=subprocess.PIPE)
++  proc = subprocess.Popen(args, stdout=subprocess.PIPE, env=env)
+   for line in io.TextIOWrapper(proc.stdout, encoding="utf-8"):
+     line = line.strip()
+     if "=" not in line: continue
+@@ -137,6 +137,12 @@ def main():
+       env["TARGET"] = env["HOST"]
+     else:
+       env["TARGET"] = args.target
++    if args.env:
++      for e in args.env:
++        (k, v) = e.split("=")
++        if k == "RUST_TARGET_PATH" and not os.path.isabs(v):
++          v = os.path.abspath(v)
++        env[k] = v
+     set_cargo_cfg_target_env_variables(rustc_path, env)
+     if args.features:
+       for f in args.features:
+@@ -150,10 +156,6 @@ def main():
+             env["OPT_LEVEL"] = opt.rstrip()
+         flags.seek(0)
+         env["CARGO_ENCODED_RUSTFLAGS"] = '\x1f'.join(flags.readlines())
+-    if args.env:
+-      for e in args.env:
+-        (k, v) = e.split("=")
+-        env[k] = v
+     if "OPT_LEVEL" not in env:
+       env["OPT_LEVEL"] = "0"
+ 
+diff --git a/build/rust/gni_impl/rust_target.gni b/build/rust/gni_impl/rust_target.gni
+index f400a023cb..185fd0cdf1 100644
+--- a/build/rust/gni_impl/rust_target.gni
++++ b/build/rust/gni_impl/rust_target.gni
+@@ -226,6 +226,10 @@ template("rust_target") {
+   }
+   _rustenv = [ "OUT_DIR=" +
+                rebase_path(_env_out_dir, get_path_info(_crate_root, "dir")) ]
++  if (is_alos) {
++    _rustenv +=
++        [ "RUST_TARGET_PATH=" + rebase_path("//build/rust/targets", root_build_dir) ]
++  }
+   if (defined(invoker.rustenv)) {
+     _rustenv += invoker.rustenv
+   }
+diff --git a/build/rust/gni_impl/rustc_wrapper.py b/build/rust/gni_impl/rustc_wrapper.py
+index 1c675000e8..efcea20503 100755
+--- a/build/rust/gni_impl/rustc_wrapper.py
++++ b/build/rust/gni_impl/rustc_wrapper.py
+@@ -190,6 +190,8 @@ def main():
+   fixed_env_vars = []
+   for item in rustenv:
+     (k, v) = item.split("=", 1)
++    if k == "RUST_TARGET_PATH" and not os.path.isabs(v):
++      v = os.path.abspath(v)
+     env[k] = v
+     fixed_env_vars.append(k)
+ 
+diff --git a/build/rust/known-target-triples.txt b/build/rust/known-target-triples.txt
+index fc4780bf65..9b1caf1b2e 100644
+--- a/build/rust/known-target-triples.txt
++++ b/build/rust/known-target-triples.txt
+@@ -39,6 +39,7 @@ x86_64-apple-ios-macabi
+ x86_64-apple-tvos
+ x86_64-linux-android
+ x86_64-pc-windows-msvc
++x86_64-unknown-alos
+ x86_64-unknown-fuchsia
+ x86_64-unknown-linux-gnu
+ powerpc64le-unknown-linux-gnu
+diff --git a/build/rust/std/rules/BUILD.gn b/build/rust/std/rules/BUILD.gn
+index b51bd50ecd..8eff9c6fa1 100644
+--- a/build/rust/std/rules/BUILD.gn
++++ b/build/rust/std/rules/BUILD.gn
+@@ -2552,6 +2552,7 @@ cargo_crate("std") {
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sync/poison/once.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sync/poison/rwlock.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sync/reentrant_lock.rs",
++    "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/alloc/alos.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/alloc/hermit.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/alloc/mod.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/alloc/sgx.rs",
+@@ -2795,6 +2796,7 @@ cargo_crate("std") {
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/process/unsupported.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/process/windows.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/process/windows/tests.rs",
++    "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/random/alos.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/random/apple.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/random/arc4random.rs",
+     "//third_party/rust-toolchain/lib/rustlib/src/rust/library/std/src/sys/random/espidf.rs",
+diff --git a/build/rust/targets/x86_64-unknown-alos.json b/build/rust/targets/x86_64-unknown-alos.json
+new file mode 100644
+index 0000000000..aa77215727
+--- /dev/null
++++ b/build/rust/targets/x86_64-unknown-alos.json
+@@ -0,0 +1,29 @@
++{
++  "llvm-target": "x86_64-unknown-none-elf",
++  "arch": "x86_64",
++  "cpu": "x86-64",
++  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
++  "target-pointer-width": "64",
++  "os": "alos",
++  "env": "",
++  "vendor": "unknown",
++  "linker-flavor": "gnu-cc",
++  "panic-strategy": "abort",
++  "executables": true,
++  "dynamic-linking": false,
++  "position-independent-executables": false,
++  "static-position-independent-executables": false,
++  "relocation-model": "static",
++  "has-thread-local": true,
++  "max-atomic-width": 64,
++  "stack-probes": { "kind": "inline" },
++  "crt-static-default": true,
++  "crt-static-respected": true,
++  "metadata": {
++    "description": "ALOS x86-64 static userland",
++    "host_tools": false,
++    "std": true,
++    "tier": 3
++  },
++  "plt-by-default": false
++}
+\ No newline at end of file

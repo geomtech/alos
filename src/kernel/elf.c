@@ -222,6 +222,7 @@ int elf_load_file(const char *filename, process_t *proc,
           vfs_close(file);
           return ELF_ERR_MEMORY;
         }
+        process_note_resident_pages(proc, 1);
 
         /* Mettre la page à zéro via l'adresse virtuelle HHDM */
         memset(page_virt, 0, PAGE_SIZE);

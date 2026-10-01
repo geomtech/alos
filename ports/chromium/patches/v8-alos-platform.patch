@@ -1,0 +1,128 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index 8dda88f..c42185e 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -976,6 +976,7 @@ external_v8_defines = [
+   "V8_TARGET_OS_MACOS",
+   "V8_TARGET_OS_WIN",
+   "V8_TARGET_OS_CHROMEOS",
++  "V8_TARGET_OS_ALOS",
+ ]
+ 
+ enabled_external_v8_defines = [
+@@ -1050,6 +1051,10 @@ if (target_os == "android") {
+ } else if (target_os == "chromeos") {
+   enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
+   enabled_external_v8_defines += [ "V8_TARGET_OS_CHROMEOS" ]
++} else if (target_os == "alos") {
++  # mksnapshot hote (Linux) doit generer pour ALOS, pas pour l'hote.
++  enabled_external_v8_defines += [ "V8_HAVE_TARGET_OS" ]
++  enabled_external_v8_defines += [ "V8_TARGET_OS_ALOS" ]
+ }
+ 
+ disabled_external_v8_defines = external_v8_defines - enabled_external_v8_defines
+@@ -6858,6 +6863,11 @@ v8_component("v8_libbase") {
+       "src/base/debug/stack_trace_zos.cc",
+       "src/base/platform/platform-zos.cc",
+     ]
++  } else if (is_alos) {
++    sources += [
++      "src/base/debug/stack_trace_alos.cc",
++      "src/base/platform/platform-alos.cc",
++    ]
+   }
+ 
+   if (v8_current_cpu == "mips64") {
+diff --git a/src/base/debug/stack_trace_alos.cc b/src/base/debug/stack_trace_alos.cc
+new file mode 100644
+index 0000000..f1a437c
+--- /dev/null
++++ b/src/base/debug/stack_trace_alos.cc
+@@ -0,0 +1,39 @@
++// Copyright 2026 the V8 project authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include <iomanip>
++#include <ostream>
++
++#include "src/base/debug/stack_trace.h"
++#include "src/base/platform/platform.h"
++
++namespace v8 {
++namespace base {
++namespace debug {
++
++bool EnableInProcessStackDumping() {
++  // ALOS has no POSIX signal delivery, so no crash handler can be installed.
++  return false;
++}
++
++void DisableSignalStackDump() {}
++
++// No unwinder or symbolizer is available in ALOS user space yet: traces are
++// empty rather than fabricated.
++StackTrace::StackTrace() {}
++
++void StackTrace::Print() const {
++  std::string backtrace = ToString();
++  OS::Print("%s\n", backtrace.c_str());
++}
++
++void StackTrace::OutputToStream(std::ostream* os) const {
++  for (size_t i = 0; i < count_; ++i) {
++    *os << "#" << std::setw(2) << i << trace_[i] << "\n";
++  }
++}
++
++}  // namespace debug
++}  // namespace base
++}  // namespace v8
+diff --git a/src/base/platform/platform-alos.cc b/src/base/platform/platform-alos.cc
+new file mode 100644
+index 0000000..2bb4c09
+--- /dev/null
++++ b/src/base/platform/platform-alos.cc
+@@ -0,0 +1,42 @@
++// Copyright 2026 the V8 project authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Platform-specific code for ALOS goes here. For the POSIX-compatible
++// parts, the implementation is in platform-posix.cc.
++
++#include <optional>
++#include <vector>
++
++#include "src/base/platform/platform-posix-time.h"
++#include "src/base/platform/platform-posix.h"
++#include "src/base/platform/platform.h"
++
++namespace v8 {
++namespace base {
++
++TimezoneCache* OS::CreateTimezoneCache() {
++  return new PosixDefaultTimezoneCache();
++}
++
++std::vector<OS::SharedLibraryAddress> OS::GetSharedLibraryAddresses() {
++  // ALOS loads only static ELF executables: there is no shared library or
++  // dynamic loader mapping to report.
++  return {};
++}
++
++// No kernel profiler consumes GC markers on ALOS.
++void OS::SignalCodeMovingGC() {}
++
++void OS::AdjustSchedulingParams() {}
++
++std::optional<OS::MemoryRange> OS::GetFirstFreeMemoryRangeWithin(
++    OS::Address boundary_start, OS::Address boundary_end, size_t minimum_size,
++    size_t alignment) {
++  // ALOS exposes no process memory map to user space; callers fall back to
++  // regular placement hints.
++  return std::nullopt;
++}
++
++}  // namespace base
++}  // namespace v8

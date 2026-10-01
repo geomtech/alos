@@ -57,7 +57,7 @@ LIBGUI_OBJ = libgui/gui.o libgui/draw.o
 LIBGUI = libgui/libgui.a
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 all: env-test uname-test
@@ -75,9 +75,10 @@ all: stack-protector-test stack-protector-driver
 all: base-math-test
 all: unix-socket-test
 all: epoll-test
+all: ipc-poll-test
 all: int128-runtime-test
 
-unix-socket-test epoll-test int128-runtime-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+unix-socket-test epoll-test ipc-poll-test int128-runtime-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
 	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
 base-math-test.o: base-math-test.c
@@ -135,7 +136,7 @@ exec-test: libc_build $(LIBM) exec-test.o
 mmap-test: libc_build $(LIBM) mmap-test.o
 	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(RUNTIME_LIBS)
 
-simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
+simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
 	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
 
 crt-cxx-test tls-cxx-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
@@ -209,9 +210,9 @@ clean:
 	rm -f stack-protector-test stack-protector-driver
 	rm -f base-math-test
 	rm -f unix-socket-test
-	rm -f epoll-test
+	rm -f epoll-test ipc-poll-test
 	rm -f int128-runtime-test
-	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test pthread-attr-test thread-id-test calendar-test libc-common-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
+	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete

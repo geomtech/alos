@@ -1,6 +1,8 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -66,6 +68,30 @@ int main() {
   if (name != "ALOS Chromium" || values.size() != 4 ||
       *owned != 7 || *shared != 9) ++failed;
   puts("complex-cpp-test: strings containers PASS");
+  int referenced = 40;
+  std::atomic_ref<int> reference(referenced);
+  reference.fetch_add(2, std::memory_order_relaxed);
+  if (referenced != 42 || !reference.is_lock_free()) ++failed;
+  const char *path = "/posix-test/libcxx-fstream";
+  {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << "fstream " << referenced << '\n';
+    if (!file.good()) ++failed;
+  }
+  {
+    std::ifstream file(path, std::ios::binary);
+    std::string first;
+    int value = 0;
+    file >> first >> value;
+    if (!file.good() || first != "fstream" || value != 42) ++failed;
+  }
+  std::error_code error;
+  if (!std::filesystem::exists(path, error) || error ||
+      std::filesystem::file_size(path, error) == 0 || error)
+    ++failed;
+  std::filesystem::remove(path, error);
+  if (error) ++failed;
+  puts("complex-cpp-test: atomic_ref fstream filesystem PASS");
   auto start = std::chrono::steady_clock::now();
   std::thread a(worker), b(worker), c(worker), d(worker);
   {

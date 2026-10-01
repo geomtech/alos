@@ -7,7 +7,6 @@
 
 #include <math.h>
 #include <stdint.h>
-#include <errno.h>
 #include "libm.h"
 #include "exp_data.h"
 
@@ -38,7 +37,6 @@ static inline double specialcase(double_t tmp, uint64_t sbits, uint64_t ki)
 		sbits -= 1009ull << 52;
 		scale = asdouble(sbits);
 		y = 0x1p1009 * (scale + scale * tmp);
-		if (isinf(y)) errno = ERANGE;
 		return eval_as_double(y);
 	}
 	/* k < 0, need special care in the subnormal range.  */
@@ -62,7 +60,6 @@ static inline double specialcase(double_t tmp, uint64_t sbits, uint64_t ki)
 		fp_force_eval(fp_barrier(0x1p-1022) * 0x1p-1022);
 	}
 	y = 0x1p-1022 * y;
-	if (y < 0x1p-1022) errno = ERANGE;
 	return eval_as_double(y);
 }
 
@@ -128,10 +125,8 @@ double exp(double x)
 	/* Without fma the worst case error is 0.25/N ulp larger.  */
 	/* Worst case error is less than 0.5+1.11/N+(abs poly error * 2^53) ulp.  */
 	tmp = tail + r + r2 * (C2 + r * C3) + r2 * r2 * (C4 + r * C5);
-	if (predict_false(abstop == 0)) {
-		if (x > 0x1.62e42fefa39efp+9) errno = ERANGE;
+	if (predict_false(abstop == 0))
 		return specialcase(tmp, sbits, ki);
-	}
 	scale = asdouble(sbits);
 	/* Note: tmp == 0 or |tmp| > 2^-200 and scale > 2^-739, so there
 	   is no spurious underflow here even without fma.  */

@@ -1,0 +1,31 @@
+debugfs 1.47.0 (5-Feb-2023)
+
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 81
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 90
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 91
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 92
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 93
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 94
+debugfs 1.47.0 (5-Feb-2023)
+Allocated inode: 95
+debugfs 1.47.0 (5-Feb-2023)
+debugfs: mkdir /metadata-fixture
+debugfs: mkdir /posix-test
+debugfs: mkdir /metadata-fixture/empty
+debugfs: write /artifacts/metadata-payload /metadata-fixture/payload
+Allocated inode: 99
+debugfs: set_inode_field /metadata-fixture/payload mode 0100640
+debugfs: set_inode_field /metadata-fixture/payload uid 42
+debugfs: set_inode_field /metadata-fixture/payload gid 43
+debugfs: set_inode_field /metadata-fixture/payload atime 1700000001
+debugfs: set_inode_field /metadata-fixture/payload mtime 1700000002
+debugfs: set_inode_field /metadata-fixture/payload ctime 1700000003
+debugfs: write /artifacts/metadata-malformed /metadata-fixture/malformed
+Allocated inode: 100
+debugfs: set_inode_field /metadata-fixture/malformed mode 040755

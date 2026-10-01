@@ -83,6 +83,49 @@ static void process_unlock(uint64_t flags) {
   asm volatile("pushq %0; popfq" : : "r"(flags) : "memory", "cc");
 }
 
+void process_note_resident_pages(process_t *proc, int64_t delta) {
+  if (proc == NULL || delta == 0) {
+    return;
+  }
+  if (delta > 0) {
+    proc->resident_pages += (uint64_t)delta;
+    if (proc->resident_pages > proc->peak_resident_pages) {
+      proc->peak_resident_pages = proc->resident_pages;
+    }
+  } else {
+    uint64_t decrease = (uint64_t)(-delta);
+    proc->resident_pages = decrease > proc->resident_pages
+        ? 0 : proc->resident_pages - decrease;
+  }
+}
+
+void process_set_resident_pages(process_t *proc, uint64_t pages) {
+  if (proc == NULL) {
+    return;
+  }
+  proc->resident_pages = pages;
+  proc->peak_resident_pages = pages;
+}
+
+uint64_t process_peak_resident_pages(process_t *proc) {
+  return proc ? proc->peak_resident_pages : 0;
+}
+
+uint64_t process_cpu_time_ms(process_t *proc) {
+  if (proc == NULL) {
+    return 0;
+  }
+  uint64_t total = proc->exited_thread_cpu_ms;
+  for (thread_t *thread = proc->thread_list; thread; thread = thread->proc_next) {
+    total += thread_get_cpu_time_ms(thread);
+  }
+  return total;
+}
+
+uint64_t process_thread_cpu_time_ms(void) {
+  return thread_get_cpu_time_ms(thread_current());
+}
+
 static void process_link(process_t *parent, process_t *proc) {
   uint64_t flags = process_lock();
 
@@ -992,6 +1035,7 @@ static process_t *process_spawn_environment(const char *filename, int argc,
         kfree(proc);
         return NULL;
       }
+      process_note_resident_pages(proc, 1);
       memset(page_virt, 0, PAGE_SIZE);
     }
   }
@@ -1112,6 +1156,8 @@ int process_fork(const interrupt_frame_t *frame) {
   child->cr3 = child_dir->pml4_phys;
   child->heap_start = parent->heap_start;
   child->heap_brk = parent->heap_brk;
+  child->resident_pages = parent->resident_pages;
+  child->peak_resident_pages = parent->resident_pages;
   child->tls_image_address = parent->tls_image_address;
   child->tls_file_size = parent->tls_file_size;
   child->tls_mem_size = parent->tls_mem_size;
@@ -1229,6 +1275,9 @@ int process_execve(interrupt_frame_t *frame, const char *filename,
   proc->cr3 = image->cr3;
   proc->heap_start = image->heap_start;
   proc->heap_brk = image->heap_brk;
+  proc->resident_pages = image->resident_pages;
+  proc->peak_resident_pages = image->peak_resident_pages;
+  proc->exited_thread_cpu_ms = 0;
   proc->tls_image_address = image->tls_image_address;
   proc->tls_file_size = image->tls_file_size;
   proc->tls_mem_size = image->tls_mem_size;

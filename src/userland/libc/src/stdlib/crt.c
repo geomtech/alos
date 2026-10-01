@@ -48,6 +48,16 @@ int __cxa_atexit(void (*function)(void *), void *argument, void *dso) {
   return 0;
 }
 
+/* atexit partage la pile LIFO de __cxa_atexit, comme l'exige C++ [basic.start.term]. */
+static void atexit_trampoline(void *argument) {
+  ((void (*)(void))argument)();
+}
+
+int atexit(void (*function)(void)) {
+  if (!function) { errno = EINVAL; return -1; }
+  return __cxa_atexit(atexit_trampoline, (void *)function, NULL);
+}
+
 int __cxa_thread_atexit(void (*function)(void *), void *argument, void *dso) {
   finalizer_t *node = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

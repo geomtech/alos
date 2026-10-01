@@ -1,0 +1,24 @@
+import("//build/rust/rust_static_library.gni")
+
+assert(is_alos, "This executable targets native ALOS only.")
+
+rust_static_library("rust_smoke_rs") {
+  crate_root = "rust-smoke.rs"
+  sources = [ "rust-smoke.rs" ]
+  crate_name = "alos_rust_smoke"
+  no_chromium_prelude = true
+  allow_unsafe = true
+}
+
+executable("rust_smoke") {
+  sources = [ "rust-smoke.cc" ]
+  deps = [ ":rust_smoke_rs" ]
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}

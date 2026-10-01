@@ -1,0 +1,605 @@
+diff --git a/content/shell/BUILD.gn b/content/shell/BUILD.gn
+index a15a8d7591..d0dcc698ec 100644
+--- a/content/shell/BUILD.gn
++++ b/content/shell/BUILD.gn
+@@ -1102,7 +1102,7 @@ group("content_shell_crash_test") {
+   if (is_win) {
+     data_deps += [ "//build/win:copy_cdb_to_output" ]
+   }
+-  if (is_posix) {
++  if (is_posix && !is_alos) {
+     data_deps += [
+       "//third_party/breakpad:dump_syms",
+       "//third_party/breakpad:minidump_stackwalk",
+diff --git a/content/test/BUILD.gn b/content/test/BUILD.gn
+index e2c651b866..3d22c7f654 100644
+--- a/content/test/BUILD.gn
++++ b/content/test/BUILD.gn
+@@ -3117,7 +3117,8 @@ test("content_unittests") {
+     ]
+   }
+ 
+-  if (is_android || is_linux || is_chromeos || is_mac || is_win || is_fuchsia) {
++  if (is_android || is_linux || is_chromeos || is_mac || is_win || is_fuchsia ||
++      is_alos) {
+     data = [
+       "$root_out_dir/content_shell.pak",
+       "data/",
+diff --git a/third_party/libxml/BUILD.gn b/third_party/libxml/BUILD.gn
+index 5780cb8336..776fd54d91 100644
+--- a/third_party/libxml/BUILD.gn
++++ b/third_party/libxml/BUILD.gn
+@@ -10,6 +10,8 @@ if (is_linux || is_chromeos || is_android || is_fuchsia) {
+   os_include = "mac"
+ } else if (is_win) {
+   os_include = "win32"
++} else if (is_alos) {
++  os_include = "alos"
+ }
+ 
+ import("//third_party/libxml/libxml_visibility.gni")
+@@ -278,6 +280,13 @@ static_library("libxml") {
+     ]
+   }
+ 
++  if (is_alos) {
++    sources += [
++      "alos/config.h",
++      "alos/include/libxml/xmlversion.h",
++    ]
++  }
++
+   if (is_mac) {
+     sources += [
+       "mac/config.h",
+@@ -307,7 +316,7 @@ static_library("libxml") {
+   public_deps = [ "//third_party/icu:icuuc" ]
+   deps = [ "//third_party/zlib" ]
+ 
+-  if (is_apple || is_android || is_fuchsia) {
++  if (is_apple || is_android || is_fuchsia || is_alos) {
+     # http://www.xmlsoft.org/threads.html says that this is required when using
+     # libxml from several threads, which can possibly happen in chrome. On
+     # linux, this is picked up by transitivity from pkg-config output from
+diff --git a/third_party/libxml/alos/config.h b/third_party/libxml/alos/config.h
+new file mode 100644
+index 0000000000..8b5d13ffda
+--- /dev/null
++++ b/third_party/libxml/alos/config.h
+@@ -0,0 +1,110 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define to 1 if you have the declaration of 'getentropy', and to 0 if you
++   don't. */
++#define HAVE_DECL_GETENTROPY 1
++
++/* Define to 1 if you have the declaration of 'glob', and to 0 if you don't.
++   */
++/* ALOS libc does not provide glob(3). */
++/* #undef HAVE_DECL_GLOB */
++
++/* Define to 1 if you have the declaration of 'mmap', and to 0 if you don't.
++   */
++#define HAVE_DECL_MMAP 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Have dlopen based dso */
++/* #undef HAVE_DLOPEN */
++
++/* Define to 1 if the system has the `destructor' function attribute */
++#define HAVE_FUNC_ATTRIBUTE_DESTRUCTOR 1
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define if history library is available */
++/* #undef HAVE_LIBHISTORY */
++
++/* Define if readline library is available */
++/* #undef HAVE_LIBREADLINE */
++
++/* Define to 1 if you have the <lzma.h> header file. */
++/* #undef HAVE_LZMA_H */
++
++/* Define to 1 if you have the <poll.h> header file. */
++/* #undef HAVE_POLL_H */
++
++/* Define to 1 if you have the <pthread.h> header file. */
++#define HAVE_PTHREAD_H 1
++
++/* Have shl_load based dso */
++/* #undef HAVE_SHLLOAD */
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if you have the <zlib.h> header file. */
++/* #undef HAVE_ZLIB_H */
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Name of package */
++#define PACKAGE "libxml2"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT ""
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "libxml2"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "libxml2 2.14.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "libxml2"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL ""
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "2.14.2"
++
++/* Define to 1 if all of the C89 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Version number of package */
++#define VERSION "2.14.2"
++
++/* System configuration directory (/etc) */
++#define XML_SYSCONFDIR "/usr/local/etc"
++
++/* TLS specifier */
++/* #undef XML_THREAD_LOCAL */
+diff --git a/third_party/libxml/alos/include/libxml/xmlversion.h b/third_party/libxml/alos/include/libxml/xmlversion.h
+new file mode 100644
+index 0000000000..7abb0394a3
+--- /dev/null
++++ b/third_party/libxml/alos/include/libxml/xmlversion.h
+@@ -0,0 +1,332 @@
++/*
++ * Summary: compile-time version information
++ * Description: compile-time version information for the XML library
++ *
++ * Copy: See Copyright for the status of this software.
++ *
++ * Author: Daniel Veillard
++ */
++
++#ifndef __XML_VERSION_H__
++#define __XML_VERSION_H__
++
++/**
++ * LIBXML_DOTTED_VERSION:
++ *
++ * the version string like "1.2.3"
++ */
++#define LIBXML_DOTTED_VERSION "2.14.2"
++
++/**
++ * LIBXML_VERSION:
++ *
++ * the version number: 1.2.3 value is 10203
++ */
++#define LIBXML_VERSION 21402
++
++/**
++ * LIBXML_VERSION_STRING:
++ *
++ * the version number string, 1.2.3 value is "10203"
++ */
++#define LIBXML_VERSION_STRING "21402"
++
++/**
++ * LIBXML_VERSION_EXTRA:
++ *
++ * extra version information, used to show a git commit description
++ */
++#define LIBXML_VERSION_EXTRA ""
++
++/**
++ * LIBXML_TEST_VERSION:
++ *
++ * Macro to check that the libxml version in use is compatible with
++ * the version the software has been compiled against
++ */
++#define LIBXML_TEST_VERSION xmlCheckVersion(21402);
++
++/**
++ * LIBXML_THREAD_ENABLED:
++ *
++ * Whether the thread support is configured in
++ */
++#if 1
++#define LIBXML_THREAD_ENABLED
++#endif
++
++/**
++ * LIBXML_THREAD_ALLOC_ENABLED:
++ *
++ * Whether the allocation hooks are per-thread
++ */
++#if 0
++#define LIBXML_THREAD_ALLOC_ENABLED
++#endif
++
++/**
++ * LIBXML_TREE_ENABLED:
++ *
++ * Always enabled since 2.14.0
++ */
++#define LIBXML_TREE_ENABLED
++
++/**
++ * LIBXML_OUTPUT_ENABLED:
++ *
++ * Whether the serialization/saving support is configured in
++ */
++#if 1
++#define LIBXML_OUTPUT_ENABLED
++#endif
++
++/**
++ * LIBXML_PUSH_ENABLED:
++ *
++ * Whether the push parsing interfaces are configured in
++ */
++#if 1
++#define LIBXML_PUSH_ENABLED
++#endif
++
++/**
++ * LIBXML_READER_ENABLED:
++ *
++ * Whether the xmlReader parsing interface is configured in
++ */
++#if 1
++#define LIBXML_READER_ENABLED
++#endif
++
++/**
++ * LIBXML_PATTERN_ENABLED:
++ *
++ * Whether the xmlPattern node selection interface is configured in
++ */
++#if 0
++#define LIBXML_PATTERN_ENABLED
++#endif
++
++/**
++ * LIBXML_WRITER_ENABLED:
++ *
++ * Whether the xmlWriter saving interface is configured in
++ */
++#if 1
++#define LIBXML_WRITER_ENABLED
++#endif
++
++/**
++ * LIBXML_SAX1_ENABLED:
++ *
++ * Whether the older SAX1 interface is configured in
++ */
++#if 1
++#define LIBXML_SAX1_ENABLED
++#endif
++
++/**
++ * LIBXML_HTTP_ENABLED:
++ *
++ * Whether the HTTP support is configured in
++ */
++#if 0
++#define LIBXML_HTTP_ENABLED
++#endif
++
++/**
++ * LIBXML_VALID_ENABLED:
++ *
++ * Whether the DTD validation support is configured in
++ */
++#if 0
++#define LIBXML_VALID_ENABLED
++#endif
++
++/**
++ * LIBXML_HTML_ENABLED:
++ *
++ * Whether the HTML support is configured in
++ */
++#if 1
++#define LIBXML_HTML_ENABLED
++#endif
++
++/**
++ * LIBXML_LEGACY_ENABLED:
++ *
++ * Removed in 2.14
++ */
++#undef LIBXML_LEGACY_ENABLED
++
++/**
++ * LIBXML_C14N_ENABLED:
++ *
++ * Whether the Canonicalization support is configured in
++ */
++#if 0
++#define LIBXML_C14N_ENABLED
++#endif
++
++/**
++ * LIBXML_CATALOG_ENABLED:
++ *
++ * Whether the Catalog support is configured in
++ */
++#if 0
++#define LIBXML_CATALOG_ENABLED
++#endif
++
++/**
++ * LIBXML_XPATH_ENABLED:
++ *
++ * Whether XPath is configured in
++ */
++#if 1
++#define LIBXML_XPATH_ENABLED
++#endif
++
++/**
++ * LIBXML_XPTR_ENABLED:
++ *
++ * Whether XPointer is configured in
++ */
++#if 0
++#define LIBXML_XPTR_ENABLED
++#endif
++
++/**
++ * LIBXML_XINCLUDE_ENABLED:
++ *
++ * Whether XInclude is configured in
++ */
++#if 0
++#define LIBXML_XINCLUDE_ENABLED
++#endif
++
++/**
++ * LIBXML_ICONV_ENABLED:
++ *
++ * Whether iconv support is available
++ */
++#if 0
++#define LIBXML_ICONV_ENABLED
++#endif
++
++/**
++ * LIBXML_ICU_ENABLED:
++ *
++ * Whether icu support is available
++ */
++#if 1
++#define LIBXML_ICU_ENABLED
++#endif
++
++/**
++ * LIBXML_ISO8859X_ENABLED:
++ *
++ * Whether ISO-8859-* support is made available in case iconv is not
++ */
++#if 0
++#define LIBXML_ISO8859X_ENABLED
++#endif
++
++/**
++ * LIBXML_DEBUG_ENABLED:
++ *
++ * Whether Debugging module is configured in
++ */
++#if 0
++#define LIBXML_DEBUG_ENABLED
++#endif
++
++/**
++ * LIBXML_UNICODE_ENABLED:
++ *
++ * Removed in 2.14
++ */
++#undef LIBXML_UNICODE_ENABLED
++
++/**
++ * LIBXML_REGEXP_ENABLED:
++ *
++ * Whether the regular expressions interfaces are compiled in
++ */
++#if 0
++#define LIBXML_REGEXP_ENABLED
++#endif
++
++/**
++ * LIBXML_AUTOMATA_ENABLED:
++ *
++ * Whether the automata interfaces are compiled in
++ */
++#if 0
++#define LIBXML_AUTOMATA_ENABLED
++#endif
++
++/**
++ * LIBXML_RELAXNG_ENABLED:
++ *
++ * Whether the RelaxNG validation interfaces are compiled in
++ */
++#if 0
++#define LIBXML_RELAXNG_ENABLED
++#endif
++
++/**
++ * LIBXML_SCHEMAS_ENABLED:
++ *
++ * Whether the Schemas validation interfaces are compiled in
++ */
++#if 0
++#define LIBXML_SCHEMAS_ENABLED
++#endif
++
++/**
++ * LIBXML_SCHEMATRON_ENABLED:
++ *
++ * Whether the Schematron validation interfaces are compiled in
++ */
++#if 0
++#define LIBXML_SCHEMATRON_ENABLED
++#endif
++
++/**
++ * LIBXML_MODULES_ENABLED:
++ *
++ * Whether the module interfaces are compiled in
++ */
++#if 0
++#define LIBXML_MODULES_ENABLED
++/**
++ * LIBXML_MODULE_EXTENSION:
++ *
++ * the string suffix used by dynamic modules (usually shared libraries)
++ */
++#define LIBXML_MODULE_EXTENSION "" 
++#endif
++
++/**
++ * LIBXML_ZLIB_ENABLED:
++ *
++ * Whether the Zlib support is compiled in
++ */
++#if 0
++#define LIBXML_ZLIB_ENABLED
++#endif
++
++/**
++ * LIBXML_LZMA_ENABLED:
++ *
++ * Whether the Lzma support is compiled in
++ */
++#if 0
++#define LIBXML_LZMA_ENABLED
++#endif
++
++#include <libxml/xmlexports.h>
++
++#endif
++
++
+diff --git a/tools/perf/chrome_telemetry_build/BUILD.gn b/tools/perf/chrome_telemetry_build/BUILD.gn
+index a1f921ced8..2a5f6b2ee9 100644
+--- a/tools/perf/chrome_telemetry_build/BUILD.gn
++++ b/tools/perf/chrome_telemetry_build/BUILD.gn
+@@ -48,7 +48,7 @@ group("telemetry_chrome_test") {
+     data_deps += [ "//third_party/perfetto/src/trace_processor:trace_processor_shell($default_toolchain)" ]
+   }
+ 
+-  if (!is_fuchsia && !is_android && !is_castos && !is_ios) {
++  if (!is_fuchsia && !is_android && !is_castos && !is_ios && !is_alos) {
+     data_deps += [ "//chrome" ]
+   }
+ 
+@@ -210,7 +210,7 @@ group("telemetry_chrome_test_without_chrome") {
+   ]
+ 
+   # Cr-Fuchsia doesn't support breakpad.
+-  if (!is_win && !is_fuchsia) {
++  if (!is_win && !is_fuchsia && !is_alos) {
+     data_deps += [
+       # This is defined for Windows, but is unused by Telemetry on
+       # Windows, and including it can have issues when cross-compiling
+diff --git a/ui/menus/BUILD.gn b/ui/menus/BUILD.gn
+index d1aecc7272..0a0e8661ed 100644
+--- a/ui/menus/BUILD.gn
++++ b/ui/menus/BUILD.gn
+@@ -4,7 +4,7 @@
+ 
+ import("//testing/test.gni")
+ assert(is_win || is_mac || is_linux || is_chromeos || is_android ||
+-       is_fuchsia || is_ios)
++       is_fuchsia || is_ios || is_alos)
+ 
+ component("menus") {
+   sources = [
+diff --git a/ui/gfx/BUILD.gn b/ui/gfx/BUILD.gn
+index 4c93aa57c3..66a1dbfb47 100644
+--- a/ui/gfx/BUILD.gn
++++ b/ui/gfx/BUILD.gn
+@@ -179,7 +179,7 @@ component("gfx") {
+       "android/view_configuration.h",
+     ]
+   }
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     sources += [
+       "font_fallback_linux.cc",
+       "font_fallback_linux.h",
+@@ -427,7 +427,7 @@ component("gfx") {
+   if (is_linux) {
+     deps += [ "//ui/linux:linux_ui" ]
+   }
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     deps += [ "//third_party/fontconfig" ]
+   }
+ 
+@@ -645,7 +645,7 @@ source_set("memory_buffer_sources") {
+     "//ui/gfx/geometry",
+   ]
+ 
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     sources += [
+       "linux/client_native_pixmap_dmabuf.cc",
+       "linux/client_native_pixmap_dmabuf.h",
+@@ -780,10 +780,10 @@ test("gfx_unittests") {
+     "text_elider_unittest.cc",
+     "text_utils_unittest.cc",
+   ]
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     sources += [ "font_render_params_linux_unittest.cc" ]
+   }
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     sources += [ "font_fallback_linux_unittest.cc" ]
+   }
+   if (is_apple) {
+@@ -989,7 +989,7 @@ test("gfx_unittests") {
+     deps += [ "//ui/linux:test_support" ]
+   }
+ 
+-  if (is_linux || is_chromeos) {
++  if ((is_linux || is_chromeos) && enable_rust) {
+     sources += [
+       "linux/fontconfig_util_unittest.cc",
+       "linux/native_pixmap_dmabuf_unittest.cc",

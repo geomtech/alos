@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <sys/alos_system.h>
 #include <sys/meminfo.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -71,7 +72,13 @@ void _exit(int status) {
 long sysconf(int name) {
   if (name == _SC_PAGESIZE) return 4096;
   /* Le noyau configure exactement un CPU ; le SMP n'est pas implemente. */
-  if (name == _SC_NPROCESSORS_CONF) return 1;
+  if (name == _SC_NPROCESSORS_CONF || name == _SC_NPROCESSORS_ONLN) return 1;
+  if (name == _SC_PHYS_PAGES) {
+    /* Capacite RAM utilisable geree par le PMM au boot, pas l'adresse max. */
+    alos_system_info_t info;
+    if (alos_system_info(&info) < 0) return -1;
+    return (long)(info.managed_total_bytes / 4096);
+  }
   errno = EINVAL;
   return -1;
 }

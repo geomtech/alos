@@ -7,6 +7,7 @@ param(
     [switch]$UnixSocketOnly,
     [switch]$DnsOnly,
     [string]$BaseSmokePath,
+    [string]$RustSmokePath,
     [string]$MojoSmokePath,
     [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
@@ -31,7 +32,7 @@ if ($StackProtectorOnly -and ($Runtime -or $ComplexCpp)) {
 if ($BaseSmokePath -and $BaseNativeDirectory) {
     throw "Choisir BaseSmokePath ou BaseNativeDirectory."
 }
-$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory)
+$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory -or $RustSmokePath)
 if ($MojoSmokePath -and ($hasBaseSmoke -or $Runtime -or $Fleet -or $ComplexCpp -or
     $StackProtectorOnly -or $UnixSocketOnly -or $EntropyUnavailable)) {
     throw "MojoSmokePath est une suite isolee avec source d'entropie reelle."
@@ -126,12 +127,15 @@ wide-format-test
 pthread-test
 pthread-test
 pthread-rwlock-test
+semaphore-test
+rusage-test
 pthread-attr-test
 thread-id-test
 calendar-test
 env-test
 uname-test
 libc-common-test
+libm-complete-test
 fd-io-test
 fs-metadata-test
 crt-cxx-test
@@ -157,7 +161,7 @@ if ($Fleet) {
     $startup = $startup.Replace("echo vm-suite-complete",
         "base-math-test`n$protectorCommand`necho vm-suite-complete")
     $startup = $startup.Replace("echo vm-suite-complete",
-        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`nint128-runtime-test`nunix-socket-test`nepoll-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
+        "posix-file-test`nstdio-file-test`npositional-io-test`npath-match-test`nmincore-test`nsystem-info-test`nvector-io-test`nshared-memory-test`nresource-test`nnative-compat-test`nfs-attributes-test`nmsync-test`nprocess-control-test`npath-ops-test`nint128-runtime-test`nunix-socket-test`nepoll-test`nipc-poll-test`npipe-test`nsocket-test`ninet-test`n$entropyCommand`necho vm-suite-complete")
 }
 if ($StackProtectorOnly) {
     $command = if ($EntropyUnavailable) {
@@ -180,6 +184,9 @@ if ($hasNativeSmoke) {
             $basePrograms[0].Name = "chromium-mojo-bindings-smoke"
             $basePrograms[0].Marker = "chromium-mojo-bindings-smoke: PASS"
         }
+    } elseif ($RustSmokePath) {
+        $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $RustSmokePath).Path
+            Name = "chromium-rust-smoke"; Marker = "chromium-rust-smoke: PASS" })
     } elseif ($BaseSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $BaseSmokePath).Path
             Name = "chromium-base-smoke"; Marker = "chromium-base-smoke: Time PASS" })
@@ -253,9 +260,22 @@ $metadataCommands = @(
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" alos-build sh -c `
-        'truncate -s 64M /artifacts/test.disk && mkfs.ext2 -q -F -d fs_root /artifacts/test.disk && debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk && debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk && for name in wide-io-valid wide-io-output wide-io-invalid wide-io-incomplete fd-io-data fd-io-zero; do debugfs -w -R "write /artifacts/$name /$name" /artifacts/test.disk || exit; done && debugfs -w -f /artifacts/metadata.commands /artifacts/test.disk' `
-        *> (Join-Path $output "image.log")
+    # Les guillemets imbriques d'un argument `sh -c` sont alteres par le
+    # passage d'arguments natifs selon la version de PowerShell : le script
+    # de staging est donc ecrit dans le repertoire d'artefacts.
+    [IO.File]::WriteAllText((Join-Path $output "stage-image.sh"), (@(
+        'set -e',
+        'truncate -s 64M /artifacts/test.disk',
+        'mkfs.ext2 -q -F -d fs_root /artifacts/test.disk',
+        'debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk',
+        'debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk',
+        'for name in wide-io-valid wide-io-output wide-io-invalid wide-io-incomplete fd-io-data fd-io-zero; do',
+        '  debugfs -w -R "write /artifacts/$name /$name" /artifacts/test.disk',
+        'done',
+        'debugfs -w -f /artifacts/metadata.commands /artifacts/test.disk'
+    ) -join "`n") + "`n")
+    docker run --rm -v "${repo}:/root/env" -v "${output}:/artifacts" -w /root/env alos-build `
+        sh /artifacts/stage-image.sh *> (Join-Path $output "image.log")
     $imageExitCode = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -266,8 +286,13 @@ foreach ($program in $basePrograms) {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        docker run --rm -v "${output}:/artifacts" alos-build sh -c `
-            "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk && debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk && cmp /artifacts/$name /artifacts/verify-$name" `
+        [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), (@(
+            'set -e',
+            "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
+            "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
+            "cmp /artifacts/$name /artifacts/verify-$name"
+        ) -join "`n") + "`n")
+        docker run --rm -v "${output}:/artifacts" alos-build sh "/artifacts/stage-$name.sh" `
             *> (Join-Path $output "$name-image.log")
         $stageExitCode = $LASTEXITCODE
     } finally {
@@ -346,12 +371,12 @@ try {
         if ($text.Contains("env-test: FAIL")) { throw "Regression environnement : $log" }
         Assert-WideConsoleBytes
         foreach ($marker in @("simd-context-test: PASS", "tls-test: PASS",
-            "time-test: PASS", "strtod-test: PASS", "printf-test: PASS", "wide-format-test: PASS", "pthread-test: PASS", "pthread-rwlock-test: PASS", "pthread-attr-test: PASS", "thread-id-test: PASS", "calendar-test: PASS", "libc-common-test: PASS", "fd-io-test: PASS", "fs-metadata-test: PASS", "crt-cxx-test: PASS",
+            "time-test: PASS", "strtod-test: PASS", "printf-test: PASS", "wide-format-test: PASS", "pthread-test: PASS", "pthread-rwlock-test: PASS", "semaphore-test: PASS", "rusage-test: PASS", "pthread-attr-test: PASS", "thread-id-test: PASS", "calendar-test: PASS", "libc-common-test: PASS", "libm-complete-test: PASS", "fd-io-test: PASS", "fs-metadata-test: PASS", "crt-cxx-test: PASS",
             "tls-cxx-test: PASS", "GLOBAL CTOR", "TLS CTOR",
             "TLS DTOR", "GLOBAL DTOR")) {
             if (-not $text.Contains($marker)) { throw "Resultat manquant '$marker' : $log" }
         }
-        if ($text -match "(simd-context-test|tls-test|time-test|strtod-test|printf-test|wide-format-test|pthread-test|pthread-rwlock-test|pthread-attr-test|thread-id-test|calendar-test|libc-common-test|fd-io-test|fs-metadata-test|crt-cxx-test): FAIL") {
+        if ($text -match "(simd-context-test|tls-test|time-test|strtod-test|printf-test|wide-format-test|pthread-test|pthread-rwlock-test|semaphore-test|rusage-test|pthread-attr-test|thread-id-test|calendar-test|libc-common-test|libm-complete-test|fd-io-test|fs-metadata-test|crt-cxx-test): FAIL") {
             throw "Regression runtime : $log"
         }
         foreach ($expected in @(
@@ -367,6 +392,7 @@ try {
             "libc-common-test: stdout[no-newline]stdout-end",
             "libc-common-test: stderr[bytes]stderr-end",
             "libc-common-test: perror-prefix: Invalid argument",
+            "libc-common-test: atexit LIFO",
             "Numerical result out of range",
             "Input/output error"
         )) {
@@ -381,6 +407,7 @@ try {
     if ($ComplexCpp) {
         if ([regex]::Matches($text, "complex-cpp-test: ALL PASS").Count -ne $ComplexRuns -or
             [regex]::Matches($text, "complex-cpp-test: GLOBAL DTOR PASS").Count -ne $ComplexRuns -or
+            [regex]::Matches($text, "complex-cpp-test: atomic_ref fstream filesystem PASS").Count -ne $ComplexRuns -or
             $text.Contains("complex-cpp-test: FAIL")) {
             throw "Echec complex-cpp-test : $log"
         }
@@ -421,11 +448,11 @@ try {
                 "entropy-test: unavailable PASS"
             } else { "entropy-test: source/concurrent PASS" }
             foreach ($marker in @("posix-file-test: PASSED", "stdio-file-test: PASS", "positional-io-test: PASS", "path-match-test: PASS", "mincore-test: PASS", "system-info-test: PASS", "pipe-test: PASS",
-                "socket-test: PASS", "inet-test: PASS", "epoll-test: PASS", "vector-io-test: PASS",
+                "socket-test: PASS", "inet-test: PASS", "epoll-test: PASS", "ipc-poll-test: PASS", "vector-io-test: PASS",
                 "[shared-memory-test] PASS", "[resource-test] PASS", "native-compat-test PASS", "fs-attributes-test: PASS", "msync-test: PASS", "process-control-test: PASS", "path-ops-test: PASS", $entropyMarker)) {
                 if (-not $text.Contains($marker)) { throw "Resultat fleet manquant '$marker' : $log" }
             }
-            if ($text -match "(?m)^(posix-file-test|stdio-file-test|positional-io-test|path-match-test|mincore-test|system-info-test|pipe-test|socket-test|inet-test|epoll-test|entropy-test)(:| )\s*FAIL(?:ED)?\b") {
+            if ($text -match "(?m)^(posix-file-test|stdio-file-test|positional-io-test|path-match-test|mincore-test|system-info-test|pipe-test|socket-test|inet-test|epoll-test|ipc-poll-test|entropy-test)(:| )\s*FAIL(?:ED)?\b") {
                 throw "Regression fleet : $log"
             }
             if ($text -match "(?m)^(vector-io-test(:| )|fs-attributes-test: |msync-test: |process-control-test: |path-ops-test: |\[(shared-memory-test|resource-test)\] |native-compat-test )FAIL\b") {

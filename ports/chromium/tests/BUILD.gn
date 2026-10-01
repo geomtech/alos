@@ -1,5 +1,9 @@
 assert(is_alos, "This executable targets native ALOS only.")
 
+declare_args() {
+  alos_build_ozone_probe = false
+}
+
 set_defaults("executable") {
   inputs = [
     "/alos/src/userland/libc/crt0.o",
@@ -68,4 +72,18 @@ executable("thread_smoke") {
 executable("elf_reader_smoke") {
   sources = [ "base-elf-reader-smoke.cc" ]
   deps = [ "//base" ]
+}
+
+if (alos_build_ozone_probe) {
+  executable("ozone_interface_probe") {
+    sources = [ "ozone-interface-probe.cc" ]
+    inputs += [ "/alos/src/userland/libgui/libgui.a" ]
+    include_dirs = [ "/alos/src/userland/libgui/include" ]
+    ldflags = [ "/alos/src/userland/libgui/libgui.a" ]
+    deps = [
+      "//skia",
+      "//ui/gfx/geometry",
+      "//ui/ozone",
+    ]
+  }
 }

@@ -309,6 +309,8 @@ int gui_poll_event(gui_window_t *window, gui_event_t *event) {
   return gui_wait_event(window, event, IPC_NONBLOCK);
 }
 
+int gui_connection_fd(void) { return g_connection; }
+
 int gui_wait_event(gui_window_t *window, gui_event_t *event,
                    uint32_t timeout_ms) {
   if (event == NULL || g_connection < 0) {

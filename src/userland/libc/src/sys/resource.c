@@ -30,6 +30,17 @@ int setrlimit(int resource, const struct rlimit *limit) {
   return checked(syscall2(SYS_RESOURCE_SET_LIMIT, resource, (long)limit));
 }
 
+int getrusage(int who, struct rusage *usage) {
+  if (!usage) {
+    errno = EFAULT;
+    return -1;
+  }
+  typedef char rusage_abi_check[
+      sizeof(struct rusage) == sizeof(alos_rusage_t) ? 1 : -1];
+  (void)sizeof(rusage_abi_check);
+  return checked(syscall2(SYS_RESOURCE_USAGE, who, (long)usage));
+}
+
 int getpriority(int which, id_t who) {
   (void)which;
   (void)who;

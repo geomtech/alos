@@ -1,0 +1,22 @@
+diff --git a/third_party/blink/common/BUILD.gn b/third_party/blink/common/BUILD.gn
+--- a/third_party/blink/common/BUILD.gn
++++ b/third_party/blink/common/BUILD.gn
+@@ -313,7 +313,6 @@ component("common") {
+     "//services/metrics/public/mojom",
+     "//services/network/public/cpp",
+     "//services/network/public/mojom:mojom_permissions_policy",
+-    "//third_party/blink/common/rust_crash",
+     "//third_party/blink/public/common:buildflags",
+     "//third_party/re2",
+     "//ui/base",
+@@ -326,6 +325,10 @@ component("common") {
+     "//ui/latency/mojom:shared_mojom_traits",
+   ]
+ 
++  if (enable_rust_cxx) {
++    deps += [ "//third_party/blink/common/rust_crash" ]
++  }
++
+   # If use_blink is used then it needs to depend on //media
+   if (use_blink) {
+     deps += [ "//media" ]

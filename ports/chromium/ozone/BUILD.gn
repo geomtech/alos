@@ -1,0 +1,54 @@
+visibility = [
+  ":*",
+  "//ui/ozone/*",
+]
+
+source_set("alos") {
+  sources = [
+    "alos_screen.cc",
+    "alos_screen.h",
+    "alos_surface_factory.cc",
+    "alos_surface_factory.h",
+    "alos_window.cc",
+    "alos_window.h",
+    "alos_window_manager.cc",
+    "alos_window_manager.h",
+    "client_native_pixmap_factory_alos.cc",
+    "ozone_platform_alos.cc",
+  ]
+
+  defines = [ "OZONE_IMPLEMENTATION" ]
+  include_dirs = [ "/alos/src/userland/libgui/include" ]
+  inputs = [ "/alos/src/userland/libgui/libgui.a" ]
+  ldflags = [ "/alos/src/userland/libgui/libgui.a" ]
+
+  deps = [
+    "//base",
+    "//skia",
+    "//ui/gfx/geometry",
+  ]
+}
+
+set_defaults("executable") {
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/alos/src/userland/libgui/libgui.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+  include_dirs = [ "/alos/src/userland/libgui/include" ]
+  ldflags = [ "/alos/src/userland/libgui/libgui.a" ]
+}
+
+executable("ozone_interface_probe") {
+  sources = [ "ozone_interface_probe.cc" ]
+  deps = [
+    ":alos",
+    "//skia",
+    "//ui/gfx/geometry",
+    "//ui/ozone:ozone_base",
+  ]
+}

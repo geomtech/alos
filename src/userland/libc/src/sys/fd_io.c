@@ -50,6 +50,20 @@ int ftruncate64(int fd, int64_t length) {
   return ftruncate(fd, (off_t)length);
 }
 
+int truncate(const char *path, off_t length) {
+  if (length < 0) { errno = EINVAL; return -1; }
+  int fd = open(path, O_WRONLY);
+  if (fd < 0) return -1;
+  int result = ftruncate(fd, length);
+  int saved_errno = errno;
+  if (close(fd) < 0 && result == 0) {
+    result = -1;
+    saved_errno = errno;
+  }
+  errno = saved_errno;
+  return result;
+}
+
 int close(int fd) {
   return (int)fd_result(syscall1(SYS_CLOSE, fd));
 }

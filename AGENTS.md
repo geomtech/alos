@@ -187,6 +187,10 @@ and hosted language mode with `-fno-builtin`; do not import a host CRT/libc.
   pthread_getattr_np queries native stacks. Caller-supplied stacks and the
   full scheduling/attribute API are not implemented. gettid is a native
   numeric thread ID, not a cast of the opaque pthread_t.
+  Unnamed private POSIX semaphores (sem_init/post/wait/trywait/timedwait)
+  block on private futexes; pshared and named semaphores are unsupported.
+  getrusage reports SELF/THREAD CPU from PIT thread accounting as user time
+  only, exposes process peak resident pages in KiB, and rejects CHILDREN.
 - CLOCK_BOOTTIME=2, CLOCK_MONOTONIC_RAW=3 and CLOCK_MONOTONIC_COARSE=4
   share CLOCK_MONOTONIC kernel uptime at millisecond resolution; do not
   imply suspend/resume or NTP support. gettimeofday uses realtime and
@@ -313,11 +317,13 @@ Keep Chromium/LLVM source checkouts and large build outputs **outside this
 repository**. Store ALOS integration scripts/patches under `ports/chromium/`.
 Keep `docs/chromium-port.md` synchronized with observed results.
 
-The LLVM 18.1.8 bootstrap has produced target `libc++.a`/`libc++abi.a`.
-The current profile enables localization, Unicode and C++ wide characters,
-but disables exceptions/RTTI, filesystem, timezone database and random_device.
-The runtime/wide-format suites and three consecutive `complex-cpp-test`
-runs passed on both QEMU `qemu64` and `max` after rebuilding/linking.
+The current libc++/libc++abi bootstrap uses LLVM/Clang Chromium 21 at
+`bd809ffb4b5f277a661509fbbbf9ea893a545ab0`, installed outside the repo as
+`alos-libcxx-21`. It enables localization, Unicode, C++ wide characters and
+filesystem/fstream, but disables exceptions/RTTI, timezone database and
+random_device. Runtime suites and `complex-cpp-test` pass on both QEMU
+`qemu64` and `max`; the C++ test covers `std::atomic_ref`,
+`std::ofstream`/`ifstream` and basic `std::filesystem`.
 swprintf/vswprintf use a musl-derived wchar_t sink; wide stream I/O uses
 UTF-8 and one-wide-character pushback, not general orientation/fwide.
 Console and writable-file wide output are supported; read-only writes fail

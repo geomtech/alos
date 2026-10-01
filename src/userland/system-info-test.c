@@ -3,6 +3,7 @@
 #include <sys/alos_system.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <unistd.h>
 
 #define CHECK(x) do { if (!(x)) { printf("system-info-test: FAIL line=%d\n", __LINE__); return 1; } } while (0)
 
@@ -17,6 +18,9 @@ int main(void) {
         !(before.managed_total_bytes % 4096) &&
         !(before.allocatable_free_bytes % 4096) &&
         !before.swap_total_bytes && !before.swap_free_bytes);
+  long phys_pages = sysconf(_SC_PHYS_PAGES);
+  CHECK(phys_pages > 0 &&
+        (uint64_t)phys_pages * 4096 == before.managed_total_bytes);
   CHECK(alos_system_info(NULL) == -1 && errno == EFAULT);
   CHECK(syscall3(SYS_SYSTEM_INFO, (long)&after, sizeof(after) - 1,
                  ALOS_SYSTEM_INFO_VERSION) == -EINVAL);

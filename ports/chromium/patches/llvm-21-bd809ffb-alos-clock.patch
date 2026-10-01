@@ -1,0 +1,26 @@
+diff --git a/libcxx/src/chrono.cpp b/libcxx/src/chrono.cpp
+index 20387ea76124..fecc978656fe 100644
+--- a/libcxx/src/chrono.cpp
++++ b/libcxx/src/chrono.cpp
+@@ -37,7 +37,7 @@
+ 
+ // OpenBSD and GPU do not have a fully conformant suite of POSIX timers, but
+ // it does have clock_gettime and CLOCK_MONOTONIC which is all we need.
+-#if defined(__APPLE__) || defined(__gnu_hurd__) || defined(__OpenBSD__) || defined(__AMDGPU__) ||                      \
++#if defined(__ALOS__) || defined(__APPLE__) || defined(__gnu_hurd__) || defined(__OpenBSD__) || defined(__AMDGPU__) ||     \
+     defined(__NVPTX__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+ #  define _LIBCPP_HAS_CLOCK_GETTIME
+ #endif
+diff --git a/libcxx/src/filesystem/filesystem_clock.cpp b/libcxx/src/filesystem/filesystem_clock.cpp
+index 49f65efb5a53..ebaa96deeb0e 100644
+--- a/libcxx/src/filesystem/filesystem_clock.cpp
++++ b/libcxx/src/filesystem/filesystem_clock.cpp
+@@ -36,7 +36,7 @@
+ #  define _LIBCPP_HAS_TIMESPEC_GET
+ #endif
+ 
+-#if defined(__APPLE__) || defined(__gnu_hurd__) || defined(__AMDGPU__) || defined(__NVPTX__) ||                        \
++#if defined(__ALOS__) || defined(__APPLE__) || defined(__gnu_hurd__) || defined(__AMDGPU__) || defined(__NVPTX__) ||      \
+     (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+ #  define _LIBCPP_HAS_CLOCK_GETTIME
+ #endif

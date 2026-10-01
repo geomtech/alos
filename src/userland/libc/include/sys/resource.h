@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <sys/time.h>
 #include "../../../../include/resource_abi.h"
 
 typedef uint64_t rlim_t;
@@ -27,11 +28,35 @@ struct rlimit {
 #define PRIO_PGRP 1
 #define PRIO_USER 2
 
+#define RUSAGE_SELF ALOS_RUSAGE_SELF
+#define RUSAGE_CHILDREN ALOS_RUSAGE_CHILDREN
+#define RUSAGE_THREAD ALOS_RUSAGE_THREAD
+
+struct rusage {
+  struct timeval ru_utime;
+  struct timeval ru_stime;
+  long ru_maxrss;
+  long ru_ixrss;
+  long ru_idrss;
+  long ru_isrss;
+  long ru_minflt;
+  long ru_majflt;
+  long ru_nswap;
+  long ru_inblock;
+  long ru_oublock;
+  long ru_msgsnd;
+  long ru_msgrcv;
+  long ru_nsignals;
+  long ru_nvcsw;
+  long ru_nivcsw;
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 int getrlimit(int resource, struct rlimit *limit);
 int setrlimit(int resource, const struct rlimit *limit);
+int getrusage(int who, struct rusage *usage);
 int getpriority(int which, id_t who);
 int setpriority(int which, id_t who, int priority);
 #ifdef __cplusplus

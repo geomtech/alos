@@ -1,8 +1,9 @@
-ALOS target libm uses the musl 1.2.6 binary32/binary64 rounding,
-decomposition, exp/log algorithms and Arm tables, together with previously
-imported ALOS float/80-bit helpers. Per-file notices are preserved.
-Native errno adaptations and the narrow internal helper header do not
-remove these licenses. The source archive is never linked with host libm.
+ALOS target libm imports the musl 1.2.6 real-valued math library
+(src/math) and x86_64 long-double/FPU specializations, with ALOS-local
+build glue, sqrt instruction wrappers, minimal fenv/endian headers and
+errno-aware exceptional helpers. Per-file notices are preserved. Native
+adaptations do not remove these licenses. The source archive is never
+linked with host libm.
 
 musl as a whole is licensed under the following standard MIT license:
 

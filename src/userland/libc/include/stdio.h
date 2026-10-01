@@ -7,7 +7,12 @@ extern "C" {
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <sys/types.h>
 #define EOF (-1)
+#define BUFSIZ 1024
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
 
 #include <bits/alos_wchar.h>
 
@@ -20,6 +25,8 @@ struct _IO_FILE {
   wint_t wide_pushed;
   unsigned char has_wide_pushback;
   unsigned char access_mode;
+  unsigned char unlink_on_close;
+  char unlink_path[128];
 };
 
 extern FILE *stdin;
@@ -60,16 +67,24 @@ void perror(const char *);
 
 FILE *fopen(const char *pathname, const char *mode);
 FILE *fdopen(int fd, const char *mode);
+FILE *tmpfile(void);
 int fclose(FILE *stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 int fflush(FILE *stream);
+/* Les flux ALOS sont non bufferises : les modes valides sont acceptes et
+   les donnees restent transmises immediatement au descripteur. */
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size);
+void setbuf(FILE *stream, char *buffer);
 int feof(FILE *stream);
 int ferror(FILE *stream);
 void clearerr(FILE *stream);
 int fileno(FILE *stream);
 int fseek(FILE *stream, long offset, int whence);
+int fseeko(FILE *stream, off_t offset, int whence);
+void rewind(FILE *stream);
 long ftell(FILE *stream);
+off_t ftello(FILE *stream);
 
 #ifdef __cplusplus
 }

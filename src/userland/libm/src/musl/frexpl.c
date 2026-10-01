@@ -1,16 +1,4 @@
-/* musl 1.2.6 src/math/frexpl.c (licence MIT, voir COPYRIGHT.musl). */
-#include <float.h>
-#include <math.h>
-#include <stdint.h>
-
-/* long double x87 80 bits (x86-64). */
-union ldshape {
-	long double f;
-	struct {
-		uint64_t m;
-		uint16_t se;
-	} i;
-};
+#include "libm.h"
 
 #if LDBL_MANT_DIG == 53 && LDBL_MAX_EXP == 1024
 long double frexpl(long double x, int *e)

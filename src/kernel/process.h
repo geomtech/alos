@@ -83,6 +83,9 @@ typedef struct process {
   uint64_t *pml4;      /* PML4 (Page Map Level 4) */
   uint64_t heap_start; /* Start of heap (initial program break) */
   uint64_t heap_brk;   /* Current program break */
+  uint64_t resident_pages;
+  uint64_t peak_resident_pages;
+  uint64_t exited_thread_cpu_ms;
   char cwd[PROCESS_CWD_MAX]; /* Répertoire courant, canonique et absolu */
   file_descriptor_t fd_table[MAX_FD]; /* Table privée, descriptions partageables */
   shm_process_mapping_t shm_mappings[SHM_MAX_MAPPINGS];
@@ -372,5 +375,11 @@ void process_log_fault_context(const interrupt_frame_t *frame, uint64_t address)
  */
 extern void switch_task(uint64_t *old_rsp_ptr, uint64_t new_rsp,
                         uint64_t new_cr3);
+
+void process_note_resident_pages(process_t *proc, int64_t delta);
+void process_set_resident_pages(process_t *proc, uint64_t pages);
+uint64_t process_peak_resident_pages(process_t *proc);
+uint64_t process_cpu_time_ms(process_t *proc);
+uint64_t process_thread_cpu_time_ms(void);
 
 #endif /* PROCESS_H */

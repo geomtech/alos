@@ -1,0 +1,6 @@
+ozone_external_platforms = [ "alos" ]
+ozone_external_platform_deps = [ "//alos_native/ozone:alos" ]
+ozone_external_platform_test_deps = []
+ozone_external_platform_integration_test_deps = []
+ozone_external_platform_ui_test_support_deps = []
+ozone_external_interactive_ui_tests_deps = []

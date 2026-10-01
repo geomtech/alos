@@ -1,20 +1,32 @@
 param(
     [Parameter(Mandatory)][string]$ChromiumDirectory,
-    [Parameter(Mandatory)][string]$LibcxxDirectory,
+    [string]$LibcxxDirectory = (Join-Path $ChromiumDirectory "..\alos-libcxx-21"),
     [string]$GnDirectory = (Join-Path $ChromiumDirectory "..\gn-linux-amd64"),
     [string[]]$Targets = @("base:base"),
     [switch]$GenOnly,
     [switch]$NativeTests,
+    [switch]$OzoneProbe,
     [switch]$MojoTests,
     [switch]$MojoBindings,
     [switch]$KeepGoing,
+    [switch]$Rust,
+    [switch]$V8Probe,
     [int]$Jobs = 8
 )
 # gn gen out/alos puis ninja dans l'image alos-runtime. Les outils du build
 # (gn, python, protoc...) sont Linux host ; les objets du toolchain par defaut
 # //build/toolchain/alos:clang_x64 visent ALOS avec la libc et libc++ ALOS.
 $ErrorActionPreference = "Stop"
+if ($OzoneProbe) { $NativeTests = $true }
 if ($MojoBindings) { $MojoTests = $true }
+# Sonde de compilation V8 ciblee (//v8:v8_libbase) dans out/alos-v8 : elle ne
+# remplace pas le profil out/alos et ne construit ni ne lie le moteur complet.
+if ($V8Probe -and $MojoBindings) { throw "-V8Probe et -MojoBindings utilisent des root targets distincts." }
+if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
+if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
+if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
+$outDirectory = if ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
+$rustEnabled = $Rust -or $OzoneProbe
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $src = (Resolve-Path $ChromiumDirectory).Path
 $revision = & git -C $src rev-parse HEAD
@@ -67,7 +79,12 @@ foreach ($patchName in @(
     "chromium-alos-native-malloc-metrics.patch",
     "chromium-alos-unix-credentials-capability.patch",
     "chromium-alos-process-title-groups.patch",
-    "chromium-alos-shared-purge-capability.patch"
+    "chromium-alos-shared-purge-capability.patch",
+    "chromium-alos-disable-rust-logger.patch",
+    "chromium-alos-skia-no-rust-bridge.patch",
+    "chromium-alos-blink-rust-crash-gate.patch",
+    "chromium-alos-platform-gates.patch",
+    "chromium-alos-rust-target.patch"
 )) {
     $patch = Join-Path $repo ("ports\chromium\patches\" + $patchName)
     & git -C $src apply --reverse --check $patch 2>$null
@@ -82,7 +99,9 @@ foreach ($patchName in @(
         @{ Path = "third_party\perfetto"; Patch = "perfetto-alos-unsupported-regex.patch"; Strip = 1 },
         @{ Path = "third_party\perfetto"; Patch = "perfetto-alos-optional-signals.patch"; Strip = 3 },
         @{ Path = "third_party\perfetto"; Patch = "perfetto-alos-native-shared-memory.patch"; Strip = 1 },
-        @{ Path = "third_party\icu"; Patch = "icu-alos-no-decimal-signals.patch"; Strip = 3 }
+        @{ Path = "third_party\icu"; Patch = "icu-alos-no-decimal-signals.patch"; Strip = 3 },
+        @{ Path = "third_party\dawn"; Patch = "dawn-alos-common.patch"; Strip = 1 },
+        @{ Path = "third_party\skia"; Patch = "skia-alos-features.patch"; Strip = 1 }
     )) {
         $directory = Join-Path $src $dependency.Path
         $patch = Join-Path $repo ("ports\chromium\patches\" + $dependency.Patch)
@@ -135,7 +154,9 @@ if (Test-Path -LiteralPath $threadDestination) {
 }
 $args_gn = @(
     'target_os = "alos"', 'target_cpu = "x64"', 'is_debug = false',
-    'is_component_build = false', 'use_sysroot = false', 'enable_rust = false',
+    'is_component_build = false', 'use_sysroot = false',
+    "enable_rust = " + $(if ($rustEnabled) { "true" } else { "false" }),
+    "enable_rust_cxx = false",
     'enable_chromium_prelude = false', 'clang_use_chrome_plugins = false',
     'use_fuzztest_wrapper = false', 'use_llvm_libatomic = false',
     '# Pas d''interposition malloc : la libc ALOS reste l''allocateur global.',
@@ -146,8 +167,10 @@ $args_gn = @(
     'enable_backup_ref_ptr_support = false',
     'enable_pointer_compression_support = false',
     '# Concerne uniquement la libc++ in-tree de Chromium : la cible ALOS',
-    '# utilise la libc++ LLVM 18.1.8 ALOS du toolchain //build/toolchain/alos.',
-    'use_custom_libcxx = false', 'use_custom_libcxx_for_host = false'
+    '# utilise la libc++ LLVM 21 bd809ffb ALOS du toolchain //build/toolchain/alos.',
+    'use_custom_libcxx = false', 'use_custom_libcxx_for_host = false',
+    '# Pas de Crashpad sous ALOS : configuration amont sans rapport de crash.',
+    'use_crash_key_stubs = true'
 ) -join "`n"
 if ($NativeTests) {
     $testDirectory = Join-Path $src "alos_native"
@@ -155,10 +178,69 @@ if ($NativeTests) {
     foreach ($name in @("BUILD.gn", "base-smoke.cc", "nativeatomic-runtime-test.cc",
         "nativefile-comparison-test.cc", "base-stack-trace-smoke.cc", "base-io-pump-smoke.cc",
         "base-process-smoke.cc", "base-discardable-capability-smoke.cc",
-        "base-thread-smoke.cc", "base-elf-reader-smoke.cc")) {
+        "base-thread-smoke.cc", "base-elf-reader-smoke.cc",
+        "ozone-interface-probe.cc")) {
         Copy-Item -LiteralPath (Join-Path $repo "ports\chromium\tests\$name") -Destination $testDirectory
     }
+    if ($OzoneProbe) {
+        $ozoneSource = Join-Path $repo "ports\chromium\ozone"
+        $ozoneDestination = Join-Path $testDirectory "ozone"
+        if (Test-Path -LiteralPath $ozoneDestination) {
+            Remove-Item -LiteralPath $ozoneDestination -Recurse -Force
+        }
+        Copy-Item -LiteralPath $ozoneSource -Destination $ozoneDestination -Recurse
+        $ozoneConfigDestination = Join-Path $src "alos_ozone"
+        if (Test-Path -LiteralPath $ozoneConfigDestination) {
+            Remove-Item -LiteralPath $ozoneConfigDestination -Recurse -Force
+        }
+        New-Item -ItemType Directory -Force $ozoneConfigDestination | Out-Null
+        Copy-Item -LiteralPath (Join-Path $ozoneSource "ozone_extra.gni") `
+            -Destination $ozoneConfigDestination
+    }
     $args_gn += "`nalos_build_native_tests = true"
+}
+if ($OzoneProbe) {
+    $args_gn += "`nuse_ozone = true"
+    $args_gn += "`nalos_build_ozone_probe = true"
+    $args_gn += "`nozone_auto_platforms = false"
+    $args_gn += "`nozone_extra_path = `"//alos_native/ozone/ozone_extra.gni`""
+    $args_gn += "`nozone_platform = `"alos`""
+    # Aucun pilote Vulkan sous ALOS : pas de chargeur libvulkan partage.
+    $args_gn += "`nangle_shared_libvulkan = false"
+    # Les outils hote Linux sont construits sans sysroot ; ALOS n'utilise
+    # pas NSS, donc aucune toolchain ne doit exiger nss.pc.
+    $args_gn += "`nuse_nss_certs = false"
+    # Profil content_shell : pas de plateforme d'extensions Chrome.
+    $args_gn += "`nenable_extensions = false"
+    # Aucune pile d'impression ALOS ; l'outil hote ne doit pas exiger CUPS.
+    $args_gn += "`nenable_printing = false"
+    $args_gn += "`nuse_cups = false"
+    $args_gn += "`nenable_pdf = false"
+    $args_gn += "`nenable_av1_decoder = false"
+    $args_gn += "`nv8_enable_temporal_support = false"
+    $args_gn += "`nmedia_use_symphonia = false"
+    $args_gn += "`nskia_use_fontconfig = false"
+    # Bibliotheques systeme Linux absentes d'ALOS ; ces arguments sont
+    # partages avec la toolchain hote, construite sans sysroot.
+    foreach ($systemLibrary in @("use_xkbcommon", "use_glib", "use_udev",
+            "use_dbus", "use_gio", "use_pangocairo", "use_gtk", "use_alsa",
+            "use_pulseaudio", "use_vaapi", "rtc_use_pipewire", "use_qt")) {
+        $args_gn += "`n$systemLibrary = false"
+    }
+    if ($Targets.Count -eq 1 -and $Targets[0] -eq "base:base") {
+        $Targets = @("alos_native/ozone:ozone_interface_probe")
+    }
+}
+if ($Rust) {
+    $rustDirectory = Join-Path $src "alos_rust"
+    New-Item -ItemType Directory -Force $rustDirectory | Out-Null
+    foreach ($name in @("BUILD.gn", "rust-smoke.cc", "rust-smoke.rs")) {
+        Copy-Item -LiteralPath (Join-Path $repo "ports\chromium\tests\rust\$name") `
+            -Destination $rustDirectory
+    }
+}
+if ($rustEnabled) {
+    $args_gn += "`nremoved_rust_stdlib_libs = [ `"test`" ]"
 }
 if ($MojoTests) {
         $mojoPatch = Join-Path $repo "ports\chromium\patches\chromium-alos-mojo-unnamed-platform.patch"
@@ -213,19 +295,40 @@ if ($MojoTests) {
             $args_gn += "`nalos_build_mojo_bindings = true"
         }
     }
-New-Item -ItemType Directory -Force (Join-Path $src "out\alos") | Out-Null
-[IO.File]::WriteAllText((Join-Path $src "out\alos\args.gn"), "$args_gn`n")
+if ($V8Probe) {
+    $v8 = Join-Path $src "v8"
+    if ((git -C $v8 rev-parse HEAD 2>$null) -ne "fdb12b460f148895f6af2ff0e0d870ff8889f154") {
+        throw "V8 14.0.365.4 absent : relancer fetch-chromium.ps1 -WithV8."
+    }
+    foreach ($v8Patch in @("v8-alos-os-detection.patch", "v8-alos-no-signals.patch", "v8-alos-platform.patch")) {
+        $patch = Join-Path $repo "ports\chromium\patches\$v8Patch"
+        & git -C $v8 apply --reverse --check $patch 2>$null
+        if ($LASTEXITCODE) {
+            & git -C $v8 apply --check $patch
+            if ($LASTEXITCODE) { throw "Patch V8 $v8Patch incompatible." }
+            & git -C $v8 apply $patch
+            if ($LASTEXITCODE) { throw "Patch V8 $v8Patch echoue." }
+        }
+    }
+    # Temporal depend de crates Rust ; Rust est absent du profil ALOS.
+    $args_gn += "`nv8_enable_temporal_support = false"
+}
+New-Item -ItemType Directory -Force (Join-Path $src $outDirectory) | Out-Null
+[IO.File]::WriteAllText((Join-Path $src "$outDirectory/args.gn"), "$args_gn`n")
 $mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",
             "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro",
             "-w", "/chromium", "alos-runtime")
-$generate = @("/gn/gn", "gen", "out/alos")
+$generate = @("/gn/gn", "gen", $outDirectory)
 if ($MojoBindings) {
     $generate += "--root-target=//alos_mojo:mojo_bindings_smoke"
 }
+if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
+if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
+if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate
-if ($LASTEXITCODE) { throw "gn gen out/alos echoue." }
+if ($LASTEXITCODE) { throw "gn gen $outDirectory echoue." }
 if ($GenOnly) { return }
-$ninja = @("ninja", "-C", "out/alos", "-j", "$Jobs")
+$ninja = @("ninja", "-C", $outDirectory, "-j", "$Jobs")
 if ($KeepGoing) { $ninja += @("-k", "0") }
 & docker @mounts @ninja @Targets
 if ($LASTEXITCODE) { throw "ninja $Targets echoue." }

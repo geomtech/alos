@@ -1,0 +1,74 @@
+diff --git a/src/base/platform/platform-posix.cc b/src/base/platform/platform-posix.cc
+index ca362e5..6111c62 100644
+--- a/src/base/platform/platform-posix.cc
++++ b/src/base/platform/platform-posix.cc
+@@ -17,7 +17,10 @@
+ #endif
+ #include <fcntl.h>
+ #include <sched.h>  // for sched_yield
++#if !V8_OS_ALOS
++// ALOS n'a pas de signaux POSIX.
+ #include <signal.h>
++#endif
+ #include <stdio.h>
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+@@ -275,8 +278,12 @@ void OS::Initialize(AbortMode abort_mode, const char* const gc_fake_mmap) {
+ bool OS::IsHardwareEnforcedShadowStacksEnabled() { return false; }
+ 
+ void OS::EnsureAlternativeSignalStackIsAvailableForCurrentThread() {
++#if V8_OS_ALOS
++  // ALOS has no POSIX signal delivery: signal-based sandbox features must
++  // stay disabled there rather than run without an alternate stack.
++  FATAL("sigaltstack is unsupported on ALOS");
+ // sigaltstack() is forbidden on tvOS and its usage causes build errors.
+-#if !V8_OS_TVOS
++#elif !V8_OS_TVOS
+   stack_t ss, old_ss;
+   memset(&ss, 0, sizeof(stack_t));
+   memset(&old_ss, 0, sizeof(stack_t));
+diff --git a/src/libsampler/sampler.cc b/src/libsampler/sampler.cc
+index b286f7b..f2109f8 100644
+--- a/src/libsampler/sampler.cc
++++ b/src/libsampler/sampler.cc
+@@ -322,6 +322,12 @@ class Sampler::PlatformData {
+   zx_handle_t profiled_thread_ = ZX_HANDLE_INVALID;
+ };
+ 
++#elif V8_OS_ALOS
++
++// Pas d'etat de plateforme : ALOS ne peut pas suspendre un thread ni lire
++// ses registres depuis un autre thread.
++class Sampler::PlatformData {};
++
+ #endif  // USE_SIGNALS
+ 
+ #if defined(USE_SIGNALS)
+@@ -689,6 +695,13 @@ void Sampler::DoSample() {
+ #undef ZX_THREAD_STATE_GENERAL_REGS
+ #endif
+ 
++#elif V8_OS_ALOS
++
++void Sampler::DoSample() {
++  // Aucun echantillon : le noyau n'expose pas encore de capture du contexte
++  // d'un thread tiers. Le profileur CPU reste actif mais ne recoit rien.
++}
++
+ #endif  // USE_SIGNALS
+ 
+ }  // namespace sampler
+diff --git a/src/libsampler/sampler.h b/src/libsampler/sampler.h
+index 9c75d3a..c7b66bb 100644
+--- a/src/libsampler/sampler.h
++++ b/src/libsampler/sampler.h
+@@ -13,7 +13,8 @@
+ #include "src/base/lazy-instance.h"
+ #include "src/base/macros.h"
+ 
+-#if V8_OS_POSIX && !V8_OS_CYGWIN && !V8_OS_FUCHSIA
++// ALOS n'a ni signaux POSIX ni API de suspension/lecture de registres.
++#if V8_OS_POSIX && !V8_OS_CYGWIN && !V8_OS_FUCHSIA && !V8_OS_ALOS
+ #define USE_SIGNALS
+ #endif
+ 

@@ -22,6 +22,9 @@ static int valid_field(const char *field) {
 
 int main(void) {
   CHECK(sysconf(_SC_NPROCESSORS_CONF) == 1);
+  CHECK(sysconf(_SC_NPROCESSORS_ONLN) == 1);
+  errno = 0;
+  CHECK(sysconf(-1) == -1 && errno == EINVAL);
   CHECK(getpagesize() == 4096 && getpagesize() == sysconf(_SC_PAGESIZE));
   struct utsname name;
   CHECK(sizeof(name) == 325);

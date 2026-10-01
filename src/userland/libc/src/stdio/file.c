@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <string.h>
 
 static int parse_mode(const char *mode, int *flags, unsigned char *access) {
     if (!mode || !*mode) { errno = EINVAL; return -1; }
@@ -58,12 +59,42 @@ FILE *fopen(const char *pathname, const char *mode) {
     return stream;
 }
 
+FILE *tmpfile(void) {
+    char path[32];
+    const char *patterns[] = {
+        "/tmp/tmpfile-XXXXXX",
+        "/posix-test/tmpfile-XXXXXX",
+        "/tmpfile-XXXXXX",
+    };
+    int fd = -1;
+    for (size_t i = 0; i < sizeof(patterns) / sizeof(patterns[0]); ++i) {
+        strcpy(path, patterns[i]);
+        fd = mkstemp(path);
+        if (fd >= 0 || errno != ENOENT) break;
+    }
+    if (fd < 0) return NULL;
+    FILE *stream = fdopen(fd, "w+b");
+    if (!stream) { int error = errno; close(fd); errno = error; }
+    else {
+        stream->unlink_on_close = 1;
+        strncpy(stream->unlink_path, path, sizeof(stream->unlink_path) - 1);
+        stream->unlink_path[sizeof(stream->unlink_path) - 1] = '\0';
+    }
+    return stream;
+}
+
 int fclose(FILE *stream) {
     if (!stream) { errno = EINVAL; return EOF; }
     int result = close(stream->fd);
+    int saved_errno = errno;
+    if (stream->unlink_on_close && stream->unlink_path[0] && unlink(stream->unlink_path) < 0 &&
+        result == 0) {
+        result = -1;
+        saved_errno = errno;
+    }
     stream->fd = -1;
     if (stream != stdin && stream != stdout && stream != stderr) free(stream);
-    if (result) return EOF;
+    if (result) { errno = saved_errno; return EOF; }
     return 0;
 }
 
@@ -97,12 +128,12 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return received / size;
 }
 
-int fseek(FILE *stream, long offset, int whence) {
+int fseeko(FILE *stream, off_t offset, int whence) {
     if (!stream) { errno = EINVAL; return -1; }
     if (whence == SEEK_CUR) {
         if (stream->has_wide_pushback) { errno = ENOTSUP; return -1; }
         if (stream->has_pushback) {
-            if (offset == (-__LONG_MAX__ - 1L)) { errno = EOVERFLOW; return -1; }
+            if (offset == INT64_MIN) { errno = EOVERFLOW; return -1; }
             --offset;
         }
     }
@@ -112,7 +143,15 @@ int fseek(FILE *stream, long offset, int whence) {
     return 0;
 }
 
-long ftell(FILE *stream) {
+int fseek(FILE *stream, long offset, int whence) {
+    return fseeko(stream, (off_t)offset, whence);
+}
+
+void rewind(FILE *stream) {
+    if (fseek(stream, 0, SEEK_SET) == 0) stream->error = 0;
+}
+
+off_t ftello(FILE *stream) {
     if (!stream) { errno = EINVAL; return -1; }
     if (stream->has_wide_pushback) { errno = ENOTSUP; return -1; }
     off_t offset = lseek(stream->fd, 0, SEEK_CUR);
@@ -122,6 +161,12 @@ long ftell(FILE *stream) {
         --offset;
     }
     return offset;
+}
+
+long ftell(FILE *stream) {
+    off_t offset = ftello(stream);
+    if (offset > __LONG_MAX__) { errno = EOVERFLOW; return -1; }
+    return (long)offset;
 }
 
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
@@ -149,6 +194,17 @@ int fflush(FILE *stream) {
     /* Flux non bufferises : les ecritures sont deja transmises au syscall. */
     if (stream && stream->fd < 0) { errno = EBADF; return EOF; }
     return 0;
+}
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size) {
+    (void)buffer; (void)size;
+    if (!stream || stream->fd < 0) { errno = EBADF; return -1; }
+    if (mode != _IOFBF && mode != _IOLBF && mode != _IONBF) { errno = EINVAL; return -1; }
+    /* Aucun tampon utilisateur : chaque ecriture atteint deja le syscall,
+       ce qui respecte les garanties de visibilite de chaque mode. */
+    return 0;
+}
+void setbuf(FILE *stream, char *buffer) {
+    setvbuf(stream, buffer, buffer ? _IOFBF : _IONBF, BUFSIZ);
 }
 int feof(FILE *stream) { return stream->eof; }
 int ferror(FILE *stream) { return stream->error; }

@@ -17,6 +17,7 @@ int posix_memalign(void **result, size_t alignment, size_t size);
 
 void exit(int status) __attribute__((noreturn));
 void abort(void) __attribute__((noreturn));
+int atexit(void (*function)(void));
 typedef struct { int quot, rem; } div_t;
 typedef struct { long quot, rem; } ldiv_t;
 typedef struct { long long quot, rem; } lldiv_t;

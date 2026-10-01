@@ -1,0 +1,72 @@
+diff --git a/include/v8config.h b/include/v8config.h
+index 7f75a2c..2825242 100644
+--- a/include/v8config.h
++++ b/include/v8config.h
+@@ -93,6 +93,7 @@ path. Add it with -I<path> to the command line
+ //  V8_OS_SOLARIS       - Sun Solaris and OpenSolaris
+ //  V8_OS_STARBOARD     - Starboard (platform abstraction for Cobalt)
+ //  V8_OS_AIX           - AIX
++//  V8_OS_ALOS          - ALOS (Alexy Operating System)
+ //  V8_OS_WIN           - Microsoft Windows
+ //  V8_OS_ZOS           - z/OS
+ 
+@@ -175,6 +176,11 @@ path. Add it with -I<path> to the command line
+ # define V8_OS_QNX 1
+ # define V8_OS_STRING "qnx"
+ 
++#elif defined(__ALOS__)
++# define V8_OS_ALOS 1
++# define V8_OS_POSIX 1
++# define V8_OS_STRING "alos"
++
+ #elif defined(_WIN32)
+ # define V8_OS_WIN 1
+ # define V8_OS_STRING "windows"
+@@ -196,6 +202,7 @@ path. Add it with -I<path> to the command line
+ //  V8_TARGET_OS_MACOS
+ //  V8_TARGET_OS_WIN
+ //  V8_TARGET_OS_CHROMEOS
++//  V8_TARGET_OS_ALOS
+ //
+ // If not set explicitly, these fall back to corresponding V8_OS_ values.
+ 
+@@ -209,7 +216,8 @@ path. Add it with -I<path> to the command line
+   && !defined(V8_TARGET_OS_LINUX) \
+   && !defined(V8_TARGET_OS_MACOS) \
+   && !defined(V8_TARGET_OS_WIN) \
+-  && !defined(V8_TARGET_OS_CHROMEOS)
++  && !defined(V8_TARGET_OS_CHROMEOS) \
++  && !defined(V8_TARGET_OS_ALOS)
+ #  error No known target OS defined.
+ # endif
+ 
+@@ -222,7 +230,8 @@ path. Add it with -I<path> to the command line
+   || defined(V8_TARGET_OS_LINUX) \
+   || defined(V8_TARGET_OS_MACOS) \
+   || defined(V8_TARGET_OS_WIN) \
+-  || defined(V8_TARGET_OS_CHROMEOS)
++  || defined(V8_TARGET_OS_CHROMEOS) \
++  || defined(V8_TARGET_OS_ALOS)
+ #  error A target OS is defined but V8_HAVE_TARGET_OS is unset.
+ # endif
+ 
+@@ -255,6 +264,10 @@ path. Add it with -I<path> to the command line
+ # define V8_TARGET_OS_WIN
+ #endif
+ 
++#ifdef V8_OS_ALOS
++# define V8_TARGET_OS_ALOS
++#endif
++
+ #endif  // V8_HAVE_TARGET_OS
+ 
+ #if defined(V8_TARGET_OS_ANDROID)
+@@ -269,6 +282,8 @@ path. Add it with -I<path> to the command line
+ # define V8_TARGET_OS_STRING "macos"
+ #elif defined(V8_TARGET_OS_WINDOWS)
+ # define V8_TARGET_OS_STRING "windows"
++#elif defined(V8_TARGET_OS_ALOS)
++# define V8_TARGET_OS_STRING "alos"
+ #else
+ # define V8_TARGET_OS_STRING "unknown"
+ #endif

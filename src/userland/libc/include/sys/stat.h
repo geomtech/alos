@@ -2,6 +2,7 @@
 #define _SYS_STAT_H
 
 #include <sys/types.h>
+#include <time.h>
 #include "../../../../include/fs_metadata.h"
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,8 @@ extern "C" {
 #define S_IROTH 0004 /* Read for others */
 #define S_IWOTH 0002 /* Write for others */
 #define S_IXOTH 0001 /* Execute for others */
+#define UTIME_NOW 1073741823L
+#define UTIME_OMIT 1073741822L
 
 /**
  * mkdir() - Crée un répertoire via SYS_MKDIR.
@@ -48,6 +51,10 @@ extern "C" {
 int mkdir(const char *pathname, ...);
 int fstatat(int dirfd, const char *path, struct stat *output, int flags);
 int chmod(const char *path, mode_t mode);
+int fchmod(int fd, mode_t mode);
+int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
+int futimens(int fd, const struct timespec times[2]);
+int utimensat(int dirfd, const char *path, const struct timespec times[2], int flags);
 int stat(const char *, struct stat *);
 int lstat(const char *, struct stat *);
 int fstat(int, struct stat *);

@@ -2,9 +2,12 @@
 #include <stdio.h>
 
 typedef unsigned __int128 wide_t;
+typedef __int128 signed_wide_t;
 extern wide_t __udivti3(wide_t, wide_t);
 extern wide_t __umodti3(wide_t, wide_t);
 extern wide_t __udivmodti4(wide_t, wide_t, wide_t *);
+extern signed_wide_t __divti3(signed_wide_t, signed_wide_t);
+extern signed_wide_t __modti3(signed_wide_t, signed_wide_t);
 
 static int check(wide_t n, wide_t d, wide_t q, wide_t r) {
   wide_t remainder;
@@ -22,6 +25,13 @@ int main(void) {
       !check(maximum, ((wide_t)1 << 64) + 1, UINT64_MAX, 0) ||
       !check(high + (high >> 1) + 7, high + 9, 1, (high >> 1) - 2)) {
     puts("int128-runtime-test: FAIL limits");
+    return 1;
+  }
+  if (__divti3(-1234567890123456789LL, 97) != -12727504021891307LL ||
+      __modti3(-1234567890123456789LL, 97) != -10 ||
+      __divti3(1234567890123456789LL, -97) != -12727504021891307LL ||
+      __modti3(1234567890123456789LL, -97) != 10) {
+    puts("int128-runtime-test: FAIL signed");
     return 1;
   }
   for (unsigned i = 0; i < 128; i += 7) {

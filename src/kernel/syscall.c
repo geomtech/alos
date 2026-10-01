@@ -1542,6 +1542,7 @@ static void *sys_brk(void *addr) {
           pmm_free_block(phys_virt);
           return (void *)-1;
         }
+        process_note_resident_pages(proc, 1);
 
         /* Zero out new memory for security
          * We need to zero it in the process's address space, not kernel's.
@@ -1565,18 +1566,13 @@ static void *sys_brk(void *addr) {
     if (new_page_aligned < old_page_aligned) {
       uint64_t pages_to_free =
           (old_page_aligned - new_page_aligned) / PAGE_SIZE;
-
-      for (uint64_t i = 0; i < pages_to_free; i++) {
-        uint64_t virt = new_page_aligned + (i * PAGE_SIZE);
-        /* Note: vmm_unmap_page usually doesn't free physical memory in simple
-         * VMMs */
-        /* Ideally we should free the physical frame back to PMM */
-        uint64_t phys = vmm_get_physical(virt);
-        if (phys) {
-          pmm_free_block((void *)phys);
-          vmm_unmap_page(virt);
-        }
-      }
+      uint64_t released =
+          vmm_resident_pages((page_directory_t *)proc->pml4, new_page_aligned,
+                             old_page_aligned);
+      vmm_update_range((page_directory_t *)proc->pml4, new_page_aligned,
+                       old_page_aligned, 0, true);
+      process_note_resident_pages(proc, -(int64_t)released);
+      (void)pages_to_free;
     }
   }
 
@@ -1710,6 +1706,9 @@ void syscall_dispatcher(syscall_regs_t *regs) {
     break;
   case SYS_THREAD_NICE:
     result = sys_thread_nice((int)regs->rdi, (int)regs->rsi, (int *)regs->rdx);
+    break;
+  case SYS_RESOURCE_USAGE:
+    result = sys_resource_usage((int)regs->rdi, (alos_rusage_t *)regs->rsi);
     break;
   case SYS_STATVFS:
     result = sys_statvfs((const char *)regs->rdi, (struct statvfs *)regs->rsi);

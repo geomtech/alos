@@ -1,0 +1,12 @@
+mkdir /metadata-fixture
+mkdir /posix-test
+mkdir /metadata-fixture/empty
+write /artifacts/metadata-payload /metadata-fixture/payload
+set_inode_field /metadata-fixture/payload mode 0100640
+set_inode_field /metadata-fixture/payload uid 42
+set_inode_field /metadata-fixture/payload gid 43
+set_inode_field /metadata-fixture/payload atime 1700000001
+set_inode_field /metadata-fixture/payload mtime 1700000002
+set_inode_field /metadata-fixture/payload ctime 1700000003
+write /artifacts/metadata-malformed /metadata-fixture/malformed
+set_inode_field /metadata-fixture/malformed mode 040755

@@ -39,6 +39,7 @@ int ipc_receive_owned(ipc_endpoint_t *, void *, uint32_t, uint32_t *, void **);
 bool ipc_read_ready(void *);
 bool ipc_write_ready(void *);
 bool ipc_peer_closed(ipc_endpoint_t *);
+int ipc_poll(ipc_endpoint_t *, short);
 ipc_endpoint_t *ipc_peer_endpoint(ipc_endpoint_t *);
 void ipc_visit_owned(ipc_endpoint_t *, void (*)(void *, void *), void *);
 struct wait_queue *ipc_waitqueue(ipc_endpoint_t *);

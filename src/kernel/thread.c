@@ -1706,6 +1706,7 @@ static void reaper_thread_func(void *arg) {
     process_t *orphan_process = NULL;
     if (zombie->owner) {
       process_t *proc = zombie->owner;
+      proc->exited_thread_cpu_ms += thread_get_cpu_time_ms(zombie);
       thread_t **link = &proc->thread_list;
       while (*link && *link != zombie) link = &(*link)->proc_next;
       if (*link) *link = zombie->proc_next;

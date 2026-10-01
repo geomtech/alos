@@ -110,7 +110,7 @@ void ipc_endpoint_release(ipc_endpoint_t *endpoint) {
     wait_queue_wake_all(&peer->wait_queue);
   }
   spinlock_irqrestore(&g_ipc_lock, flags);
-  if (endpoint->stream) file_poll_notify();
+  file_poll_notify();
 
   ipc_endpoint_t *pending = endpoint->pending_head;
   while (pending != NULL) {
@@ -213,6 +213,7 @@ ipc_endpoint_t *ipc_connect(const char *name) {
   listener->pending_tail = server;
   wait_queue_wake_all(&listener->wait_queue);
   spinlock_irqrestore(&g_ipc_lock, flags);
+  file_poll_notify();
   return client;
 }
 
@@ -293,6 +294,7 @@ int ipc_send(ipc_endpoint_t *endpoint, const void *data, uint32_t length,
   spinlock_irqrestore(&peer->queue_lock, queue_flags);
   wait_queue_wake_all(&peer->wait_queue);
   ipc_endpoint_release(peer);
+  file_poll_notify();
   return 0;
 }
 
@@ -342,6 +344,7 @@ int ipc_receive(ipc_endpoint_t *endpoint, void *data, uint32_t capacity,
   *attachment = packet->attachment;
   packet->attachment = NULL;
   packet_destroy(packet);
+  file_poll_notify();
   return 1;
 }
 
@@ -456,6 +459,22 @@ wait_queue_t *ipc_waitqueue(ipc_endpoint_t *endpoint) {
 
 bool ipc_peer_closed(ipc_endpoint_t *endpoint) {
   return endpoint->peer_closed;
+}
+
+/* Etat poll(2) d'un endpoint message (bits ALOS : 1=IN, 4=OUT, 16=HUP). */
+int ipc_poll(ipc_endpoint_t *endpoint, short events) {
+  if (endpoint == NULL) return 32; /* POLLNVAL */
+  int ready = 0;
+  uint64_t flags = spinlock_irqsave(&g_ipc_lock);
+  if (endpoint->listener) {
+    if (endpoint->pending_head != NULL) ready |= events & 1;
+  } else {
+    if (endpoint->queue_head != NULL) ready |= events & 1;
+    if (endpoint->peer_closed || endpoint->peer == NULL) ready |= 16;
+    else if (endpoint->peer->queue_depth < IPC_QUEUE_DEPTH) ready |= events & 4;
+  }
+  spinlock_irqrestore(&g_ipc_lock, flags);
+  return ready;
 }
 
 ipc_endpoint_t *ipc_peer_endpoint(ipc_endpoint_t *endpoint) {
