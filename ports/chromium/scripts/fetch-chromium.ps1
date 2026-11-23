@@ -104,6 +104,9 @@ $deps = @(
     # Conversion double -> chaine de V8 (v8/src/numbers/conversions.cc).
     @{ Path = "third_party/dragonbox/src"; Url = "https://chromium.googlesource.com/external/github.com/jk-jeon/dragonbox.git";
        Rev = "6c7c925b571d54486b9ffae8d9d18a822801cbda"; Sparse = $null },
+    # Parsing chaine -> double de V8 (v8/src/numbers/conversions.cc).
+    @{ Path = "third_party/fast_float/src"; Url = "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float.git";
+       Rev = "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4"; Sparse = $null },
     @{ Path = "third_party/cast_core/public/src"; Url = "https://chromium.googlesource.com/cast_core/public";
        Rev = "f5ee589bdaea60418f670fa176be15ccb9a34942"; Sparse = $null },
     @{ Path = "third_party/catapult"; Url = "https://chromium.googlesource.com/catapult.git";

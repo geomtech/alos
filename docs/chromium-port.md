@@ -1217,3 +1217,22 @@ vm-suite-complete
 
 Le smoke exerce `Vec`, `String` et un `thread_local!` Rust depuis deux pthreads
 natifs ALOS plus le thread principal.
+
+### Build V8 `out/alos-v8full` (passe 5, 2026-11-23)
+
+`ninja -k 0 v8:v8 v8:run_mksnapshot_default` : passage de 41 echecs a 0 echec
+(2646 actions du graphe hote + cible, puis 8 actions de reprise). Le dernier
+manque etait le checkout `third_party/fast_float/src` (`conversions.cc` ne
+trouvait pas `fast_float.h`) ; il est ajoute a `fetch-chromium.ps1` a la
+revision de la DEPS Chromium 140 (`cb1d42aa...`).
+
+Observe : les outils hote `clang_x64/torque` et `clang_x64/mksnapshot` sont
+construits, `snapshot_blob.bin` et `gen/v8/embedded.S` sont generes, et
+`libv8_libbase.a`/`libv8_libplatform.a` existent pour la cible ALOS.
+
+Limites : `v8:gn_all` n'est pas construit (ses fuzzers exigent des sources
+absentes du checkout partiel, ce qui n'est pas un manque ALOS). Rien n'est lie
+en executable ALOS ni execute sous QEMU ; `snapshot_blob.bin` est produit par
+l'outil hote. Ce jalon ne prouve donc ni execution de V8, ni JIT, ni WebAssembly
+sur ALOS. Etape suivante : lier un `d8`/shell V8 minimal et le lancer sous
+QEMU (`test-vm.ps1`), en traitant les symboles libc/noyau manquants au link.
