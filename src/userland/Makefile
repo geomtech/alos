@@ -55,9 +55,10 @@ CMD_BINS = $(addprefix $(BIN_DIR)/, $(CMDS))
 
 LIBGUI_OBJ = libgui/gui.o libgui/draw.o
 LIBGUI = libgui/libgui.a
+BROWSER_OBJ = browser/main.o browser/url.o browser/http.o browser/html.o browser/render.o gui/fonts/roboto.o
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo browser sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 all: env-test uname-test
@@ -187,6 +188,16 @@ desktop_app: libc_build $(LIBM) $(DESKTOP_OBJ)
 gui-demo: libc_build $(LIBM) gui-demo.o $(LIBGUI)
 	$(LD) -T linker.ld -o gui-demo $(CRT0) gui-demo.o $(LIBGUI) $(RUNTIME_LIBS)
 
+# Tests du moteur web sur l'hote (gcc natif, ASan/UBSan) : make browser-host-test
+browser-host-test:
+	gcc -std=gnu99 -Wall -Wextra -g -fsanitize=address,undefined -o browser/web-test browser/web-test.c browser/url.c browser/http.c browser/html.c browser/render.c gui/fonts/roboto.c
+	./browser/web-test
+
+.PHONY: browser-host-test
+
+browser: libc_build $(LIBM) $(LIBGUI) $(BROWSER_OBJ)
+	$(LD) -T linker.ld -o browser/browser $(CRT0) $(BROWSER_OBJ) $(LIBGUI) $(RUNTIME_LIBS)
+
 cmd/%.o: cmd/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -214,7 +225,7 @@ clean:
 	rm -f int128-runtime-test
 	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
 	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
-	rm -f sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
+	rm -f browser/browser browser/*.o browser/web-test sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean
 
