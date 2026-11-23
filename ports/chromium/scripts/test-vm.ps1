@@ -8,6 +8,7 @@ param(
     [switch]$DnsOnly,
     [string]$BaseSmokePath,
     [string]$RustSmokePath,
+    [string]$V8SmokePath,
     [string]$MojoSmokePath,
     [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
@@ -32,7 +33,7 @@ if ($StackProtectorOnly -and ($Runtime -or $ComplexCpp)) {
 if ($BaseSmokePath -and $BaseNativeDirectory) {
     throw "Choisir BaseSmokePath ou BaseNativeDirectory."
 }
-$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory -or $RustSmokePath)
+$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory -or $RustSmokePath -or $V8SmokePath)
 if ($MojoSmokePath -and ($hasBaseSmoke -or $Runtime -or $Fleet -or $ComplexCpp -or
     $StackProtectorOnly -or $UnixSocketOnly -or $EntropyUnavailable)) {
     throw "MojoSmokePath est une suite isolee avec source d'entropie reelle."
@@ -184,6 +185,10 @@ if ($hasNativeSmoke) {
             $basePrograms[0].Name = "chromium-mojo-bindings-smoke"
             $basePrograms[0].Marker = "chromium-mojo-bindings-smoke: PASS"
         }
+    } elseif ($V8SmokePath) {
+        # v8_hello_world (sample V8 officiel) : cree un isolate et evalue du JS.
+        $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $V8SmokePath).Path
+            Name = "v8-hello-world"; Marker = "Hello, World!" })
     } elseif ($RustSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $RustSmokePath).Path
             Name = "chromium-rust-smoke"; Marker = "chromium-rust-smoke: PASS" })
@@ -214,10 +219,14 @@ if ($hasNativeSmoke) {
                 Name = $test.Name; Marker = $test.Marker }
         }
     }
+    if ($V8SmokePath) {
+        # Le snapshot V8 externe est cherche a cote de l'executable / du cwd.
+        Copy-Item -LiteralPath (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin") -Destination (Join-Path $output "snapshot_blob.bin")
+    }
     foreach ($program in $basePrograms) {
         Copy-Item -LiteralPath $program.Path -Destination (Join-Path $output $program.Name)
         docker run --rm -v "${output}:/artifacts" alos-runtime `
-            strip --strip-debug "/artifacts/$($program.Name)"
+            strip $(if ($V8SmokePath) { "--strip-all" } else { "--strip-debug" }) "/artifacts/$($program.Name)"
         if ($LASTEXITCODE) { throw "Strip copie smoke echoue : $($program.Name)" }
     }
     $commands = ($basePrograms | ForEach-Object { $_.Name }) -join "`n"
@@ -265,7 +274,7 @@ try {
     # de staging est donc ecrit dans le repertoire d'artefacts.
     [IO.File]::WriteAllText((Join-Path $output "stage-image.sh"), (@(
         'set -e',
-        'truncate -s 64M /artifacts/test.disk',
+        "truncate -s $(if ($V8SmokePath) { '160M' } else { '64M' }) /artifacts/test.disk",
         'mkfs.ext2 -q -F -d fs_root /artifacts/test.disk',
         'debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk',
         'debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk',
@@ -289,6 +298,7 @@ foreach ($program in $basePrograms) {
         [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), (@(
             'set -e',
             "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
+            $(if ($V8SmokePath) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
             "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
             "cmp /artifacts/$name /artifacts/verify-$name"
         ) -join "`n") + "`n")

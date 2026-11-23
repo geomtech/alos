@@ -1236,3 +1236,31 @@ en executable ALOS ni execute sous QEMU ; `snapshot_blob.bin` est produit par
 l'outil hote. Ce jalon ne prouve donc ni execution de V8, ni JIT, ni WebAssembly
 sur ALOS. Etape suivante : lier un `d8`/shell V8 minimal et le lancer sous
 QEMU (`test-vm.ps1`), en traitant les symboles libc/noyau manquants au link.
+
+#### Premier lancement de V8 sous QEMU : `v8_hello_world` (2026-11-23)
+
+`ninja v8:v8_hello_world` lie un executable statique (ELF, 307 Mo avec debug,
+45 Mo strippe) sans symbole non resolu. Il est lance sous QEMU par
+`test-vm.ps1 -V8SmokePath <v8_hello_world> -BaseSmokeOnly` (disque de test de
+160 Mo, `snapshot_blob.bin` copie a la racine). Ce n'est **pas** un succes :
+le sample n'imprime pas `Hello, World!`. Les blocages successifs, en ordre :
+
+1. `OS::SetDataReadOnly(&v8_flags)` appelait `mprotect` sur l'image ELF
+   statique, rejete par ALOS (EINVAL). Corrige dans le noyau : `vm_mprotect`
+   accepte desormais R/W/NONE sur des pages presentes de l'image
+   `[0x400000, heap_start)` ; `PROT_EXEC` y est refuse (EACCES) car l'image
+   n'est pas un mapping suivi. Couvert par `mmap-test: image-mprotect PASS`
+   (suite VM complete verte, `qemu64`).
+2. Snapshot V8 externe introuvable : sans `snapshot_blob.bin` a cote du
+   cwd, V8 s'arrete (`Failed to deserialize the V8 snapshot blob`). Le
+   harnais le fournit maintenant.
+3. **Bloquant actuel :** V8 reserve son code range en RWX
+   (`mprotect(0x1201C0000, 0x1FFC0000, RWX)`, `code-range.cc`), ce que le
+   contrat ALOS rejette volontairement (EACCES). Il faut choisir : un build V8
+   sans JIT (`v8_enable_lite_mode`, sans WebAssembly ni TurboFan), ou une
+   politique W^X cote ALOS permettant a V8 de basculer RW<->RX. Aucun des deux
+   n'est fait ; RWX n'a pas ete autorise.
+
+Observe aussi : l'abort V8 (`FATAL`) se termine par une faute de page sur
+`0x7FFFFFFFE000` (sommet de pile), probablement dans la collecte de pile
+brute ; non investigue.

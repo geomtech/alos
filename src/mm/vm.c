@@ -24,6 +24,9 @@ typedef struct vm_area {
   struct vm_area *next;
 } vm_area_t;
 
+/* Base du premier segment PT_LOAD des ELF statiques ALOS. */
+#define USER_IMAGE_BASE 0x400000ULL
+
 static int protection_valid(int prot) {
   if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -EINVAL;
   if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
@@ -381,6 +384,21 @@ int vm_mprotect(process_t *process, uint64_t address, uint64_t length,
   uint64_t end;
   int error = protection_valid(prot);
   if (error) return error;
+  if (process && address >= USER_IMAGE_BASE && address < process->heap_start) {
+    /* Image ELF statique (segments charges eagerment, hors vm_areas) :
+     * mprotect ne peut que changer R/W/NONE de pages presentes ; PROT_EXEC
+     * n'est pas accorde ici, l'image n'etant pas un mapping suivi. */
+    if (prot & PROT_EXEC) return -EACCES;
+    if (length == 0 || (address & (PAGE_SIZE - 1)) ||
+        length > process->heap_start - address) return -EINVAL;
+    end = address + PAGE_ALIGN_UP(length);
+    if (end > process->heap_start) return -ENOMEM;
+    page_directory_t *dir = (page_directory_t *)process->pml4;
+    if (vmm_resident_pages(dir, address, end) != (end - address) / PAGE_SIZE)
+      return -ENOMEM;
+    vmm_update_range(dir, address, end, page_flags(prot), false);
+    return 0;
+  }
   if (!process || !range_valid(address, length, &end)) return -EINVAL;
   if (!range_covered(process, address, end)) return -ENOMEM;
   for (vm_area_t *area = process->vm_areas; area; area = area->next) {

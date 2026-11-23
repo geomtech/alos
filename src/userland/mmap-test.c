@@ -386,6 +386,32 @@ static int errno_thread_test(void) {
   return 0;
 }
 
+/* mprotect sur l'image ELF statique (page .data alignee), comme V8 le fait
+ * pour v8_flags : R/W/NONE accepte, PROT_EXEC et plages hors image refusees. */
+static unsigned char image_page[2 * PAGE] __attribute__((aligned(4096)));
+
+static int image_protect_test(void) {
+  unsigned char *page = image_page;
+  page[0] = 7;
+  CHECK(mprotect(page, PAGE, PROT_READ) == 0 && page[0] == 7);
+  CHECK(mprotect(page, PAGE, PROT_READ | PROT_EXEC) == -1 && errno == EACCES);
+  CHECK(mprotect(page, PAGE, PROT_READ | PROT_WRITE) == 0);
+  page[0] = 9;
+  CHECK(page[0] == 9);
+  pid_t child = fork();
+  if (child == 0) {
+    CHECK(mprotect(page, PAGE, PROT_READ) == 0);
+    page[0] = 1; /* faute attendue : page en lecture seule */
+    _exit(0);
+  }
+  CHECK(child > 0);
+  int status = 0;
+  CHECK(waitpid(child, &status, 0) == child && status != 0);
+  CHECK(page[0] == 9);
+  puts("mmap-test: image-mprotect PASS");
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 3 && strcmp(argv[1], "exec-probe") == 0) {
     uint64_t address = 0;
@@ -399,7 +425,7 @@ int main(int argc, char **argv) {
   /* Initialiser errno avant de mesurer les allocations physiques. */
   errno = 0;
   CHECK(sysconf(_SC_PAGESIZE) == PAGE);
-  if (reservation_test() || protection_test() || partial_test() ||
+  if (image_protect_test() || reservation_test() || protection_test() || partial_test() ||
       shared_test() || file_test() || lifecycle_test() || ipc_mapping_test() ||
       errno_thread_test()) return 1;
   puts("mmap-test: ALL PASS");
