@@ -1264,3 +1264,21 @@ le sample n'imprime pas `Hello, World!`. Les blocages successifs, en ordre :
 Observe aussi : l'abort V8 (`FATAL`) se termine par une faute de page sur
 `0x7FFFFFFFE000` (sommet de pile), probablement dans la collecte de pile
 brute ; non investigue.
+
+#### W^X et code range V8 (2026-11-24)
+
+Le noyau ALOS accepte deja le cycle W^X par page : mapping RW, ecriture du
+code machine, `mprotect` RX, appel, retour RW. `mmap-test: wx-code PASS`
+(suite VM verte, `qemu64`) le couvre, avec RWX refuse pour `mmap` et
+`mprotect`.
+
+V8 14.0 (Chromium 140) n'offre pas de mode equivalent sur Linux/x64 : il
+n'existe plus de `--write-protect-code-memory` ; le code range est reserve puis
+recommite en `kReadWriteExecute` (`code-range.cc`, `memory-allocator.cc`), et
+`RwxMemoryWriteScope` n'agit qu'avec pthread-JIT-write-protect (Apple), BeCore
+ou `ThreadIsolation` (cles memoire x86 pkeys, absentes d'ALOS). Seul `jitless`
+passe les pages de code en RW. Faire basculer RW<->RX par page imposerait de
+patcher tous les sites d'ecriture du code (compilateurs, Sparkplug, deopt,
+patching, embedded blob) ; ce n'est pas un reglage ni un petit patch, et rien
+n'est fait a ce stade. `v8_hello_world` complet reste donc bloque sur le
+`mprotect` RWX du code range.

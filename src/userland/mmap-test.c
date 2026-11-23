@@ -412,6 +412,28 @@ static int image_protect_test(void) {
   return 0;
 }
 
+/* W^X : code machine ecrit dans un mapping RW puis execute apres mprotect RX ;
+ * RWX simultane reste refuse (mmap et mprotect). */
+static int wx_code_test(void) {
+  static const unsigned char code[] = {0xb8, 42, 0, 0, 0, 0xc3}; /* mov eax,42; ret */
+  CHECK(mmap(NULL, PAGE, PROT_READ | PROT_WRITE | PROT_EXEC,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED);
+  unsigned char *p = mmap(NULL, PAGE, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  CHECK(p != MAP_FAILED);
+  memcpy(p, code, sizeof(code));
+  CHECK(mprotect(p, PAGE, PROT_READ | PROT_WRITE | PROT_EXEC) == -1);
+  CHECK(mprotect(p, PAGE, PROT_READ | PROT_EXEC) == 0);
+  CHECK(((int (*)(void))p)() == 42);
+  CHECK(mprotect(p, PAGE, PROT_READ | PROT_WRITE) == 0);
+  p[1] = 7;
+  CHECK(mprotect(p, PAGE, PROT_READ | PROT_EXEC) == 0);
+  CHECK(((int (*)(void))p)() == 7);
+  CHECK(munmap(p, PAGE) == 0);
+  puts("mmap-test: wx-code PASS");
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 3 && strcmp(argv[1], "exec-probe") == 0) {
     uint64_t address = 0;
@@ -425,7 +447,7 @@ int main(int argc, char **argv) {
   /* Initialiser errno avant de mesurer les allocations physiques. */
   errno = 0;
   CHECK(sysconf(_SC_PAGESIZE) == PAGE);
-  if (image_protect_test() || reservation_test() || protection_test() || partial_test() ||
+  if (image_protect_test() || wx_code_test() || reservation_test() || protection_test() || partial_test() ||
       shared_test() || file_test() || lifecycle_test() || ipc_mapping_test() ||
       errno_thread_test()) return 1;
   puts("mmap-test: ALL PASS");
