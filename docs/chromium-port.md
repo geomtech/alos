@@ -1,5 +1,7 @@
 # Port Chromium : etat reel
 
+> Etape intermediaire disponible : un navigateur minimal natif (`/bin/browser`, moteur `alosweb`) affiche deja des pages web sous ALOS, en attendant Chromium. Voir `docs/browser.md`.
+
 La cible Chromium complete, Blink et V8 ne sont **pas encore construits,
 lies ni executes sous ALOS**. GN produit un graphe experimental et Ninja
 compile de vrais objets de `//base` et de ses dependances.

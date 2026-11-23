@@ -389,6 +389,7 @@ fs_root: disk_structure userland
 	@cp -v src/userland/gui-test fs_root/bin/gui-test
 	@cp -v src/userland/desktop_app fs_root/bin/gui
 	@cp -v src/userland/gui-demo fs_root/bin/gui-demo
+	@cp -v src/userland/browser/browser fs_root/bin/browser
 	@cp -v src/userland/bin/* fs_root/bin/
 
 verify-gui-staging: fs_root

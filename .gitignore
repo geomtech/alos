@@ -10,3 +10,5 @@ serial.log
 busybox*
 /src/userland/gui_app
 /essence-master
+/src/userland/browser/browser
+/src/userland/browser/web-test
