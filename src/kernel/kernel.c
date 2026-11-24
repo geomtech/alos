@@ -22,6 +22,7 @@
 #include "../net/l3/route.h"
 #include "../net/l4/dhcp.h"
 #include "../drivers/virtio_rng.h"
+#include "../drivers/virtio_gpu.h"
 #include "../include/errno.h"
 #include "../net/l4/dns.h"
 #include "../net/l4/tcp.h"
@@ -425,6 +426,13 @@ void kmain(void) {
   else {
     KLOG_ERROR("RNG", "VirtIO RNG initialization failed");
     KLOG_ERROR_HEX("RNG", "Initialization errno: ", (uint32_t)-rng_status);
+  }
+
+  /* VirtIO GPU 2D (virtio-gpu-pci uniquement ; virtio-vga reste au framebuffer). */
+  int gpu_status = virtio_gpu_init();
+  if (!gpu_status) virtio_gpu_selftest();
+  else if (gpu_status != -ENOSYS && gpu_status != -ENOTSUP) {
+    KLOG_ERROR_HEX("VGPU", "Initialization errno: ", (uint32_t)-gpu_status);
   }
 
   if (mouse_init() == 0) {

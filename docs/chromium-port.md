@@ -1342,3 +1342,34 @@ TurboFan et le tier-up OSR s'executent sur ALOS dans les deux profils CPU.
 `--always-sparkplug` est accepte sans erreur, mais ce trace n'enregistre pas
 Sparkplug : son execution n'est pas demontree. Non couverts : WebAssembly (non execute ; le gestionnaire de traps
 repose sur des signaux), charge longue/GC sous pression, tests V8 officiels.
+
+### GPU : pilote virtio-gpu 2D (2026-11-24)
+
+Avant ce jalon ALOS n'avait aucun pilote GPU : l'affichage passe par le
+framebuffer Limine et le desktop userland dessine en SHM ARGB. Premier etage
+d'une pile GPU pour Chromium : `src/drivers/virtio_gpu.c`/`.h`.
+
+Perimetre : PCI **modern** (`1af4:1050`, `VIRTIO_F_VERSION_1` negocie, aucune
+feature 3D/EDID/blob), controlq unique **pollee** (INTx coupe dans PCI COMMAND :
+sans cela la ligne IRQ partagee avec virtio-net n'est jamais acquittee et le
+handler reseau boucle), `GET_DISPLAY_INFO`, ressource 2D `B8G8R8X8`,
+`ATTACH_BACKING` sur une memoire physique contigue, `SET_SCANOUT`,
+`TRANSFER_TO_HOST_2D` + `RESOURCE_FLUSH` (`virtio_gpu_flush`). Le pilote
+ecrit directement sur les capabilities modern car le transport generique stocke
+des adresses 32 bits et ne negocie pas VERSION_1 ; les registres de queue sont
+ecrits en 32 bits (les acces 64 bits sont refuses par QEMU).
+`virtio-vga` (classe VGA) est volontairement **laisse** au framebuffer Limine.
+Au boot, si `virtio-gpu-pci` est present, un auto-test dessine un fond
+`0x000040C0` et un rectangle rouge `[64,64,256,128]`.
+
+Test : `.\ports\chromium\scripts\test-gpu.ps1` lance QEMU avec
+`-device virtio-gpu-pci,id=gpu0`, capture le scanout par QMP `screendump`
+et verifie des pixels cote hote. Observe : `scanout 1280x800`, pixel
+(100,100)=255,0,0, fond 0,64,192 aux deux coins, `virtio-gpu 2D PASS`
+(`qemu64`).
+
+Limites : pas d'IRQ, pas de curseur, pas de redimensionnement dynamique ni
+d'EDID, pas de 3D (virgl/venus), un seul scanout/ressource, backing contigu
+(echec propre si la memoire est fragmentee), pas encore expose a l'userland :
+le desktop utilise toujours le framebuffer Limine. Non teste sur VirtualBox ni
+materiel reel (virtio-gpu y est absent/different).
