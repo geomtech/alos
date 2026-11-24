@@ -37,7 +37,20 @@ if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("a
 $outDirectory = if ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
 $rustEnabled = $Rust -or $OzoneProbe
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
-$src = (Resolve-Path $ChromiumDirectory).Path
+$src = (Resolve-Path $ChromiumDirectory).ProviderPath
+# Mode ext4 : ChromiumDirectory est un volume Docker vu depuis Windows
+# (\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\<nom>\_data).
+# Les operations hote (git, copies de gabarits) passent par ce chemin UNC (peu de
+# fichiers) ; les builds montent le volume natif, ainsi que les volumes
+# alos-libcxx et alos-repo : les en-tetes lus sur un bind-mount NTFS coutent
+# ~4,6 s par compilation (mesure), contre ~0,01 s sur ext4. Voir BUILD-SPEED.md.
+$ext4Volume = $null
+if ($src.Replace([string][char]92, '/') -match '^//wsl(\.localhost|\$)/docker-desktop/mnt/docker-desktop-disk/data/docker/volumes/([^/]+)/_data') {
+    $ext4Volume = $Matches[2]
+    $env:GIT_CONFIG_COUNT = "1"
+    $env:GIT_CONFIG_KEY_0 = "safe.directory"
+    $env:GIT_CONFIG_VALUE_0 = "*"
+}
 $revision = & git -C $src rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or
     $revision.Trim() -ne "670b6f192f4668d2ac2c06bd77ec3e4eeda7d648") {
@@ -366,8 +379,28 @@ if ($Ccache) {
         "-e", "CCACHE_BASEDIR=/chromium", "-e", "CCACHE_MAXSIZE=30G",
         "-e", "CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime,pch_defines")
 }
-$mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",
-            "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro") + $ccacheMounts + @(
+$srcMount = "${src}:/chromium"
+$libcxxMount = "${libcxx}:/libcxx:ro"
+$repoMount = "${repo}:/alos:ro"
+if ($ext4Volume) {
+    $srcMount = "${ext4Volume}:/chromium"
+    $libcxxMount = "alos-libcxx:/libcxx:ro"
+    $repoMount = "alos-repo:/alos:ro"
+    foreach ($volume in @("alos-libcxx", "alos-repo")) { & docker volume create $volume | Out-Null }
+    # libc++ ALOS : copie unique (contenu statique) du dossier hote vers le volume.
+    & docker run --rm -v "alos-libcxx:/d" alos-runtime sh -c "test -e /d/lib/libc++.a"
+    if ($LASTEXITCODE) {
+        & docker run --rm -v "${libcxx}:/s:ro" -v "alos-libcxx:/d" alos-runtime sh -c "cp -a /s/. /d/"
+        if ($LASTEXITCODE) { throw "Copie de libc++ vers le volume alos-libcxx echouee." }
+    }
+    # Depot ALOS : seuls les dossiers lus par le build sont synchronises (libc,
+    # libm, libgui, en-tetes noyau/ABI, ports/chromium) vers alos-repo.
+    & docker run --rm -v "${repo}:/s:ro" -v "alos-repo:/d" alos-runtime sh -c `
+        "cd /s && tar cf - src/include src/userland/libc src/userland/libm src/userland/libgui ports/chromium | (cd /d && tar xf -)"
+    if ($LASTEXITCODE) { throw "Synchronisation du depot ALOS vers alos-repo echouee." }
+}
+$mounts = @("run", "--rm", "-v", $srcMount, "-v", "${gn}:/gn:ro",
+            "-v", $libcxxMount, "-v", $repoMount) + $ccacheMounts + @(
             "-w", "/chromium", $dockerImage)
 $generate = @("/gn/gn", "gen", $outDirectory)
 if ($MojoBindings) {

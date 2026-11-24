@@ -1545,3 +1545,17 @@ reconstruisant l'etat precedent) : `base-math-test` (`ldexpl(1, 16384)` sans
 `errno == ERANGE`), `native-compat-test` (`ldexpf` ERANGE, tests 40 et 42),
 `ipc-poll-test` (`poll_one(...)` errno 95). Non traites ici ; ils concernent
 libm/poll, pas le modele de threads.
+
+#### Builds Chromium sur ext4 : 3x plus rapides (2026-11-24)
+
+Mesure sur `base:base` (2549 actions, 16 CPU / 16 Go Docker) : le checkout,
+`out/`, `/libcxx` et `/alos` etaient des bind-mounts NTFS ; l'E/S des en-tetes
+etait le goulot (une compilation servie par ccache : 4,6 s, 0,011 s sur ext4).
+Tout sur volumes Docker ext4 : 277 s sans cache (contre ~848 s), 6 s avec ccache
+chaud. `build-chromium.ps1` accepte desormais un `-ChromiumDirectory` pointant un
+volume Docker (chemin UNC `\wsl$\docker-desktop\...\volumes\<nom>\_data`) ;
+`migrate-checkout-ext4.ps1` fait la copie ; `symbol_level=0`, `-Jobs 14`
+et `-Ccache` sont les nouveaux defauts/options. Detail, chiffres et limites :
+`ports/chromium/BUILD-SPEED.md`. Valide : Skia (`-Skia -Ccache`) construit depuis
+le volume puis execute sous QEMU (PASS identique). L'ancien checkout NTFS est
+conserve.
