@@ -162,6 +162,7 @@ exec-test
 threads-test
 ls /bin
 ping 10.0.2.2 -c 1
+net-info-test
 echo vm-suite-complete
 "@
 }

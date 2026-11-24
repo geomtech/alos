@@ -1,0 +1,21 @@
+assert(is_alos, "This executable targets native ALOS only.")
+
+set_defaults("executable") {
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}
+
+executable("net_http_smoke") {
+  sources = [ "net-http-smoke.cc" ]
+  deps = [
+    "//base",
+    "//net",
+    "//url",
+  ]
+}

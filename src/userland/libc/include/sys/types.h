@@ -12,6 +12,11 @@ typedef uint32_t gid_t;
 typedef uint32_t id_t;
 typedef int64_t time_t;
 typedef uint32_t useconds_t;
+/* Types BSD historiques (utilises par du code reseau tiers). */
+typedef unsigned char u_char;
+typedef unsigned short u_short;
+typedef unsigned int u_int;
+typedef unsigned long u_long;
 typedef uint64_t dev_t;
 typedef uint64_t ino_t;
 typedef uint64_t nlink_t;

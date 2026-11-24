@@ -1,0 +1,36 @@
+diff --git a/net/BUILD.gn b/net/BUILD.gn
+index 5af55015bd..deb92165fa 100644
+--- a/net/BUILD.gn
++++ b/net/BUILD.gn
+@@ -1532,6 +1532,11 @@ component("net") {
+     }
+   }
+ 
++  if (is_alos) {
++    # Pas de magasin systeme : verificateur integre + TestRootCerts integre.
++    sources += [ "cert/test_root_certs_builtin.cc" ]
++  }
++
+   if (chrome_root_store_supported) {
+     sources += [
+       "cert/internal/trust_store_chrome.cc",
+diff --git a/net/cert/internal/system_trust_store.cc b/net/cert/internal/system_trust_store.cc
+index b5e7af2bae..ac4f7ee987 100644
+--- a/net/cert/internal/system_trust_store.cc
++++ b/net/cert/internal/system_trust_store.cc
+@@ -219,6 +219,15 @@ std::unique_ptr<SystemTrustStore> CreateSslSystemTrustStoreChromeRoot(
+                                   TrustStoreNSS::UseTrustFromAllUserSlots()));
+ }
+ 
++#elif BUILDFLAG(IS_ALOS)
++
++// ALOS n'a pas de magasin de certificats systeme : seule la Chrome Root Store est
++// utilisee (aucune ancre de confiance locale/utilisateur).
++std::unique_ptr<SystemTrustStore> CreateSslSystemTrustStoreChromeRoot(
++    std::unique_ptr<TrustStoreChrome> chrome_root) {
++  return CreateChromeOnlySystemTrustStore(std::move(chrome_root));
++}
++
+ #elif BUILDFLAG(IS_MAC)
+ 
+ namespace {

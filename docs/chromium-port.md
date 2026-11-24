@@ -1585,3 +1585,29 @@ Etat : les outils hote (base hote, macros Rust, cxxbridge) compilent. Reste
   resolus dans le profil `-Net` (dependances `enable_rust_cxx`).
 Il faudra donc une couche reseau ALOS (liste des interfaces, configuration DNS issue
 du noyau/DHCP, notification de changement reseau) plutot que des stubs ; non faite.
+
+#### //net sur ALOS : requete HTTP reelle (2026-11-24)
+
+`build-chromium.ps1 -Net -Ccache` (depuis le volume ext4) compile et lie
+`alos_native/net:net_http_smoke` (`ports/chromium/net/`). Le smoke ouvre un
+`URLRequestContext` (`URLRequestContextBuilder`, proxy direct fixe, `ThreadPool`,
+`SingleThreadTaskExecutor` IO) et recupere `http://10.0.2.2:8123/hello.txt` servi par
+l'hote, avec un journal NetLog imprime. Observe sous QEMU (`qemu64`) : `HostResolver`,
+pool de sockets, `HTTP_STREAM_JOB`, `TCP_CONNECT` 10.0.2.15 -> 10.0.2.2:8123,
+`HTTP/1.0 200 OK`, `net::OK`, 25 octets, `net-http-smoke: PASS`.
+
+Pour que cela fonctionne : patch `chromium-alos-net-trust-store` (magasin Chrome Root
+seul, pas de magasin systeme ; `TestRootCerts` integre), `Process::CreationTime()`
+nul (non expose par ALOS), `chrome_root_store_only`, `use_kerberos=false`, et cote
+ALOS : `SYS_NET_IFACE_INFO` + `net/if.h`/`ifaddrs.h`/`resolv.h`/`gethostname`/
+`getpeereid` (ENOTSUP), constantes et structures socket, types BSD. Deux vrais
+defauts ALOS ont ete trouves par ce smoke : `fcntl(F_SETFL, O_NONBLOCK)` etait refuse
+sur les sockets TCP (-> `ERR_NOT_IMPLEMENTED`), et `connect()` echouait en
+`EHOSTUNREACH` sur un cache ARP froid (la pile TCP n'a pas de file d'attente ARP) ;
+le noyau resout maintenant l'ARP du prochain saut (bornee a ~1 s, polling) avant le
+SYN, donc le `connect()` non bloquant bloque brievement le temps de l'ARP.
+
+Limites : HTTP en clair, IP litterale (pas de DNS reel via //net : a tester), pas de
+TLS, pas de verification de certificats testee, options socket (TOS, multicast...)
+renvoyant ENOPROTOOPT, pas de retransmission SYN complete, pas de proxy systeme
+ni de detection de changement de reseau. Serveur de test : `python -m http.server`.

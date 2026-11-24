@@ -34,7 +34,7 @@ if ($Net -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia)) 
 if ($Skia -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe)) { throw "-Skia utilise un root target dedie." }
 if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
 if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
-if ($Net -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("net:net") }
+if ($Net -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/net:net_http_smoke") }
 if ($Skia -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/skia:skia_raster_smoke") }
 if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
 $outDirectory = if ($Net) { "out/alos-net" } elseif ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
@@ -113,7 +113,8 @@ foreach ($patchName in @(
     "chromium-alos-field-trial-key.patch",
     "chromium-alos-rust-target.patch",
     "chromium-alos-rust-host-tls.patch",
-    "chromium-alos-cxxbridge-target-path.patch"
+    "chromium-alos-cxxbridge-target-path.patch",
+    "chromium-alos-net-trust-store.patch"
 )) {
     $patch = Join-Path $repo ("ports\chromium\patches\" + $patchName)
     & git -C $src apply --reverse --check $patch 2>$null
@@ -369,9 +370,15 @@ if ($V8Probe) {
     $args_gn += "`nv8_enable_temporal_support = false"
 }
 if ($Net) {
+    $netSource = Join-Path $repo "ports\chromium\net"
+    $netDestination = Join-Path $src "alos_native\net"
+    New-Item -ItemType Directory -Force $netDestination | Out-Null
+    Copy-Item -Path (Join-Path $netSource "*") -Destination $netDestination -Force
+}
+if ($Net) {
     # //net:net : graphe GN resserre (docs/chromium-port.md) : pas de Blink/UI/
     # Ozone-defauts/nss/cups ; tests neutralises par chromium-alos-skip-test-targets.patch.
-    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false`nenable_rust_cxx = true`nenable_chromium_prelude = true"
+    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false`nenable_rust_cxx = true`nenable_chromium_prelude = true`nchrome_root_store_only = true"
     $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
     $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
     $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"
@@ -424,7 +431,7 @@ if ($MojoBindings) {
 }
 if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
 if ($Skia) { $generate += "--root-target=//alos_native/skia:skia_raster_smoke" }
-if ($Net) { $generate += "--root-target=//net:net" }
+if ($Net) { $generate += "--root-target=//alos_native/net:net_http_smoke" }
 if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
 if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate

@@ -294,9 +294,11 @@ int file_table_fcntl(file_descriptor_t table[MAX_FD], int fd, int command,
         result = -ENOTSUP;
       } else if (description->type != FILE_TYPE_FILE &&
                  description->type != FILE_TYPE_PIPE &&
-                 description->type != FILE_TYPE_UNIX_SOCKET) {
+                 description->type != FILE_TYPE_UNIX_SOCKET &&
+                 description->type != FILE_TYPE_SOCKET) {
         result = -ENOTSUP;
-      } else if (description->type == FILE_TYPE_UNIX_SOCKET &&
+      } else if ((description->type == FILE_TYPE_UNIX_SOCKET ||
+                  description->type == FILE_TYPE_SOCKET) &&
                  (argument & (O_APPEND | O_SYNC))) {
         result = -ENOTSUP;
       } else {

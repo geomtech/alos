@@ -47,6 +47,7 @@ struct cmsghdr { size_t cmsg_len; int cmsg_level; int cmsg_type; };
 #define SO_KEEPALIVE ALOS_SO_KEEPALIVE
 #define SO_LINGER 13
 #define SO_REUSEPORT 15
+#define SO_BROADCAST 6
 #define SO_RCVTIMEO 20
 #define SO_SNDTIMEO 21
 #define SO_ACCEPTCONN ALOS_SO_ACCEPTCONN
@@ -56,6 +57,7 @@ struct cmsghdr { size_t cmsg_len; int cmsg_level; int cmsg_type; };
 #define MSG_WAITALL 0x100
 #define MSG_NOSIGNAL ALOS_MSG_NOSIGNAL
 #define MSG_CTRUNC 8
+#define MSG_CONFIRM 0x800 /* hint de couche 2 : accepte syntaxiquement, non implemente */
 #define MSG_TRUNC 0x20
 #define MSG_CMSG_CLOEXEC 0x40000000
 #define SCM_RIGHTS 1

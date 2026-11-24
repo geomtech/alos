@@ -2,6 +2,7 @@
  * if_indextoname, res_ninit, gethostname, getpeereid (non supporte). */
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -51,6 +52,13 @@ int main(void) {
   char host[64];
   CHECK(gethostname(host, sizeof(host)) == 0 && host[0]);
   printf("net-info-test: hostname=%s\n", host);
+
+  /* socket TCP non bloquant : requis par //net (SocketPosix::Open). */
+  int tcp = socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(tcp >= 0);
+  CHECK(fcntl(tcp, F_SETFL, O_NONBLOCK) == 0);
+  CHECK(fcntl(tcp, F_GETFL) & O_NONBLOCK);
+  close(tcp);
 
   uid_t uid; gid_t gid;
   CHECK(getpeereid(0, &uid, &gid) == -1 && errno == ENOTSUP);
