@@ -372,7 +372,7 @@ fs_root: disk_structure userland
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
 	@cp -v src/userland/mmap-test fs_root/bin/
-	@cp -v src/userland/gpu-test src/userland/desktop-gpu-test fs_root/bin/
+	@cp -v src/userland/gpu-test src/userland/desktop-gpu-test src/userland/net-info-test fs_root/bin/
 	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/pthread-rwlock-test src/userland/semaphore-test src/userland/rusage-test src/userland/pthread-attr-test src/userland/thread-id-test src/userland/calendar-test src/userland/libc-common-test src/userland/libm-complete-test src/userland/fd-io-test src/userland/fs-metadata-test src/userland/strtod-test src/userland/printf-test src/userland/wide-format-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
 	@cp -v src/userland/env-test src/userland/uname-test fs_root/bin/
 	@cp -v src/userland/posix-file-test src/userland/pipe-test src/userland/socket-test src/userland/inet-test src/userland/entropy-test fs_root/bin/

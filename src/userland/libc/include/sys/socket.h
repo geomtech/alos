@@ -89,6 +89,8 @@ int accept(int, struct sockaddr *, socklen_t *);
 int accept4(int, struct sockaddr *, socklen_t *, int);
 int getsockname(int, struct sockaddr *, socklen_t *);
 int getpeername(int, struct sockaddr *, socklen_t *);
+/* Credentials du pair AF_UNIX : non implementes (ENOTSUP), pas de succes simule. */
+int getpeereid(int, uid_t *, gid_t *);
 int getsockopt(int, int, int, void *, socklen_t *);
 int setsockopt(int, int, int, const void *, socklen_t);
 int shutdown(int, int);

@@ -22,6 +22,11 @@ struct sockaddr_in6 {
 #define IPPROTO_UDP 17
 #define IPPROTO_IPV6 41
 #define IPV6_V6ONLY 26
+#define IN6_IS_ADDR_UNSPECIFIED(a)   (((const uint32_t *)(a))[0] == 0 && ((const uint32_t *)(a))[1] == 0 &&    ((const uint32_t *)(a))[2] == 0 && ((const uint32_t *)(a))[3] == 0)
+#define IN6_IS_ADDR_LOOPBACK(a)   (((const uint32_t *)(a))[0] == 0 && ((const uint32_t *)(a))[1] == 0 &&    ((const uint32_t *)(a))[2] == 0 && ((const uint8_t *)(a))[12] == 0 &&    ((const uint8_t *)(a))[13] == 0 && ((const uint8_t *)(a))[14] == 0 &&    ((const uint8_t *)(a))[15] == 1)
+#define IN6_IS_ADDR_MULTICAST(a) (((const uint8_t *)(a))[0] == 0xff)
+#define IN6_IS_ADDR_LINKLOCAL(a)   (((const uint8_t *)(a))[0] == 0xfe && (((const uint8_t *)(a))[1] & 0xc0) == 0x80)
+#define IN6_IS_ADDR_V4MAPPED(a)   (((const uint32_t *)(a))[0] == 0 && ((const uint32_t *)(a))[1] == 0 &&    ((const uint8_t *)(a))[8] == 0 && ((const uint8_t *)(a))[9] == 0 &&    ((const uint8_t *)(a))[10] == 0xff && ((const uint8_t *)(a))[11] == 0xff)
 #define INET_ADDRSTRLEN 16
 #define INET6_ADDRSTRLEN 46
 #endif

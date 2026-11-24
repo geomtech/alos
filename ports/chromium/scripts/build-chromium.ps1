@@ -371,7 +371,7 @@ if ($V8Probe) {
 if ($Net) {
     # //net:net : graphe GN resserre (docs/chromium-port.md) : pas de Blink/UI/
     # Ozone-defauts/nss/cups ; tests neutralises par chromium-alos-skip-test-targets.patch.
-    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nenable_rust_cxx = true"
+    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false`nenable_rust_cxx = true`nenable_chromium_prelude = true"
     $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
     $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
     $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"

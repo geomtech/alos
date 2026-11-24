@@ -24,6 +24,8 @@
 #include "display.h"
 #include "../drivers/gpu/gpu.h"
 #include "../include/gpu_abi.h"
+#include "../include/net_abi.h"
+#include "../net/core/netdev.h"
 #include "ipc.h"
 #include "keyboard.h"
 #include "input.h"
@@ -719,6 +721,35 @@ static int sys_meminfo(meminfo_t *info) {
 
 /* Helper externe depuis kernel.c */
 extern struct limine_framebuffer *kernel_get_primary_framebuffer(void);
+
+/* SYS_NET_IFACE_INFO (330) : decrit l'interface d'index `index` (base 0). */
+static uint32_t netif_to_net_order(uint32_t host) {
+  return ((host & 0xffu) << 24) | ((host & 0xff00u) << 8) |
+         ((host >> 8) & 0xff00u) | (host >> 24);
+}
+
+static int sys_net_iface_info(uint64_t index, alos_netif_info_t *user_info) {
+  if (!user_info || !user_range_valid(user_info, sizeof(*user_info), true))
+    return -EFAULT;
+  NetInterface *netif = netif_get_default();
+  for (uint64_t i = 0; netif && i < index; i++) netif = netif->next;
+  if (!netif) return -ENOENT;
+  alos_netif_info_t info;
+  memset(&info, 0, sizeof(info));
+  memcpy(info.name, netif->name, sizeof(info.name) - 1);
+  memcpy(info.mac, netif->mac_addr, sizeof(info.mac));
+  info.mtu = 1500;
+  info.index = (uint32_t)index + 1;
+  if (netif->flags & NETIF_FLAG_UP) info.flags |= ALOS_NETIF_UP;
+  if (netif->flags & NETIF_FLAG_RUNNING) info.flags |= ALOS_NETIF_RUNNING;
+  if (netif->flags & NETIF_FLAG_DHCP) info.flags |= ALOS_NETIF_DHCP;
+  info.flags |= ALOS_NETIF_BROADCAST;
+  info.ipv4 = netif_to_net_order(netif->ip_addr);
+  info.netmask = netif_to_net_order(netif->netmask);
+  info.gateway = netif_to_net_order(netif->gateway);
+  info.dns = netif_to_net_order(netif->dns_server);
+  return copy_to_user(user_info, &info, sizeof(info)) ? -EFAULT : 0;
+}
 
 /* SYS_GPU_MAP (320) : mappe la surface scanout du GPU actif dans le display owner. */
 static int sys_gpu_map(alos_gpu_info_t *user_info) {
@@ -2093,6 +2124,10 @@ void syscall_dispatcher(syscall_regs_t *regs) {
   case SYS_GPU_FLUSH:
     result = sys_gpu_flush((uint32_t)regs->rdi, (uint32_t)regs->rsi,
                            (uint32_t)regs->rdx, (uint32_t)regs->r10);
+    break;
+
+  case SYS_NET_IFACE_INFO:
+    result = sys_net_iface_info(regs->rdi, (alos_netif_info_t *)regs->rsi);
     break;
 
   case SYS_GPU_QUERY:

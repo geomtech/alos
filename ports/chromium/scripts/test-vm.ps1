@@ -124,6 +124,7 @@ exec-test
 threads-test
 ls /bin
 ping 10.0.2.2 -c 1
+net-info-test
 echo vm-suite-complete
 "@
 if ($Runtime) {
@@ -507,7 +508,7 @@ try {
         -not $DnsOnly -and -not $MojoSmokePath) {
       foreach ($marker in @(
         "mmap-test: ALL PASS", "fork-test: PASS",
-        "exec-test: PASS after 40", "Compteur final", "Reply received, seq:"
+        "exec-test: PASS after 40", "Compteur final", "Reply received, seq:", "net-info-test: PASS"
     )) {
         if (-not $text.Contains($marker)) { throw "Resultat manquant '$marker' : $log" }
     }
