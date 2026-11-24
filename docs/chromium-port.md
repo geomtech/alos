@@ -1505,3 +1505,21 @@ de codecs d'image, pas de GPU. Ordre des prochaines marches (priorite
 Chromium) : base::RunLoop + V8 embarque, //net minimal, Blink headless,
 content_shell mono-processus ; le GPU (Skia GPU, virgl, autres pilotes) passe
 apres sauf exigence de Chromium.
+
+#### base::RunLoop + V8 embarque (2026-11-24)
+
+`ports/chromium/v8-runloop/` (cible `alos_native/v8_runloop:v8_runloop_smoke`,
+profil `out/alos-runloop` = args V8 complet + `use_crash_key_stubs`) embarque V8
+(isolate + libplatform + snapshot externe) dans une `base::SingleThreadTaskExecutor`.
+Un `setTimeout` natif (FunctionTemplate) poste des taches retardees ; le
+`base::RunLoop` les execute dans l'ordre des delais puis rend la main.
+Observe (`qemu64`, `test-vm.ps1 -V8SmokePath ... -V8Marker "v8-runloop-smoke: PASS"`) :
+`order=a,b,c,d elapsed_ms=63` (delais 20/40/60 ms et un timer imbrique), donc
+timers `base` (horloge monotone ALOS), pompe de messages et V8 cohabitent.
+
+`//gin` n'est pas utilise : son graphe tire (via `//ui/base`) `printing`
+(cups-config), `fontconfig` (bindgen Rust cote hote) et nss ; l'embarqueur ici est
+volontairement minimal (V8 + `v8::platform::NewDefaultPlatform` + base). Limites :
+pas de `base::ThreadPool`/TaskScheduler exerce par ce smoke, pas d'integration
+des taches V8 au RunLoop (la plateforme par defaut a ses threads), pas de
+microtasks/promesses testees.

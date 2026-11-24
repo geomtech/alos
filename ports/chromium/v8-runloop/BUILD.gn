@@ -1,0 +1,22 @@
+assert(is_alos, "This executable targets native ALOS only.")
+
+set_defaults("executable") {
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}
+
+executable("v8_runloop_smoke") {
+  sources = [ "v8-runloop-smoke.cc" ]
+  include_dirs = [ "//v8" ]
+  deps = [
+    "//base",
+    "//v8:v8",
+    "//v8:v8_libplatform",
+  ]
+}
