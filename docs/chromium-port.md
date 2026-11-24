@@ -1373,3 +1373,25 @@ d'EDID, pas de 3D (virgl/venus), un seul scanout/ressource, backing contigu
 (echec propre si la memoire est fragmentee), pas encore expose a l'userland :
 le desktop utilise toujours le framebuffer Limine. Non teste sur VirtualBox ni
 materiel reel (virtio-gpu y est absent/different).
+
+#### virtio-gpu : API userland pour le display owner (2026-11-24)
+
+Deux syscalls reserves au **display owner** (`SYS_DISPLAY_ACQUIRE`) :
+`SYS_GPU_MAP` (320) mappe en RW/NX la surface virtio-gpu a `USER_GPU_BASE`
+(`0x68000000`, dans la zone des mappings externes) et renvoie
+`alos_gpu_info_t` (`src/include/gpu_abi.h` : adresse, taille, largeur, hauteur,
+pitch, format `B8G8R8X8`) ; `SYS_GPU_FLUSH` (321) envoie un rectangle a l'hote
+(`virtio_gpu_flush`). Erreurs : `EPERM` (pas display owner), `ENODEV` (pas de
+virtio-gpu 2D), `ENOMEM`, `EINVAL` (rectangle hors surface). Wrappers libc :
+`<sys/gpu.h>` (`gpu_map`, `gpu_flush`). Le desktop officiel n'est **pas**
+encore branche dessus : il garde le framebuffer Limine, et les deux chemins
+coexistent (le virtio-gpu n'est un scanout que s'il est ajoute comme
+`virtio-gpu-pci`).
+
+Test : `test-vm.ps1 -GpuTest` lance `gpu-test` (acquiert l'affichage, mappe,
+dessine un degrade, un rectangle vert et un carre jaune, flushe, verifie le
+rejet d'un flush hors surface), puis capture le scanout par QMP `screendump`
+et controle les pixels cote hote. Observe (`qemu64`) : vert 0,255,0 ; jaune
+255,255,0 ; degrade 0,199,223 conforme ; `ALOS GPU userland PASS` ; la suite
+VM par defaut reste verte. Non fait : redimensionnement dynamique, plusieurs
+processus/surfaces, double buffering, integration du desktop et d'Ozone.

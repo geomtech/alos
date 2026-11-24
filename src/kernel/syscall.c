@@ -22,6 +22,8 @@
 #include "../shell/shell.h"
 #include "console.h"
 #include "display.h"
+#include "../drivers/virtio_gpu.h"
+#include "../include/gpu_abi.h"
 #include "ipc.h"
 #include "keyboard.h"
 #include "input.h"
@@ -717,6 +719,35 @@ static int sys_meminfo(meminfo_t *info) {
 
 /* Helper externe depuis kernel.c */
 extern struct limine_framebuffer *kernel_get_primary_framebuffer(void);
+
+/* SYS_GPU_MAP (320) : mappe la surface virtio-gpu 2D dans le display owner. */
+static int sys_gpu_map(alos_gpu_info_t *user_info) {
+  process_t *proc = process_current();
+  if (!user_info || !proc || !proc->pml4 || !display_is_owner(proc->pid) ||
+      !user_range_valid(user_info, sizeof(*user_info), true)) return -EPERM;
+  const virtio_gpu_info_t *gpu = virtio_gpu_get_info();
+  if (!gpu) return -ENODEV;
+  uint64_t size = (uint64_t)gpu->pitch * gpu->height;
+  uint64_t pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+  page_directory_t *dir = (page_directory_t *)proc->pml4;
+  for (uint64_t i = 0; i < pages; i++) {
+    uint64_t phys = gpu->phys + i * PAGE_SIZE;
+    if (vmm_map_page_in_dir(dir, phys, USER_GPU_BASE + i * PAGE_SIZE,
+                            PAGE_USER | PAGE_RW | PAGE_PRESENT | PAGE_NX) != 0)
+      return -ENOMEM;
+  }
+  alos_gpu_info_t info = {.addr = USER_GPU_BASE, .size = size,
+      .width = gpu->width, .height = gpu->height, .pitch = gpu->pitch,
+      .format = ALOS_GPU_FORMAT_B8G8R8X8};
+  return copy_to_user(user_info, &info, sizeof(info)) ? -EFAULT : 0;
+}
+
+/* SYS_GPU_FLUSH (321) : x, y, largeur, hauteur. */
+static int sys_gpu_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+  process_t *proc = process_current();
+  if (!proc || !display_is_owner(proc->pid)) return -EPERM;
+  return virtio_gpu_flush(x, y, w, h);
+}
 
 /**
  * SYS_GET_FRAMEBUFFER (110) - Obtenir les infos et mapper le framebuffer
@@ -2043,6 +2074,15 @@ void syscall_dispatcher(syscall_regs_t *regs) {
 
   case SYS_HTTPD:
     result = sys_httpd((int)regs->rdi, (int)regs->rsi);
+    break;
+
+  case SYS_GPU_MAP:
+    result = sys_gpu_map((alos_gpu_info_t *)regs->rdi);
+    break;
+
+  case SYS_GPU_FLUSH:
+    result = sys_gpu_flush((uint32_t)regs->rdi, (uint32_t)regs->rsi,
+                           (uint32_t)regs->rdx, (uint32_t)regs->r10);
     break;
 
   case SYS_GET_FRAMEBUFFER:

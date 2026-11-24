@@ -8,6 +8,8 @@ param(
     [switch]$DnsOnly,
     [string]$BaseSmokePath,
     [string]$RustSmokePath,
+    [switch]$GpuTest,
+    [int]$QmpPort = 4489,
     [string]$V8SmokePath,
     [string]$V8Script,
     [string]$V8Marker = "Hello, World!",
@@ -57,6 +59,11 @@ if ($BaseSmokeOnly -and (-not $hasBaseSmoke -or $Runtime -or $Fleet -or
 }
 if ($hasBaseSmoke -and $EntropyUnavailable) {
     throw "Le smoke Base protege exige une vraie source d'entropie."
+}
+if ($GpuTest -and ($Runtime -or $Fleet -or $ComplexCpp -or $StackProtectorOnly -or
+    $UnixSocketOnly -or $DnsOnly -or $V8SmokePath -or $BaseSmokePath -or
+    $RustSmokePath -or $MojoSmokePath -or $BaseNativeDirectory)) {
+    throw "GpuTest est une suite isolee."
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -178,6 +185,9 @@ if ($UnixSocketOnly) {
 }
 if ($DnsOnly) {
     $startup = "echo vm-suite-begin`ninet-test --dns`necho vm-suite-complete"
+}
+if ($GpuTest) {
+    $startup = "echo vm-suite-begin`ngpu-test`necho vm-suite-complete"
 }
 $basePrograms = @()
 if ($hasNativeSmoke) {
@@ -338,6 +348,10 @@ $qemuArguments = @(
     "-display", "none", "-serial", "file:$log", "-monitor", "none",
     "-no-reboot", "-no-shutdown"
 )
+if ($GpuTest) {
+    $qemuArguments += @("-device", "virtio-gpu-pci,id=gpu0",
+        "-qmp", "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
+}
 if (($Fleet -or $StackProtectorOnly -or $hasNativeSmoke) -and -not $EntropyUnavailable) {
     $qemuArguments += @("-object", "rng-builtin,id=alos_rng", "-device",
         "virtio-rng-pci,rng=alos_rng,disable-modern=on")
@@ -370,6 +384,46 @@ try {
         }
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
+    if ($GpuTest) {
+        if (-not $text.Contains("gpu-test: PASS") -or $text.Contains("gpu-test: FAIL")) {
+            throw "gpu-test userland echoue : $log"
+        }
+        $ppm = Join-Path $output "gpu.ppm"
+        $client = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
+        try {
+            $ns = $client.GetStream(); $qr = [IO.StreamReader]::new($ns); $qw = [IO.StreamWriter]::new($ns)
+            function Invoke-Qmp([string]$json) {
+                $qw.WriteLine($json); $qw.Flush()
+                while ($true) {
+                    $line = $qr.ReadLine()
+                    if ($null -eq $line) { throw "QMP ferme" }
+                    if ($line -match '"return"' -or $line -match '"error"') { return $line }
+                }
+            }
+            [void]$qr.ReadLine()
+            [void](Invoke-Qmp '{"execute":"qmp_capabilities"}')
+            $reply = Invoke-Qmp (@{ execute = "screendump"; arguments = @{ filename = $ppm; device = "gpu0"; head = 0 } } | ConvertTo-Json -Compress)
+            if ($reply -match '"error"') { throw "screendump refuse : $reply" }
+        } finally { $client.Dispose() }
+        $wait = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path $ppm) -and [DateTime]::UtcNow -lt $wait) { Start-Sleep -Milliseconds 200 }
+        Start-Sleep -Milliseconds 300
+        $bytes = [IO.File]::ReadAllBytes($ppm)
+        $head = [Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(32, $bytes.Length))
+        if ($head -notmatch '^P6\s+(\d+)\s+(\d+)\s+255\s') { throw "PPM invalide : $ppm" }
+        $w = [int]$Matches[1]; $h = [int]$Matches[2]; $off = $Matches[0].Length
+        function Get-Pixel([int]$x, [int]$y) { $i = $off + ($y * $w + $x) * 3; return @($bytes[$i], $bytes[$i+1], $bytes[$i+2]) }
+        $green = Get-Pixel 150 150
+        $yellow = Get-Pixel 520 320
+        $gx = [int][Math]::Floor(1000 * 255 / $w); $by = [int][Math]::Floor(700 * 255 / $h)
+        $grad = Get-Pixel 1000 700
+        "scanout ${w}x${h} ; vert=$($green -join ',') ; jaune=$($yellow -join ',') ; degrade=$($grad -join ',') (attendu 0,$gx,$by)"
+        if ($green[0] -ne 0 -or $green[1] -ne 255 -or $green[2] -ne 0) { throw "Rectangle vert absent : $ppm" }
+        if ($yellow[0] -ne 255 -or $yellow[1] -ne 255 -or $yellow[2] -ne 0) { throw "Carre jaune absent : $ppm" }
+        if ($grad[0] -ne 0 -or [Math]::Abs($grad[1] - $gx) -gt 1 -or [Math]::Abs($grad[2] - $by) -gt 1) { throw "Degrade incorrect : $ppm" }
+        "ALOS GPU userland PASS : $ppm"
+        return
+    }
     if (-not $StackProtectorOnly -and -not $BaseSmokeOnly -and -not $UnixSocketOnly -and
         -not $DnsOnly -and -not $MojoSmokePath) {
       foreach ($marker in @(
