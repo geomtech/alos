@@ -9,6 +9,9 @@ param(
     [string]$BaseSmokePath,
     [string]$RustSmokePath,
     [string]$V8SmokePath,
+    [string]$V8Script,
+    [string]$V8Marker = "Hello, World!",
+    [string]$V8Flags = "",
     [string]$MojoSmokePath,
     [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
@@ -188,7 +191,13 @@ if ($hasNativeSmoke) {
     } elseif ($V8SmokePath) {
         # v8_hello_world (sample V8 officiel) : cree un isolate et evalue du JS.
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $V8SmokePath).Path
-            Name = "v8-hello-world"; Marker = "Hello, World!" })
+            Name = "v8-hello-world"; Marker = $V8Marker })
+        if ($V8Script) {
+            # Shell V8 (samples/shell.cc) : evalue /test.js (copie du script).
+            $basePrograms[0].Name = "v8-shell"
+            $basePrograms[0].Command = ("v8-shell $V8Flags /test.js").Replace("  ", " ")
+            Copy-Item -LiteralPath (Resolve-Path -LiteralPath $V8Script).Path -Destination (Join-Path $output "test.js")
+        }
     } elseif ($RustSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $RustSmokePath).Path
             Name = "chromium-rust-smoke"; Marker = "chromium-rust-smoke: PASS" })
@@ -229,7 +238,7 @@ if ($hasNativeSmoke) {
             strip $(if ($V8SmokePath) { "--strip-all" } else { "--strip-debug" }) "/artifacts/$($program.Name)"
         if ($LASTEXITCODE) { throw "Strip copie smoke echoue : $($program.Name)" }
     }
-    $commands = ($basePrograms | ForEach-Object { $_.Name }) -join "`n"
+    $commands = ($basePrograms | ForEach-Object { if ($_.Command) { $_.Command } else { $_.Name } }) -join "`n"
     if ($BaseSmokeOnly -or $MojoSmokePath) {
         $startup = "echo vm-suite-begin`n$commands`necho vm-suite-complete"
     } else {
@@ -299,6 +308,7 @@ foreach ($program in $basePrograms) {
             'set -e',
             "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
             $(if ($V8SmokePath) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
+            $(if ($V8Script) { "debugfs -w -R `"write /artifacts/test.js /test.js`" /artifacts/test.disk" } else { "true" }),
             "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
             "cmp /artifacts/$name /artifacts/verify-$name"
         ) -join "`n") + "`n")

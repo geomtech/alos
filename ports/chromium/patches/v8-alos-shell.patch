@@ -1,0 +1,13 @@
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -7608,7 +7608,9 @@
+     (current_toolchain == host_toolchain && v8_toolset_for_shell == "host") ||
+     (current_toolchain == v8_snapshot_toolchain &&
+      v8_toolset_for_shell == "host") ||
+-    (current_toolchain != host_toolchain && v8_toolset_for_shell == "target")
++    (current_toolchain != host_toolchain && v8_toolset_for_shell == "target") ||
++    # ALOS : le shell d'exemple tourne sur la cible, pas sur l'hote.
++    (current_toolchain != host_toolchain && current_os == "alos")
+ 
+ group("gn_all") {
+   testonly = true

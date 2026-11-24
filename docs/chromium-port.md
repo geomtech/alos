@@ -1319,3 +1319,28 @@ snapshot externe a la racine) imprime `Hello, World!` sous QEMU
 la suite se termine (`vm-suite-complete`). Le code range de 512 Mo est reserve
 en `MAP_JIT`. Non verifie : `max` (XSAVE/AVX), charge JIT soutenue (TurboFan,
 Sparkplug), WebAssembly, `d8` et Blink ; ce n'est pas un navigateur.
+
+#### Shell V8 et charge JIT sous QEMU (2026-11-24)
+
+`d8` n'est pas portable en l'etat : `d8.cc` inclut `<signal.h>` et
+`d8-posix.cc` `<netinet/ip.h>` (processus, sockets, signaux), absents d'ALOS ;
+aucun stub n'a ete ajoute. A la place, `v8_shell` (`v8/samples/shell.cc`,
+sample officiel : `-e`, fichiers, `print`, `load`, `read`, `quit`) est lie pour
+ALOS via `v8-alos-shell.patch` (cible `want_v8_shell` sur la toolchain ALOS) ;
+`ninja v8:v8_shell` avec `gn gen --root-target=//v8:v8_shell`. Pas de timers
+ni de boucle d'evenements : ce n'est pas Node ni le shell Blink.
+
+Harnais : `test-vm.ps1 -V8SmokePath .../v8_shell -V8Script <fichier.js>
+[-V8Flags "..."] [-V8Marker "..."]` copie le script en `/test.js` et lance
+`v8-shell <flags> /test.js`.
+
+Observe : `ports/chromium/tests/v8-jit-stress.js` (fib, boucles chaudes, Float64Array, chaines,
+Map) imprime `v8-jit-stress: PASS sum=1506031792`, valeur identique a celle
+d'un moteur V8 hote, sous `qemu64` **et** `-Cpu max`. Avec `--trace-opt`, V8
+journalise 4 optimisations TurboFan (`mix`, `hot` OSR, `typed` OSR, ...) :
+TurboFan et le tier-up OSR s'executent sur ALOS dans les deux profils CPU.
+`--always-sparkplug` est accepte sans erreur, mais ce trace n'enregistre pas
+Sparkplug : son execution n'est pas demontree. Non couverts : WebAssembly
+(desactive : lite mode non utilise, mais `v8_enable_webassembly` suit le
+profil du build), charge longue/GC sous pression, threads de compilation
+concurrents en charge, tests V8 officiels.

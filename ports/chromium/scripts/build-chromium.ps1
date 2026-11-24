@@ -300,7 +300,7 @@ if ($V8Probe) {
     if ((git -C $v8 rev-parse HEAD 2>$null) -ne "fdb12b460f148895f6af2ff0e0d870ff8889f154") {
         throw "V8 14.0.365.4 absent : relancer fetch-chromium.ps1 -WithV8."
     }
-    foreach ($v8Patch in @("v8-alos-os-detection.patch", "v8-alos-no-signals.patch", "v8-alos-platform.patch", "v8-alos-map-jit.patch")) {
+    foreach ($v8Patch in @("v8-alos-os-detection.patch", "v8-alos-no-signals.patch", "v8-alos-platform.patch", "v8-alos-map-jit.patch", "v8-alos-shell.patch")) {
         $patch = Join-Path $repo "ports\chromium\patches\$v8Patch"
         & git -C $v8 apply --reverse --check $patch 2>$null
         if ($LASTEXITCODE) {
