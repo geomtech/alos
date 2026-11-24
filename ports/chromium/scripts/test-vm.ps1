@@ -11,6 +11,7 @@ param(
     [switch]$GpuTest,
     [switch]$DesktopGpuTest,
     [switch]$V8Gpu,
+    [string[]]$ImageFile = @(), # "chemin_hote=/destination/dans/l/image" (dossier parent cree)
     [int]$QmpPort = 4489,
     [string]$V8SmokePath,
     [string]$V8Script,
@@ -246,6 +247,18 @@ if ($hasNativeSmoke) {
         # Le snapshot V8 externe est cherche a cote de l'executable / du cwd.
         Copy-Item -LiteralPath (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin") -Destination (Join-Path $output "snapshot_blob.bin")
     }
+    $imageFileCommands = @()
+    $imageIndex = 0
+    foreach ($entry in $ImageFile) {
+        $hostPath, $imagePath = $entry -split "=", 2
+        if (-not $imagePath -or -not $imagePath.StartsWith("/")) { throw "ImageFile attend chemin_hote=/chemin/image : $entry" }
+        $staged = "imagefile$imageIndex"
+        Copy-Item -LiteralPath (Resolve-Path -LiteralPath $hostPath).Path -Destination (Join-Path $output $staged)
+        $parent = $imagePath.Substring(0, $imagePath.LastIndexOf("/"))
+        if ($parent) { $imageFileCommands += "debugfs -w -R `"mkdir $parent`" /artifacts/test.disk" }
+        $imageFileCommands += "debugfs -w -R `"write /artifacts/$staged $imagePath`" /artifacts/test.disk"
+        $imageIndex++
+    }
     foreach ($program in $basePrograms) {
         Copy-Item -LiteralPath $program.Path -Destination (Join-Path $output $program.Name)
         docker run --rm -v "${output}:/artifacts" alos-runtime `
@@ -318,14 +331,14 @@ foreach ($program in $basePrograms) {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), (@(
+        [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), ((@(
             'set -e',
             "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
             $(if ($V8SmokePath -and (Test-Path (Join-Path $output "snapshot_blob.bin"))) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
             $(if ($V8Script) { "debugfs -w -R `"write /artifacts/test.js /test.js`" /artifacts/test.disk" } else { "true" }),
             "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
             "cmp /artifacts/$name /artifacts/verify-$name"
-        ) -join "`n") + "`n")
+        ) + $imageFileCommands) -join "`n") + "`n")
         docker run --rm -v "${output}:/artifacts" alos-build sh "/artifacts/stage-$name.sh" `
             *> (Join-Path $output "$name-image.log")
         $stageExitCode = $LASTEXITCODE

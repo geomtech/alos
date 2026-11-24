@@ -1482,3 +1482,26 @@ de codecs d'image, pas de GPU (Ganesh/Graphite), SIMD Skia non valide sous `max`
 pas de `//skia` Chromium (qui entraine Blink, crypto, nss, extensions via GN),
 pas de rendu Blink. Prochaine marche : FreeType + polices (texte), puis le
 wrapper `//skia` quand Blink sera dans le graphe.
+
+#### Skia : rendu de texte FreeType (2026-11-24)
+
+`build-chromium.ps1 -Skia` active maintenant `skia_use_freetype` : sources
+FreeType ajoutees a `fetch-chromium.ps1` (`third_party/freetype/src`, rev DEPS
+Chromium 140) et alias `//third_party/freetype2` -> `//build/config/freetype`
+(la visibilite de FreeType n'autorise que cette cible ; fichier
+`ports/chromium/skia/freetype2-shim.gn`). Skia se recompile (554 actions, 0
+echec) avec `SkFontMgr_New_Custom_Directory`.
+
+Test : `skia_raster_smoke` charge `/fonts` (la TTF du depot
+`src/userland/gui/fonts/system_font.ttf`, famille Roboto, copiee par
+`test-vm.ps1 -ImageFile hote=/image`) et rasterise "ALOS Skia" en
+anti-aliasing. Observe (`qemu64`) : `text pixels=1718 antialiased=612`,
+`skia-raster-smoke: PASS 320x260`, presentation virtio-gpu verifiee par QMP
+(capture : `docs/skia-raster-virtio-gpu.png`).
+
+Limites : pas de shaping (HarfBuzz desactive : pas de ligatures ni de texte
+complexe), une seule police, pas de fontconfig, pas de fallback de polices, pas
+de codecs d'image, pas de GPU. Ordre des prochaines marches (priorite
+Chromium) : base::RunLoop + V8 embarque, //net minimal, Blink headless,
+content_shell mono-processus ; le GPU (Skia GPU, virgl, autres pilotes) passe
+apres sauf exigence de Chromium.

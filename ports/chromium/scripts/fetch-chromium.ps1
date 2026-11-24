@@ -63,6 +63,9 @@ $deps = @(
        Rev = "32ded457c0b1fe78ceb8397632c416568d6714a0"; Sparse = $null },
     @{ Path = "third_party/harfbuzz-ng/src"; Url = "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz.git";
        Rev = "9f83bbbe64654b45ba5bb06927ff36c2e7588495"; Sparse = $null },
+    # Sources FreeType (Skia raster : rendu de texte).
+    @{ Path = "third_party/freetype/src"; Url = "https://chromium.googlesource.com/chromium/src/third_party/freetype2.git";
+       Rev = "27c1cb10a52420515ce66729dfca897be21691b8"; Sparse = $null },
     @{ Path = "third_party/openxr/src"; Url = "https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenXR-SDK.git";
        Rev = "57572a0e91890fe7183de25a62153aec955d64ba"; Sparse = @("include", "src") },
     @{ Path = "third_party/skia"; Url = "https://skia.googlesource.com/skia.git";

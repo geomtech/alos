@@ -306,11 +306,16 @@ if ($Skia) {
     $skiaDestination = Join-Path $src "alos_native\skia"
     New-Item -ItemType Directory -Force $skiaDestination | Out-Null
     Copy-Item -Path (Join-Path $skiaSource "*") -Destination $skiaDestination -Force
-    $args_gn += "`nuse_crash_key_stubs = true`ntreat_warnings_as_errors = false"
+    # Skia amont reference //third_party/freetype2 ; dans l'arbre Chromium le
+    # FreeType vendored est //third_party/freetype : alias minimal.
+    $freetypeShim = Join-Path $src "third_party\freetype2"
+    New-Item -ItemType Directory -Force $freetypeShim | Out-Null
+    Copy-Item -LiteralPath (Join-Path $skiaSource "freetype2-shim.gn") -Destination (Join-Path $freetypeShim "BUILD.gn") -Force
+    $args_gn += "`nuse_crash_key_stubs = true`ntreat_warnings_as_errors = false`nskia_use_freetype = true"
     foreach ($skiaArg in @("skia_use_wuffs", "skia_use_libpng_decode", "skia_use_libpng_encode",
         "skia_use_libjpeg_turbo_decode", "skia_use_libjpeg_turbo_encode", "skia_use_libwebp_decode",
         "skia_use_libwebp_encode", "skia_use_libavif", "skia_use_libjxl_decode", "skia_use_dng_sdk",
-        "skia_use_piex", "skia_use_freetype", "skia_use_harfbuzz", "skia_use_expat", "skia_use_icu",
+        "skia_use_piex", "skia_use_harfbuzz", "skia_use_expat", "skia_use_icu",
         "skia_use_xps", "skia_enable_pdf", "skia_enable_skshaper", "skia_enable_skunicode",
         "skia_enable_gpu", "skia_use_gl", "skia_use_vulkan", "skia_use_dawn", "skia_use_metal",
         "skia_enable_tools")) {
