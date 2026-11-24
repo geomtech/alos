@@ -96,6 +96,7 @@
 #define SYS_NATIVE_PATH 310
 #define SYS_GPU_MAP 320
 #define SYS_GPU_FLUSH 321
+#define SYS_GPU_QUERY 322
 #define SYS_KBHIT 100
 #define SYS_CLEAR 101
 #define SYS_MEMINFO 102

@@ -1,0 +1,44 @@
+/* Squelette de pilote GPU pour la couche gpu.h (non compile : extension
+ * .example). Copier en src/drivers/gpu/<nom>.c, renommer les symboles, puis
+ * suivre la section "GPU drivers" de docs/DRIVERS.md :
+ *   1. ajouter le .c/.o a KERNEL_SRC/KERNEL_OBJ (Makefile) ;
+ *   2. declarer `extern const gpu_driver_t <nom>_gpu_driver;` dans gpu.h ;
+ *   3. l'enregistrer dans register_builtin() de gpu.c ;
+ *   4. tester (voir test-vm.ps1 -GpuTest / test-gpu.ps1 et un -device QEMU). */
+#include "gpu.h"
+#include "../pci.h"
+#include "../../mm/pmm.h"
+#include "../../kernel/klog.h"
+#include "../../include/errno.h"
+
+/* 1. probe : IDs PCI (vendor/device) ou classe 0x03. Aucun effet de bord. */
+static bool example_probe(const PCIDevice *pci) {
+  return pci->vendor_id == 0x1234 && pci->device_id == 0x1111;
+}
+
+/* 2. init : activer le device (pci_enable_bus_mastering, BARs via ioremap),
+ *    programmer le mode, allouer une surface scanout contigue (pmm_alloc_blocks)
+ *    et la decrire dans dev->surface ; renseigner dev->caps. Retourner 0 ou un
+ *    errno negatif (le registre essaiera alors le pilote suivant). Ne jamais
+ *    laisser le materiel a moitie initialise en cas d'erreur. */
+static int example_init(gpu_device_t *dev, PCIDevice *pci) {
+  (void)dev; (void)pci;
+  return -ENOTSUP;
+}
+
+/* 3. flush : seulement si le scanout n'est pas lu directement par le device
+ *    (ALOS_GPU_CAP_EXPLICIT_FLUSH). Laisser NULL pour un framebuffer lineaire. */
+static int example_flush(gpu_device_t *dev, uint32_t x, uint32_t y, uint32_t w,
+                         uint32_t h) {
+  (void)dev; (void)x; (void)y; (void)w; (void)h;
+  return 0;
+}
+
+const gpu_driver_t example_gpu_driver = {
+  .name = "example",
+  .priority = 10, /* virtio-gpu = 50 ; mettre plus haut pour preferer ce pilote */
+  .probe = example_probe,
+  .init = example_init,
+  .flush = example_flush,
+  /* .set_mode = ..., .shutdown = ... (optionnels) */
+};

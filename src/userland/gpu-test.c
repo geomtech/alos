@@ -4,10 +4,19 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/display.h>
 #include <sys/gpu.h>
 
 int main(void) {
+  alos_gpu_caps_t caps;
+  if (gpu_query(&caps) != 0) { printf("gpu-test: FAIL gpu_query errno=%d\n", errno); return 1; }
+  printf("gpu-test: driver=%s pci=%04x:%04x caps=0x%x mode=%ux%u\n", caps.driver,
+         caps.vendor, caps.device, caps.caps, caps.width, caps.height);
+  if (!(caps.caps & ALOS_GPU_CAP_EXPLICIT_FLUSH) || caps.format != ALOS_GPU_FORMAT_B8G8R8X8) {
+    puts("gpu-test: FAIL unexpected caps");
+    return 1;
+  }
   if (display_acquire() != 0) { puts("gpu-test: FAIL display_acquire"); return 1; }
   alos_gpu_info_t info;
   if (gpu_map(&info) != 0) { printf("gpu-test: FAIL gpu_map errno=%d\n", errno); return 1; }

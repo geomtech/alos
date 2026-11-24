@@ -1,16 +1,20 @@
-/* VirtIO GPU 2D, PCI modern. Voir virtio_gpu.h pour le perimetre et les
- * limites. Ecrit directement sur les capabilities modern : le transport
- * generique (virtio_transport.c) stocke des adresses physiques 32 bits et ne
- * negocie pas VIRTIO_F_VERSION_1, ce qui ne convient pas a virtio-gpu. */
-#include "virtio_gpu.h"
-#include "pci.h"
-#include "virtio/virtio_pci_modern.h"
-#include "virtio/virtio_transport.h"
-#include "../mm/pmm.h"
-#include "../kernel/timer.h"
-#include "../kernel/klog.h"
-#include "../include/errno.h"
-#include "../include/string.h"
+/* Pilote virtio-gpu 2D (PCI modern) pour la couche gpu.h.
+ *
+ * Perimetre : un scanout (0), une ressource 2D B8G8R8X8 adossee a une memoire
+ * physique contigue, transfer + flush, controlq pollee, UP. Pas de 3D
+ * (virgl/venus), curseur, EDID ni IRQ. virtio-vga (classe VGA) n'est PAS pris :
+ * le framebuffer Limine reste proprietaire de cet affichage.
+ * Ecrit directement sur les capabilities modern : le transport generique
+ * (virtio_transport.c) stocke des adresses physiques 32 bits et ne negocie pas
+ * VIRTIO_F_VERSION_1, ce qui ne convient pas a virtio-gpu. */
+#include "gpu.h"
+#include "../pci.h"
+#include "../virtio/virtio_pci_modern.h"
+#include "../virtio/virtio_transport.h"
+#include "../../mm/pmm.h"
+#include "../../kernel/klog.h"
+#include "../../include/errno.h"
+#include "../../include/string.h"
 
 #define VIRTIO_GPU_PCI_ID 0x1050 /* 0x1040 + device id 16 */
 #define VIRTIO_F_VERSION_1_HI (1u << 0) /* bit 32, page de features 1 */
@@ -45,7 +49,6 @@ typedef struct {
 } __attribute__((packed)) gpu_display_info_t;
 
 static struct {
-  int state; /* 0 non tente, 1 actif, negatif: erreur */
   virtio_pci_modern_t modern;
   volatile virtio_pci_common_cfg_t *common;
   volatile uint16_t *notify;
@@ -56,16 +59,16 @@ static struct {
   uint16_t avail_idx, last_used;
   uint8_t *cmd; /* page DMA : requete [0,2048), reponse [2048,4096) */
   uint64_t cmd_phys;
-  virtio_gpu_info_t info;
-  size_t backing_pages;
+  uint32_t width, height, pitch;
+  uint64_t pixels_phys;
 } gpu;
 
 static void barrier(void) { __asm__ volatile("mfence" ::: "memory"); }
 
 static int gpu_fail(int error, const char *why) {
   KLOG_ERROR("VGPU", why);
-  gpu.state = error;
   if (gpu.common) gpu.common->device_status = 0;
+  gpu.common = NULL; /* permet un nouvel essai */
   return error;
 }
 
@@ -117,16 +120,15 @@ static int gpu_command(const void *req, uint32_t req_len, uint32_t expect) {
   return 0;
 }
 
-int virtio_gpu_init(void) {
-  if (gpu.state) return gpu.state == 1 ? 0 : gpu.state;
-  PCIDevice *pci = pci_get_device(0x1af4, VIRTIO_GPU_PCI_ID);
-  if (!pci) { gpu.state = -ENOSYS; return -ENOSYS; }
-  if (pci->class_code == 0x03 && pci->subclass == 0x00) {
-    /* virtio-vga : le framebuffer Limine l'utilise, ne pas le detourner. */
-    KLOG_INFO("VGPU", "virtio-vga (VGA class) left to the boot framebuffer");
-    gpu.state = -ENOTSUP;
-    return -ENOTSUP;
-  }
+static bool virtio_gpu_probe(const PCIDevice *pci) {
+  /* virtio-gpu moderne (0x1040 + 16). virtio-vga (classe VGA) reste au
+   * framebuffer Limine. */
+  return pci->vendor_id == 0x1af4 && pci->device_id == VIRTIO_GPU_PCI_ID &&
+         !(pci->class_code == 0x03 && pci->subclass == 0x00);
+}
+
+static int virtio_gpu_init(gpu_device_t *dev, PCIDevice *pci) {
+  if (gpu.common) return -EBUSY; /* un seul device pris en charge */
   if (!virtio_pci_modern_detect(pci, &gpu.modern) ||
       virtio_pci_modern_map(pci, &gpu.modern) < 0 ||
       !gpu.modern.common_cfg || !gpu.modern.notify_base)
@@ -205,10 +207,10 @@ int virtio_gpu_init(void) {
   uint32_t *pixels = pmm_alloc_blocks(pages);
   if (!pixels) return gpu_fail(-ENOMEM, "virtio-gpu: framebuffer allocation failed");
   memset(pixels, 0, pages * 4096);
-  gpu.backing_pages = pages;
-  gpu.info = (virtio_gpu_info_t){.width = w, .height = h, .pitch = w * 4,
-      .pixels = pixels, .phys = pmm_virt_to_phys(pixels), .scanout = 0,
-      .resource_id = 1};
+  gpu.width = w;
+  gpu.height = h;
+  gpu.pitch = w * 4;
+  gpu.pixels_phys = pmm_virt_to_phys(pixels);
 
   struct { gpu_hdr_t h; uint32_t id, format, width, height; }
       __attribute__((packed)) create = {
@@ -218,7 +220,7 @@ int virtio_gpu_init(void) {
     return gpu_fail(error, "virtio-gpu: RESOURCE_CREATE_2D failed");
   struct { gpu_hdr_t h; uint32_t id, nr; uint64_t addr; uint32_t len, pad; }
       __attribute__((packed)) attach = {
-      {.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING}, 1, 1, gpu.info.phys,
+      {.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING}, 1, 1, gpu.pixels_phys,
       (uint32_t)(pages * 4096), 0};
   if ((error = gpu_command(&attach, sizeof(attach), VIRTIO_GPU_RESP_OK_NODATA)))
     return gpu_fail(error, "virtio-gpu: ATTACH_BACKING failed");
@@ -228,26 +230,22 @@ int virtio_gpu_init(void) {
   if ((error = gpu_command(&scan, sizeof(scan), VIRTIO_GPU_RESP_OK_NODATA)))
     return gpu_fail(error, "virtio-gpu: SET_SCANOUT failed");
 
-  gpu.state = 1;
+  dev->surface = (gpu_surface_t){.width = w, .height = h, .pitch = w * 4,
+      .format = ALOS_GPU_FORMAT_B8G8R8X8, .pixels = pixels,
+      .phys = gpu.pixels_phys, .size = pages * 4096};
+  dev->caps = ALOS_GPU_CAP_EXPLICIT_FLUSH;
   KLOG_INFO_DEC("VGPU", "virtio-gpu 2D scanout 0 width: ", w);
   KLOG_INFO_DEC("VGPU", "virtio-gpu 2D scanout 0 height: ", h);
   return 0;
 }
 
-bool virtio_gpu_available(void) { return gpu.state == 1; }
-
-const virtio_gpu_info_t *virtio_gpu_get_info(void) {
-  return gpu.state == 1 ? &gpu.info : NULL;
-}
-
-int virtio_gpu_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
-  if (gpu.state != 1) return -ENODEV;
-  if (!w || !h || x >= gpu.info.width || y >= gpu.info.height ||
-      w > gpu.info.width - x || h > gpu.info.height - y) return -EINVAL;
+static int virtio_gpu_flush(gpu_device_t *dev, uint32_t x, uint32_t y,
+                            uint32_t w, uint32_t h) {
+  (void)dev;
   struct { gpu_hdr_t h; gpu_rect_t r; uint64_t offset; uint32_t id, pad; }
       __attribute__((packed)) transfer = {
       {.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D}, {x, y, w, h},
-      (uint64_t)y * gpu.info.pitch + (uint64_t)x * 4, 1, 0};
+      (uint64_t)y * gpu.pitch + (uint64_t)x * 4, 1, 0};
   int error = gpu_command(&transfer, sizeof(transfer), VIRTIO_GPU_RESP_OK_NODATA);
   if (error) return error;
   struct { gpu_hdr_t h; gpu_rect_t r; uint32_t id, pad; }
@@ -256,20 +254,10 @@ int virtio_gpu_flush(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
   return gpu_command(&flush, sizeof(flush), VIRTIO_GPU_RESP_OK_NODATA);
 }
 
-int virtio_gpu_selftest(void) {
-  const virtio_gpu_info_t *info = virtio_gpu_get_info();
-  if (!info) return -ENODEV;
-  for (uint32_t y = 0; y < info->height; y++)
-    for (uint32_t x = 0; x < info->width; x++)
-      info->pixels[(size_t)y * info->width + x] = 0x000040C0;
-  for (uint32_t y = 64; y < 64 + 128 && y < info->height; y++)
-    for (uint32_t x = 64; x < 64 + 256 && x < info->width; x++)
-      info->pixels[(size_t)y * info->width + x] = 0x00FF0000;
-  int error = virtio_gpu_flush(0, 0, info->width, info->height);
-  if (error) {
-    KLOG_ERROR_DEC("VGPU", "virtio-gpu selftest flush failed errno: ", (uint32_t)-error);
-    return error;
-  }
-  KLOG_INFO("VGPU", "virtio-gpu selftest: rectangle flushed");
-  return 0;
-}
+const gpu_driver_t virtio_gpu_driver = {
+  .name = "virtio-gpu",
+  .priority = 50,
+  .probe = virtio_gpu_probe,
+  .init = virtio_gpu_init,
+  .flush = virtio_gpu_flush,
+};

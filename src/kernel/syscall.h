@@ -95,6 +95,7 @@
 #define SYS_NATIVE_PATH 310
 #define SYS_GPU_MAP 320   /* display owner : mappe la surface virtio-gpu */
 #define SYS_GPU_FLUSH 321 /* display owner : transfer+flush d'un rectangle */
+#define SYS_GPU_QUERY 322 /* capacites du pilote GPU actif (tout processus) */
 #define SYS_GETCWD 183 /* Obtenir le répertoire courant */
 #define SYS_CREATE 85  /* Créer un fichier */
 

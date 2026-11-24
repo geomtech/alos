@@ -66,11 +66,11 @@ try {
     while ([DateTime]::UtcNow -lt $deadline -and -not $process.HasExited) {
         Start-Sleep -Milliseconds 500
         $text = Read-Serial
-        if ($text.Contains("virtio-gpu selftest: rectangle flushed")) { break }
+        if ($text.Contains("gpu selftest: rectangle flushed")) { break }
         if ($text.Contains("KERNEL PANIC") -or $text.Contains("System halted.") -or
-            $text.Contains("virtio-gpu selftest flush failed")) { break }
+            $text.Contains("gpu selftest flush failed")) { break }
     }
-    if (-not $text.Contains("virtio-gpu selftest: rectangle flushed")) {
+    if (-not $text.Contains("gpu selftest: rectangle flushed")) {
         # Diagnostic : registres du vCPU via QMP (aide a localiser un blocage).
         try {
             $diag = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
