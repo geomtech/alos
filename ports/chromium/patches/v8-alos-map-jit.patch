@@ -1,0 +1,32 @@
+--- a/src/base/platform/platform-posix.cc
++++ b/src/base/platform/platform-posix.cc
+@@ -163,6 +163,15 @@
+     flags |= MAP_JIT;
+   }
+ #endif  // V8_OS_DARWIN
++#if V8_OS_ALOS
++  // ALOS refuse RWX sauf pour un mapping anonyme prive MAP_JIT (plafonne par
++  // processus). Seules la reservation du code range (kNoAccessWillJitLater) et
++  // un mapping RWX direct y ont droit ; tout autre mapping V8 reste W^X.
++  if (access == OS::MemoryPermission::kNoAccessWillJitLater ||
++      access == OS::MemoryPermission::kReadWriteExecute) {
++    flags |= MAP_JIT;
++  }
++#endif  // V8_OS_ALOS
+   return flags;
+ }
+ 
+--- a/src/base/page-allocator.cc
++++ b/src/base/page-allocator.cc
+@@ -44,7 +44,10 @@
+ 
+ void* PageAllocator::AllocatePages(void* hint, size_t size, size_t alignment,
+                                    PageAllocator::Permission access) {
+-#if !V8_HAS_PTHREAD_JIT_WRITE_PROTECT && !V8_HAS_BECORE_JIT_WRITE_PROTECT
++// ALOS conserve kNoAccessWillJitLater : OS::Allocate en fait un mapping
++// MAP_JIT, seule zone ou ALOS autorise RWX (voir v8-alos-map-jit.patch).
++#if !V8_HAS_PTHREAD_JIT_WRITE_PROTECT && !V8_HAS_BECORE_JIT_WRITE_PROTECT && \
++    !V8_OS_ALOS
+   // kNoAccessWillJitLater is only used on Apple Silicon. Map it to regular
+   // kNoAccess on other platforms, so code doesn't have to handle both enum
+   // values.

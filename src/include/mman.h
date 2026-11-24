@@ -14,6 +14,10 @@
 #define MAP_ANON MAP_ANONYMOUS
 #define MAP_NORESERVE 0x4000
 #define MAP_FIXED_NOREPLACE 0x100000
+/* Extension ALOS : seul un mapping anonyme prive MAP_JIT peut etre RWX
+ * (plafond ALOS_JIT_MAX_BYTES par processus). Voir docs/chromium-port.md. */
+#define MAP_JIT 0x800000
+#define ALOS_JIT_MAX_BYTES (1ULL << 30)
 #define MAP_FAILED ((void *)-1)
 
 #define MADV_DONTNEED 4

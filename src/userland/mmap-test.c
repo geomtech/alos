@@ -434,6 +434,58 @@ static int wx_code_test(void) {
   return 0;
 }
 
+/* MAP_JIT : seule exception RWX, bornee par ALOS_JIT_MAX_BYTES, anonyme prive. */
+static int jit_policy_test(void) {
+  static const unsigned char code[] = {0xb8, 42, 0, 0, 0, 0xc3};
+  /* Sans MAP_JIT : refuse (deja couvert) ; MAP_JIT incompatible : EINVAL. */
+  CHECK(mmap(NULL, PAGE, PROT_READ | PROT_WRITE | PROT_EXEC,
+             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) == MAP_FAILED);
+  CHECK(mmap(NULL, PAGE, PROT_READ | PROT_WRITE,
+             MAP_SHARED | MAP_ANONYMOUS | MAP_JIT, -1, 0) == MAP_FAILED);
+  CHECK(mmap(NULL, PAGE, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_JIT, -1, 0) == MAP_FAILED);
+  /* Reservation PROT_NONE puis RWX sur une partie, comme le code range V8. */
+  size_t reserve = 64 * PAGE;
+  unsigned char *p = mmap(NULL, reserve, PROT_NONE,
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_JIT, -1, 0);
+  CHECK(p != MAP_FAILED);
+  CHECK(mprotect(p, 4 * PAGE, PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
+  memcpy(p, code, sizeof(code));
+  CHECK(((int (*)(void))p)() == 42);
+  /* Un mapping normal voisin reste interdit en RWX. */
+  unsigned char *q = mmap(NULL, PAGE, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  CHECK(q != MAP_FAILED);
+  CHECK(mprotect(q, PAGE, PROT_READ | PROT_WRITE | PROT_EXEC) == -1);
+  CHECK(munmap(q, PAGE) == 0);
+  /* fork : l'enfant herite de la copie ; execve repart sans zone JIT. */
+  pid_t child = fork();
+  if (child == 0) {
+    CHECK(((int (*)(void))p)() == 42);
+    char *argv[] = {"/bin/mmap-test", "jit-exec-probe", NULL};
+    execve("/bin/mmap-test", argv, NULL);
+    _exit(97);
+  }
+  CHECK(child > 0);
+  int status = 0;
+  CHECK(waitpid(child, &status, 0) == child && status == 0);
+  /* Plafond de 1 Gio par processus (reservations PROT_NONE comptees). */
+  size_t chunk = 256ULL << 20;
+  void *big[8];
+  int n = 0;
+  while (n < 8) {
+    big[n] = mmap(NULL, chunk, PROT_NONE,
+        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_JIT, -1, 0);
+    if (big[n] == MAP_FAILED) break;
+    n++;
+  }
+  CHECK(n == 3 && errno == ENOMEM); /* 1 Gio - 64 pages deja prises */
+  for (int i = 0; i < n; i++) CHECK(munmap(big[i], chunk) == 0);
+  CHECK(munmap(p, reserve) == 0);
+  puts("mmap-test: jit-policy PASS");
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 3 && strcmp(argv[1], "exec-probe") == 0) {
     uint64_t address = 0;
@@ -444,10 +496,16 @@ int main(int argc, char **argv) {
     unsigned char value = *(volatile unsigned char *)address;
     return value;
   }
+  if (argc == 2 && strcmp(argv[1], "jit-exec-probe") == 0) {
+    /* Apres execve : RWX reste interdit, aucune zone JIT heritee. */
+    void *m = mmap(NULL, PAGE, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return m == MAP_FAILED ? 0 : 1;
+  }
   /* Initialiser errno avant de mesurer les allocations physiques. */
   errno = 0;
   CHECK(sysconf(_SC_PAGESIZE) == PAGE);
-  if (image_protect_test() || wx_code_test() || reservation_test() || protection_test() || partial_test() ||
+  if (image_protect_test() || wx_code_test() || jit_policy_test() || reservation_test() || protection_test() || partial_test() ||
       shared_test() || file_test() || lifecycle_test() || ipc_mapping_test() ||
       errno_thread_test()) return 1;
   puts("mmap-test: ALL PASS");

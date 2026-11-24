@@ -1282,3 +1282,40 @@ patcher tous les sites d'ecriture du code (compilateurs, Sparkplug, deopt,
 patching, embedded blob) ; ce n'est pas un reglage ni un petit patch, et rien
 n'est fait a ce stade. `v8_hello_world` complet reste donc bloque sur le
 `mprotect` RWX du code range.
+
+#### Politique `MAP_JIT` bornee pour le JIT de V8 (2026-11-24)
+
+Constat : V8 14 exige un code range RWX (voir ci-dessus) ; aucun reglage ne le
+fait passer en RW<->RX. Le contrat general d'ALOS reste *RWX refuse*. Exception
+minimale, validee par le proprietaire du projet :
+
+- `MAP_JIT` (`0x800000`, `src/include/mman.h`) n'est accepte que pour un
+  mapping **anonyme prive** (EINVAL pour SHM, fichier ou `MAP_SHARED`).
+- Seuls les mappings `MAP_JIT` peuvent etre ou devenir RWX, par `mmap` comme
+  par `mprotect` ; tout autre mapping, l'image ELF et le tas restent refuses
+  (EACCES). Les regions `MAP_JIT` ne fusionnent pas avec les autres.
+- Plafond par processus : `ALOS_JIT_MAX_BYTES` = 1 Gio de regions `MAP_JIT`
+  (reservations PROT_NONE comprises), ENOMEM au-dela. Pas d'heritage par
+  `execve` ; `fork` copie la region comme tout mapping prive.
+- Chaque creation est journalisee (`KLOG_INFO`, refus de plafond en `WARN`).
+- Impact securite : un processus qui obtient une region `MAP_JIT` peut y
+  ecrire puis executer du code arbitraire (c'est le but d'un JIT) ; W^X n'y est
+  plus impose par le noyau. Le risque est confine a ces regions, bornees en
+  taille, mais tout programme peut demander `MAP_JIT` (pas de capacite par
+  processus, pas d'ASLR ni de sandbox) : une capacite reste a ajouter.
+- Cote V8 : `v8-alos-map-jit.patch` (`platform-posix.cc`, `page-allocator.cc`)
+  passe `MAP_JIT` pour la reservation du code range (`kNoAccessWillJitLater`,
+  que `PageAllocator` retrogradait en `kNoAccess` hors Apple) et pour les
+  mappings `kReadWriteExecute` directs, uniquement.
+
+Verifie : `mmap-test: wx-code PASS` et `jit-policy PASS` (RWX sans `MAP_JIT`
+refuse, combinaisons invalides, RWX dans une reservation PROT_NONE puis appel,
+voisin non JIT refuse, fork, execve sans heritage, plafond 1 Gio), suite VM
+complete verte en `qemu64`.
+
+**Resultat observe :** `v8_hello_world` complet (JIT, `out/alos-v8full`,
+snapshot externe a la racine) imprime `Hello, World!` sous QEMU
+(`test-vm.ps1 -V8SmokePath ... -BaseSmokeOnly`, `qemu64`, 160 Mo de disque) et
+la suite se termine (`vm-suite-complete`). Le code range de 512 Mo est reserve
+en `MAP_JIT`. Non verifie : `max` (XSAVE/AVX), charge JIT soutenue (TurboFan,
+Sparkplug), WebAssembly, `d8` et Blink ; ce n'est pas un navigateur.
