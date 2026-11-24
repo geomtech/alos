@@ -42,6 +42,7 @@ int execve(const char *pathname, char *const argv[], char *const envp[]);
 int getuid(void);
 unsigned int sleep(unsigned int seconds);
 int usleep(useconds_t microseconds);
+int gethostname(char *name, size_t length);
 int fsync(int fd);
 int pipe(int output[2]);
 int pipe2(int output[2], int flags);

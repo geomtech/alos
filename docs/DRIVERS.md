@@ -443,3 +443,61 @@ You can check which transport is used by looking at the kernel log:
 This document, together with `docs/MMIO-ARCHITECTURE.md`, should give you a
 clear understanding of how drivers in ALOS use **PIO**, **MMIO**, **PCI BARs**,
 **VirtQueues**, and **VirtIO** transports (Legacy, Modern, and MMIO-only).
+
+
+## 13. GPU drivers (multi-driver layer)
+
+ALOS separates GPU drivers from the display stack so more graphics cards can be
+added later. Without an active GPU driver the display stays the Limine
+framebuffer (`SYS_GET_FRAMEBUFFER`); nothing changes for existing setups.
+
+### 13.1 Files
+
+| Path | Role |
+| --- | --- |
+| `src/drivers/gpu/gpu.h` | `gpu_driver_t` (ops), `gpu_device_t`, `gpu_surface_t`, registry API |
+| `src/drivers/gpu/gpu.c` | Driver registry, PCI probing, active device, flush/mode/query, selftest |
+| `src/drivers/gpu/virtio_gpu.c` | First driver: virtio-gpu 2D (PCI modern, polled) |
+| `src/drivers/gpu/gpu_driver_template.c.example` | Documented skeleton (not compiled) |
+| `src/include/gpu_abi.h` | Kernel/userland ABI: `alos_gpu_info_t`, `alos_gpu_caps_t`, `ALOS_GPU_CAP_*` |
+
+### 13.2 Driver contract
+
+A driver fills a `gpu_driver_t` : `probe(pci)` (match by PCI vendor/device or
+class 0x03, no side effects), `init(dev, pci)` (enable the device, program the
+mode, allocate a contiguous scanout surface, fill `dev->surface` and
+`dev->caps`), optional `flush`, `set_mode`, `shutdown`. `priority` orders
+drivers that match the same device (higher wins). `gpu_init()` walks the PCI
+list, tries matching drivers by priority and keeps the first whose `init`
+succeeds; a failing driver falls through to the next one, then to the Limine
+framebuffer. UP only, no locking; return negative errno values.
+
+### 13.3 Userland API
+
+`SYS_GPU_QUERY` (322, any process) returns `alos_gpu_caps_t` (driver name, PCI
+IDs, `ALOS_GPU_CAP_*` flags, mode). The display owner (`SYS_DISPLAY_ACQUIRE`)
+uses `SYS_GPU_MAP` (320, maps the scanout surface at `USER_GPU_BASE`) and
+`SYS_GPU_FLUSH` (321, publish a rectangle when `ALOS_GPU_CAP_EXPLICIT_FLUSH`
+is set). libc: `<sys/gpu.h>` (`gpu_query`, `gpu_map`, `gpu_flush`). The desktop
+(`src/userland/desktop`) uses the GPU surface when `gpu_map()` succeeds and
+falls back to the Limine framebuffer otherwise.
+
+### 13.4 Adding a driver
+
+1. Copy `gpu_driver_template.c.example` to `src/drivers/gpu/<name>.c` and
+   implement `probe`/`init` (and `flush` if needed).
+2. Add the source/object to `KERNEL_SRC`/`KERNEL_OBJ` in the `Makefile`
+   (the `src/drivers/gpu/%.o` pattern rule exists).
+3. Declare `extern const gpu_driver_t <name>_gpu_driver;` in `gpu.h` and
+   register it in `register_builtin()` in `gpu.c`.
+4. Test under QEMU : `ports/chromium/scripts/test-gpu.ps1` (kernel selftest +
+   host `screendump`), `test-vm.ps1 -GpuTest` (userland) and
+   `test-vm.ps1 -DesktopGpuTest` (full desktop), adapting the `-device` for
+   your hardware. Keep the default suite (`test-vm.ps1`) green.
+
+### 13.5 Status and limits
+
+Only virtio-gpu 2D exists (QEMU `virtio-gpu-pci`; `virtio-vga` stays with the
+Limine framebuffer). Candidate next drivers: Bochs/QEMU std VGA (BGA modeset),
+VirtualBox VMSVGA, then Intel/AMD hardware; none is implemented. No 3D, cursor,
+vblank, hotplug or multi-GPU (one active device).

@@ -9,6 +9,9 @@
 #include "../net/core/net.h"
 #include "../net/core/netdev.h"
 #include "../mm/kheap.h"
+#include "../net/l2/arp.h"
+#include "../net/l3/route.h"
+#include "timer.h"
 
 static spinlock_t resources_lock = {0};
 static native_network_resources_t *resources;
@@ -205,6 +208,25 @@ static int create_socket(int family, int type, int protocol) {
     native_poll_notify();
     return fd;
 }
+/* Resout le MAC du prochain saut avant le SYN : la pile TCP n'a pas de file
+ * d'attente ARP et echoue (EHOSTUNREACH) sur un cache froid. Attente bornee a
+ * ~1 s (polling du cache) ; le connect() non bloquant bloque donc brievement
+ * le temps de l'ARP, ce qui est documente dans docs/chromium-port.md. */
+static void resolve_next_hop(const uint8_t remote[4]) {
+    uint8_t ip[4] = {remote[0], remote[1], remote[2], remote[3]};
+    uint8_t next_hop[4], mac[6];
+    NetInterface *ni = netif_get_default();
+    if (!ni || !route_get_next_hop(ip, next_hop)) return;
+    if (arp_cache_lookup(next_hop, mac)) return;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        arp_send_request(ni, next_hop);
+        for (int wait = 0; wait < 20; ++wait) {
+            timer_sleep_ms(10);
+            if (arp_cache_lookup(next_hop, mac)) return;
+        }
+    }
+}
+
 static int connect_socket(open_file_description_t *description,
                           const void *p, uint64_t n) {
     sockaddr_in_t address;
@@ -215,6 +237,7 @@ static int connect_socket(open_file_description_t *description,
     for (int i = 0; i < 4; ++i)
         remote[i] = ((const uint8_t *)&address.sin_addr)[i];
 
+    resolve_next_hop(remote);
     net_lock();
     result = tcp_connect_start(description->socket, remote, port);
     net_unlock();

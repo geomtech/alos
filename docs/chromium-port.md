@@ -1217,3 +1217,562 @@ vm-suite-complete
 
 Le smoke exerce `Vec`, `String` et un `thread_local!` Rust depuis deux pthreads
 natifs ALOS plus le thread principal.
+
+### Build V8 `out/alos-v8full` (passe 5, 2026-11-23)
+
+`ninja -k 0 v8:v8 v8:run_mksnapshot_default` : passage de 41 echecs a 0 echec
+(2646 actions du graphe hote + cible, puis 8 actions de reprise). Le dernier
+manque etait le checkout `third_party/fast_float/src` (`conversions.cc` ne
+trouvait pas `fast_float.h`) ; il est ajoute a `fetch-chromium.ps1` a la
+revision de la DEPS Chromium 140 (`cb1d42aa...`).
+
+Observe : les outils hote `clang_x64/torque` et `clang_x64/mksnapshot` sont
+construits, `snapshot_blob.bin` et `gen/v8/embedded.S` sont generes, et
+`libv8_libbase.a`/`libv8_libplatform.a` existent pour la cible ALOS.
+
+Limites : `v8:gn_all` n'est pas construit (ses fuzzers exigent des sources
+absentes du checkout partiel, ce qui n'est pas un manque ALOS). Rien n'est lie
+en executable ALOS ni execute sous QEMU ; `snapshot_blob.bin` est produit par
+l'outil hote. Ce jalon ne prouve donc ni execution de V8, ni JIT, ni WebAssembly
+sur ALOS. Etape suivante : lier un `d8`/shell V8 minimal et le lancer sous
+QEMU (`test-vm.ps1`), en traitant les symboles libc/noyau manquants au link.
+
+#### Premier lancement de V8 sous QEMU : `v8_hello_world` (2026-11-23)
+
+`ninja v8:v8_hello_world` lie un executable statique (ELF, 307 Mo avec debug,
+45 Mo strippe) sans symbole non resolu. Il est lance sous QEMU par
+`test-vm.ps1 -V8SmokePath <v8_hello_world> -BaseSmokeOnly` (disque de test de
+160 Mo, `snapshot_blob.bin` copie a la racine). Ce n'est **pas** un succes :
+le sample n'imprime pas `Hello, World!`. Les blocages successifs, en ordre :
+
+1. `OS::SetDataReadOnly(&v8_flags)` appelait `mprotect` sur l'image ELF
+   statique, rejete par ALOS (EINVAL). Corrige dans le noyau : `vm_mprotect`
+   accepte desormais R/W/NONE sur des pages presentes de l'image
+   `[0x400000, heap_start)` ; `PROT_EXEC` y est refuse (EACCES) car l'image
+   n'est pas un mapping suivi. Couvert par `mmap-test: image-mprotect PASS`
+   (suite VM complete verte, `qemu64`).
+2. Snapshot V8 externe introuvable : sans `snapshot_blob.bin` a cote du
+   cwd, V8 s'arrete (`Failed to deserialize the V8 snapshot blob`). Le
+   harnais le fournit maintenant.
+3. **Bloquant actuel :** V8 reserve son code range en RWX
+   (`mprotect(0x1201C0000, 0x1FFC0000, RWX)`, `code-range.cc`), ce que le
+   contrat ALOS rejette volontairement (EACCES). Il faut choisir : un build V8
+   sans JIT (`v8_enable_lite_mode`, sans WebAssembly ni TurboFan), ou une
+   politique W^X cote ALOS permettant a V8 de basculer RW<->RX. Aucun des deux
+   n'est fait ; RWX n'a pas ete autorise.
+
+Observe aussi : l'abort V8 (`FATAL`) se termine par une faute de page sur
+`0x7FFFFFFFE000` (sommet de pile), probablement dans la collecte de pile
+brute ; non investigue.
+
+#### W^X et code range V8 (2026-11-24)
+
+Le noyau ALOS accepte deja le cycle W^X par page : mapping RW, ecriture du
+code machine, `mprotect` RX, appel, retour RW. `mmap-test: wx-code PASS`
+(suite VM verte, `qemu64`) le couvre, avec RWX refuse pour `mmap` et
+`mprotect`.
+
+V8 14.0 (Chromium 140) n'offre pas de mode equivalent sur Linux/x64 : il
+n'existe plus de `--write-protect-code-memory` ; le code range est reserve puis
+recommite en `kReadWriteExecute` (`code-range.cc`, `memory-allocator.cc`), et
+`RwxMemoryWriteScope` n'agit qu'avec pthread-JIT-write-protect (Apple), BeCore
+ou `ThreadIsolation` (cles memoire x86 pkeys, absentes d'ALOS). Seul `jitless`
+passe les pages de code en RW. Faire basculer RW<->RX par page imposerait de
+patcher tous les sites d'ecriture du code (compilateurs, Sparkplug, deopt,
+patching, embedded blob) ; ce n'est pas un reglage ni un petit patch, et rien
+n'est fait a ce stade. `v8_hello_world` complet reste donc bloque sur le
+`mprotect` RWX du code range.
+
+#### Politique `MAP_JIT` bornee pour le JIT de V8 (2026-11-24)
+
+Constat : V8 14 exige un code range RWX (voir ci-dessus) ; aucun reglage ne le
+fait passer en RW<->RX. Le contrat general d'ALOS reste *RWX refuse*. Exception
+minimale, validee par le proprietaire du projet :
+
+- `MAP_JIT` (`0x800000`, `src/include/mman.h`) n'est accepte que pour un
+  mapping **anonyme prive** (EINVAL pour SHM, fichier ou `MAP_SHARED`).
+- Seuls les mappings `MAP_JIT` peuvent etre ou devenir RWX, par `mmap` comme
+  par `mprotect` ; tout autre mapping, l'image ELF et le tas restent refuses
+  (EACCES). Les regions `MAP_JIT` ne fusionnent pas avec les autres.
+- Plafond par processus : `ALOS_JIT_MAX_BYTES` = 1 Gio de regions `MAP_JIT`
+  (reservations PROT_NONE comprises), ENOMEM au-dela. Pas d'heritage par
+  `execve` ; `fork` copie la region comme tout mapping prive.
+- Chaque creation est journalisee (`KLOG_INFO`, refus de plafond en `WARN`).
+- Impact securite : un processus qui obtient une region `MAP_JIT` peut y
+  ecrire puis executer du code arbitraire (c'est le but d'un JIT) ; W^X n'y est
+  plus impose par le noyau. Le risque est confine a ces regions, bornees en
+  taille, mais tout programme peut demander `MAP_JIT` (pas de capacite par
+  processus, pas d'ASLR ni de sandbox) : une capacite reste a ajouter.
+- Cote V8 : `v8-alos-map-jit.patch` (`platform-posix.cc`, `page-allocator.cc`)
+  passe `MAP_JIT` pour la reservation du code range (`kNoAccessWillJitLater`,
+  que `PageAllocator` retrogradait en `kNoAccess` hors Apple) et pour les
+  mappings `kReadWriteExecute` directs, uniquement.
+
+Verifie : `mmap-test: wx-code PASS` et `jit-policy PASS` (RWX sans `MAP_JIT`
+refuse, combinaisons invalides, RWX dans une reservation PROT_NONE puis appel,
+voisin non JIT refuse, fork, execve sans heritage, plafond 1 Gio), suite VM
+complete verte en `qemu64`.
+
+**Resultat observe :** `v8_hello_world` complet (JIT, `out/alos-v8full`,
+snapshot externe a la racine) imprime `Hello, World!` sous QEMU
+(`test-vm.ps1 -V8SmokePath ... -BaseSmokeOnly`, `qemu64`, 160 Mo de disque) et
+la suite se termine (`vm-suite-complete`). Le code range de 512 Mo est reserve
+en `MAP_JIT`. Non verifie : `max` (XSAVE/AVX), charge JIT soutenue (TurboFan,
+Sparkplug), WebAssembly, `d8` et Blink ; ce n'est pas un navigateur.
+
+#### Shell V8 et charge JIT sous QEMU (2026-11-24)
+
+`d8` n'est pas portable en l'etat : `d8.cc` inclut `<signal.h>` et
+`d8-posix.cc` `<netinet/ip.h>` (processus, sockets, signaux), absents d'ALOS ;
+aucun stub n'a ete ajoute. A la place, `v8_shell` (`v8/samples/shell.cc`,
+sample officiel : `-e`, fichiers, `print`, `load`, `read`, `quit`) est lie pour
+ALOS via `v8-alos-shell.patch` (cible `want_v8_shell` sur la toolchain ALOS) ;
+`ninja v8:v8_shell` avec `gn gen --root-target=//v8:v8_shell`. Pas de timers
+ni de boucle d'evenements : ce n'est pas Node ni le shell Blink.
+
+Harnais : `test-vm.ps1 -V8SmokePath .../v8_shell -V8Script <fichier.js>
+[-V8Flags "..."] [-V8Marker "..."]` copie le script en `/test.js` et lance
+`v8-shell <flags> /test.js`.
+
+Observe : `ports/chromium/tests/v8-jit-stress.js` (fib, boucles chaudes, Float64Array, chaines,
+Map) imprime `v8-jit-stress: PASS sum=1506031792`, valeur identique a celle
+d'un moteur V8 hote, sous `qemu64` **et** `-Cpu max`. Avec `--trace-opt`, V8
+journalise 4 optimisations TurboFan (`mix`, `hot` OSR, `typed` OSR, ...) :
+TurboFan et le tier-up OSR s'executent sur ALOS dans les deux profils CPU.
+`--always-sparkplug` est accepte sans erreur, mais ce trace n'enregistre pas
+Sparkplug : son execution n'est pas demontree. Non couverts : WebAssembly (non execute ; le gestionnaire de traps
+repose sur des signaux), charge longue/GC sous pression, tests V8 officiels.
+
+### GPU : pilote virtio-gpu 2D (2026-11-24)
+
+Avant ce jalon ALOS n'avait aucun pilote GPU : l'affichage passe par le
+framebuffer Limine et le desktop userland dessine en SHM ARGB. Premier etage
+d'une pile GPU pour Chromium : `src/drivers/virtio_gpu.c`/`.h`.
+
+Perimetre : PCI **modern** (`1af4:1050`, `VIRTIO_F_VERSION_1` negocie, aucune
+feature 3D/EDID/blob), controlq unique **pollee** (INTx coupe dans PCI COMMAND :
+sans cela la ligne IRQ partagee avec virtio-net n'est jamais acquittee et le
+handler reseau boucle), `GET_DISPLAY_INFO`, ressource 2D `B8G8R8X8`,
+`ATTACH_BACKING` sur une memoire physique contigue, `SET_SCANOUT`,
+`TRANSFER_TO_HOST_2D` + `RESOURCE_FLUSH` (`virtio_gpu_flush`). Le pilote
+ecrit directement sur les capabilities modern car le transport generique stocke
+des adresses 32 bits et ne negocie pas VERSION_1 ; les registres de queue sont
+ecrits en 32 bits (les acces 64 bits sont refuses par QEMU).
+`virtio-vga` (classe VGA) est volontairement **laisse** au framebuffer Limine.
+Au boot, si `virtio-gpu-pci` est present, un auto-test dessine un fond
+`0x000040C0` et un rectangle rouge `[64,64,256,128]`.
+
+Test : `.\ports\chromium\scripts\test-gpu.ps1` lance QEMU avec
+`-device virtio-gpu-pci,id=gpu0`, capture le scanout par QMP `screendump`
+et verifie des pixels cote hote. Observe : `scanout 1280x800`, pixel
+(100,100)=255,0,0, fond 0,64,192 aux deux coins, `virtio-gpu 2D PASS`
+(`qemu64`).
+
+Limites : pas d'IRQ, pas de curseur, pas de redimensionnement dynamique ni
+d'EDID, pas de 3D (virgl/venus), un seul scanout/ressource, backing contigu
+(echec propre si la memoire est fragmentee), pas encore expose a l'userland :
+le desktop utilise toujours le framebuffer Limine. Non teste sur VirtualBox ni
+materiel reel (virtio-gpu y est absent/different).
+
+#### virtio-gpu : API userland pour le display owner (2026-11-24)
+
+Deux syscalls reserves au **display owner** (`SYS_DISPLAY_ACQUIRE`) :
+`SYS_GPU_MAP` (320) mappe en RW/NX la surface virtio-gpu a `USER_GPU_BASE`
+(`0x68000000`, dans la zone des mappings externes) et renvoie
+`alos_gpu_info_t` (`src/include/gpu_abi.h` : adresse, taille, largeur, hauteur,
+pitch, format `B8G8R8X8`) ; `SYS_GPU_FLUSH` (321) envoie un rectangle a l'hote
+(`virtio_gpu_flush`). Erreurs : `EPERM` (pas display owner), `ENODEV` (pas de
+virtio-gpu 2D), `ENOMEM`, `EINVAL` (rectangle hors surface). Wrappers libc :
+`<sys/gpu.h>` (`gpu_map`, `gpu_flush`). Le desktop officiel n'est **pas**
+encore branche dessus : il garde le framebuffer Limine, et les deux chemins
+coexistent (le virtio-gpu n'est un scanout que s'il est ajoute comme
+`virtio-gpu-pci`).
+
+Test : `test-vm.ps1 -GpuTest` lance `gpu-test` (acquiert l'affichage, mappe,
+dessine un degrade, un rectangle vert et un carre jaune, flushe, verifie le
+rejet d'un flush hors surface), puis capture le scanout par QMP `screendump`
+et controle les pixels cote hote. Observe (`qemu64`) : vert 0,255,0 ; jaune
+255,255,0 ; degrade 0,199,223 conforme ; `ALOS GPU userland PASS` ; la suite
+VM par defaut reste verte. Non fait : redimensionnement dynamique, plusieurs
+processus/surfaces, double buffering, integration du desktop et d'Ozone.
+
+#### Skia raster CPU : premier sondage GN (2026-11-24)
+
+Etat : **rien de Skia n'est compile ni execute sur ALOS.** `gn gen` sur un
+`out/alos-skia` (args du profil ALOS) montre ce qui bloque, dans l'ordre :
+
+- `//skia:skia` (wrapper Chromium) : exige `use_crash_key_stubs = true`
+  (assertion `components/crash`), puis tire `//gpu/config` et, par une chaine
+  que GN n'affiche pas en entier, `//third_party/blink/renderer/platform/image-decoders`
+  (crabbyavif -> Rust requis, d'ou `enable_rust = true`, profil `out/alos-rust`),
+  puis `//crypto` qui exige `nss` via pkg-config (`use_nss_certs`/
+  `//build/config/linux/nss`) : chaque saut est un probleme d'integration
+  Chromium a traiter par une configuration ou un patch ALOS.
+- `//third_party/skia:skia` (Skia amont autonome) : sources manquantes du
+  checkout partiel (`libjpeg-turbo`, `freetype2`, `harfbuzz`, ...) pour les
+  options non desactivees ; `experimental/` ajoute au sparse-checkout
+  (`fetch-chromium.ps1`) ; puis `//third_party/wuffs` n'est visible que de
+  `//skia:skia` (liste de visibilite Chromium) : la cible amont seule n'est pas
+  constructible dans cet arbre sans patch de visibilite.
+
+Conclusion honnete : le rendu logiciel Skia demande un travail de GN
+incremental (dizaines de dependances, chaque tour = gen puis correction), a
+mener a part. Chemin recommande : partir de `//skia:skia` avec le profil Rust,
+`use_crash_key_stubs`, desactivation de nss/crypto liee aux certificats, GPU
+(`skia_use_gl/vulkan/dawn = false`) et `skia_enable_gpu = false`, puis copier le
+bitmap raster vers la surface `SYS_GPU_MAP`.
+
+#### Couche GPU multi-pilotes et bureau complet sur virtio-gpu (2026-11-24)
+
+Le pilote virtio-gpu est range sous `src/drivers/gpu/` derriere une couche
+`gpu.h` : `gpu_driver_t` (probe, init, flush, set_mode, shutdown), registre
+avec priorites, selection par vendor/device ou classe PCI, repli sur le
+framebuffer Limine si aucun pilote n'est actif ; `SYS_GPU_QUERY` (322) expose
+nom du pilote, IDs PCI, capacites (`ALOS_GPU_CAP_*`) et mode, independamment du
+pilote. Mode d'emploi pour ajouter un pilote : `docs/DRIVERS.md` section 13 et
+`gpu_driver_template.c.example`.
+
+Le desktop officiel (`/bin/gui`) utilise `SYS_GPU_MAP` + `SYS_GPU_FLUSH`
+quand un GPU est present (`gui: using virtio-gpu WxH`), sinon le framebuffer
+Limine ; il flushe l'ecran entier a chaque rendu (pas de damage partiel).
+Test : `test-vm.ps1 -DesktopGpuTest` lance `/bin/gui` puis `/bin/gui-demo`,
+capture le scanout par QMP et verifie fond (degrade), barre des taches, bouton
+de fenetre et corps de fenetre (capture : `docs/desktop-virtio-gpu.png`).
+Observe (`qemu64`) : tout conforme ; `test-gpu.ps1`, `-GpuTest` (avec
+`gpu_query`) et la suite VM par defaut restent verts. `run.ps1 run -VirtioGpu`
+ajoute `-device virtio-gpu-pci` ; le desktop est alors visible dans la console
+virtio-gpu de la fenetre QEMU (menu View). Non fait : clic/clavier valides sur
+cette sortie (entrees PS/2 inchangees mais non testees ici), damage partiel,
+redimensionnement, VirtualBox/materiel reel.
+
+#### Skia raster CPU sur ALOS, presente via virtio-gpu (2026-11-24)
+
+Correction du sondage precedent : `//third_party/skia:skia` (Skia amont, pas le
+wrapper `//skia` de Chromium) se genere et **se compile pour ALOS** (729
+actions, 0 echec, `libskia.a`) avec : `use_crash_key_stubs`,
+`treat_warnings_as_errors = false` (les 104 echecs initiaux etaient tous des
+`-Werror` de la config Chromium, ex. `-Wc++98-compat-extra-semi`), et les
+options `skia_use_wuffs`, `libpng`, `libjpeg_turbo`, `libwebp`, `libavif`,
+`libjxl`, `dng_sdk`, `piex`, `freetype`, `harfbuzz`, `expat`, `icu`, `xps`,
+`skia_enable_pdf/skshaper/skunicode/gpu`, `skia_use_gl/vulkan/dawn/metal`
+desactivees (visibilite Chromium sur wuffs/libpng, sources absentes du
+checkout partiel). `experimental/` ajoute au sparse-checkout.
+
+Build : `build-chromium.ps1 -Skia` (profil `out/alos-skia`, cible
+`alos_native/skia:skia_raster_smoke`, sources dans `ports/chromium/skia/`). Deux
+points d'integration documentes : Skia ajoute `-ldl` (`SkOSFile_posix`) ; ALOS
+n'a pas de libdl, donc `make-empty-archive.py` fournit une archive vide, sans
+symbole (un vrai appel a `dlopen` echouerait au link) ; et Skia exige de
+l'embarqueur `SkDebugf` (redirige vers stdout) et `SkPngEncoder::Encode`
+(reference sans condition par `SkWriteBuffer`) : `skia-embedder-alos.cc` fait
+**echouer** l'encodage PNG (retourne false, non supporte) plutot que de
+simuler un succes.
+
+Test : `test-vm.ps1 -V8SmokePath .../skia_raster_smoke -V8Marker
+"skia-raster-smoke: PASS" -V8Gpu -BaseSmokeOnly` (le switch `-V8Gpu` ajoute un
+`virtio-gpu-pci` et verifie le scanout par QMP). `skia_raster_smoke` (18 Mo)
+dessine dans un `SkBitmap` BGRA : rectangle, degrade lineaire, cercle
+anti-aliase, triangle, verifie les pixels, puis copie le bitmap vers la surface
+`SYS_GPU_MAP` et flushe. Observe (`qemu64`) : `skia-raster-smoke: PASS 320x200`
+puis `presented via virtio-gpu` ; capture hote : fond gris 48,48,48, rectangle
+32,64,224, cercle noir, triangle 16,160,48 (`docs/skia-raster-virtio-gpu.png`).
+
+Limites : pas de texte (FreeType/HarfBuzz desactives, polices non portees), pas
+de codecs d'image, pas de GPU (Ganesh/Graphite), SIMD Skia non valide sous `max`,
+pas de `//skia` Chromium (qui entraine Blink, crypto, nss, extensions via GN),
+pas de rendu Blink. Prochaine marche : FreeType + polices (texte), puis le
+wrapper `//skia` quand Blink sera dans le graphe.
+
+#### Skia : rendu de texte FreeType (2026-11-24)
+
+`build-chromium.ps1 -Skia` active maintenant `skia_use_freetype` : sources
+FreeType ajoutees a `fetch-chromium.ps1` (`third_party/freetype/src`, rev DEPS
+Chromium 140) et alias `//third_party/freetype2` -> `//build/config/freetype`
+(la visibilite de FreeType n'autorise que cette cible ; fichier
+`ports/chromium/skia/freetype2-shim.gn`). Skia se recompile (554 actions, 0
+echec) avec `SkFontMgr_New_Custom_Directory`.
+
+Test : `skia_raster_smoke` charge `/fonts` (la TTF du depot
+`src/userland/gui/fonts/system_font.ttf`, famille Roboto, copiee par
+`test-vm.ps1 -ImageFile hote=/image`) et rasterise "ALOS Skia" en
+anti-aliasing. Observe (`qemu64`) : `text pixels=1718 antialiased=612`,
+`skia-raster-smoke: PASS 320x260`, presentation virtio-gpu verifiee par QMP
+(capture : `docs/skia-raster-virtio-gpu.png`).
+
+Limites : pas de shaping (HarfBuzz desactive : pas de ligatures ni de texte
+complexe), une seule police, pas de fontconfig, pas de fallback de polices, pas
+de codecs d'image, pas de GPU. Ordre des prochaines marches (priorite
+Chromium) : base::RunLoop + V8 embarque, //net minimal, Blink headless,
+content_shell mono-processus ; le GPU (Skia GPU, virgl, autres pilotes) passe
+apres sauf exigence de Chromium.
+
+#### base::RunLoop + V8 embarque (2026-11-24)
+
+`ports/chromium/v8-runloop/` (cible `alos_native/v8_runloop:v8_runloop_smoke`,
+profil `out/alos-runloop` = args V8 complet + `use_crash_key_stubs`) embarque V8
+(isolate + libplatform + snapshot externe) dans une `base::SingleThreadTaskExecutor`.
+Un `setTimeout` natif (FunctionTemplate) poste des taches retardees ; le
+`base::RunLoop` les execute dans l'ordre des delais puis rend la main.
+Observe (`qemu64`, `test-vm.ps1 -V8SmokePath ... -V8Marker "v8-runloop-smoke: PASS"`) :
+`order=a,b,c,d elapsed_ms=63` (delais 20/40/60 ms et un timer imbrique), donc
+timers `base` (horloge monotone ALOS), pompe de messages et V8 cohabitent.
+
+`//gin` n'est pas utilise : son graphe tire (via `//ui/base`) `printing`
+(cups-config), `fontconfig` (bindgen Rust cote hote) et nss ; l'embarqueur ici est
+volontairement minimal (V8 + `v8::platform::NewDefaultPlatform` + base). Limites :
+pas de `base::ThreadPool`/TaskScheduler exerce par ce smoke, pas d'integration
+des taches V8 au RunLoop (la plateforme par defaut a ses threads), pas de
+microtasks/promesses testees.
+
+#### base::ThreadPool et correction de exit() (2026-11-24)
+
+`ports/chromium/v8-runloop/threadpool-smoke.cc` (`alos_native/v8_runloop:threadpool_smoke`)
+exerce `base::ThreadPoolInstance` : 16 `PostTaskAndReplyWithResult` calcules
+sur le pool et rendus au thread principal, puis un `SequencedTaskRunner` (20
+taches, ordre FIFO). Observe (`qemu64`) : `replies=16 sum=1496 expected=1496
+fifo=1`, `threadpool-smoke: PASS`.
+
+Ce smoke a revele un bug libc : `exit()` appelait `_exit()` (exit de thread) ;
+un processus multithread dont `main()` retourne ne devenait donc jamais zombie
+(les threads du pool restaient vivants) et `waitpid()` du shell bloquait.
+`exit()` fait desormais `SYS_EXIT_GROUP` (POSIX : tout le processus) ; `_exit()`
+reste un exit de thread (utilise par `pthread_exit`). Effet de bord corrige :
+`threads-test` terminait ses threads par `exit(0)` et utilise `_exit(0)`.
+Verifie : suites par defaut et `-Runtime` vertes (`qemu64`).
+
+Echecs **preexistants** de `-Fleet` (identiques sans ce changement, verifie en
+reconstruisant l'etat precedent) : `base-math-test` (`ldexpl(1, 16384)` sans
+`errno == ERANGE`), `native-compat-test` (`ldexpf` ERANGE, tests 40 et 42),
+`ipc-poll-test` (`poll_one(...)` errno 95). Non traites ici ; ils concernent
+libm/poll, pas le modele de threads.
+
+#### Builds Chromium sur ext4 : 3x plus rapides (2026-11-24)
+
+Mesure sur `base:base` (2549 actions, 16 CPU / 16 Go Docker) : le checkout,
+`out/`, `/libcxx` et `/alos` etaient des bind-mounts NTFS ; l'E/S des en-tetes
+etait le goulot (une compilation servie par ccache : 4,6 s, 0,011 s sur ext4).
+Tout sur volumes Docker ext4 : 277 s sans cache (contre ~848 s), 6 s avec ccache
+chaud. `build-chromium.ps1` accepte desormais un `-ChromiumDirectory` pointant un
+volume Docker (chemin UNC `\wsl$\docker-desktop\...\volumes\<nom>\_data`) ;
+`migrate-checkout-ext4.ps1` fait la copie ; `symbol_level=0`, `-Jobs 14`
+et `-Ccache` sont les nouveaux defauts/options. Detail, chiffres et limites :
+`ports/chromium/BUILD-SPEED.md`. Valide : Skia (`-Skia -Ccache`) construit depuis
+le volume puis execute sous QEMU (PASS identique). L'ancien checkout NTFS est
+conserve.
+
+#### //net:net sur ALOS : premiere compilation reelle (2026-11-24)
+
+Cible : `build-chromium.ps1 -Net` (profil `out/alos-net`, root `//net:net`, depuis le
+volume ext4). Le graphe GN se genere (2871 cibles) grace a : `testing/test.gni`
+(`test()` neutralise, patch `chromium-alos-skip-test-targets`), `use_blink=false`,
+`gclient_args.gni` complete, convertisseurs de fuzzers Skia exclus, args
+UI/Ozone/nss/cups/glib a faux. Patchs ajoutes pour la compilation :
+`chromium-alos-field-trial-key` (cle `std::pair` possedee : le `std::less<void>`
+heterogene echoue avec libstdc++ 13 pour les outils hote), `chromium-alos-rust-host-tls`
+(`-Ztls-model=local-exec` reserve a la toolchain ALOS ; il cassait le link des macros
+procedurales hote), `chromium-alos-cxxbridge-target-path` (`RUST_TARGET_PATH` pour
+cxxbridge) ; `third_party/lss` ajoute a `fetch-chromium.ps1`, `<memory.h>` a la libc.
+
+Etat : les outils hote (base hote, macros Rust, cxxbridge) compilent. Reste
+**21 echecs, tous de vraies lacunes de plateforme ALOS** (premiere passe,
+`-k 0`) :
+- en-tetes absents de la libc : `<net/if.h>` (`if_nametoindex`, `ifreq`),
+  `<resolv.h>` (`res_ninit`, lu par `dns_config_service_posix`, `scoped_res_state`,
+  `resolv_reader`), `<ifaddrs.h>`/`getifaddrs` (`network_interfaces_getifaddrs`) ;
+- `getpeereid` (`unix_domain_server_socket_posix`) ;
+- GSSAPI (`gssapi.h`) : a couper par `use_kerberos = false` ;
+- crates Rust (`libbase_crust_ulogger`, `serde`) : `log_severity`/`chromium` non
+  resolus dans le profil `-Net` (dependances `enable_rust_cxx`).
+Il faudra donc une couche reseau ALOS (liste des interfaces, configuration DNS issue
+du noyau/DHCP, notification de changement reseau) plutot que des stubs ; non faite.
+
+#### //net sur ALOS : requete HTTP reelle (2026-11-24)
+
+`build-chromium.ps1 -Net -Ccache` (depuis le volume ext4) compile et lie
+`alos_native/net:net_http_smoke` (`ports/chromium/net/`). Le smoke ouvre un
+`URLRequestContext` (`URLRequestContextBuilder`, proxy direct fixe, `ThreadPool`,
+`SingleThreadTaskExecutor` IO) et recupere `http://10.0.2.2:8123/hello.txt` servi par
+l'hote, avec un journal NetLog imprime. Observe sous QEMU (`qemu64`) : `HostResolver`,
+pool de sockets, `HTTP_STREAM_JOB`, `TCP_CONNECT` 10.0.2.15 -> 10.0.2.2:8123,
+`HTTP/1.0 200 OK`, `net::OK`, 25 octets, `net-http-smoke: PASS`.
+
+Pour que cela fonctionne : patch `chromium-alos-net-trust-store` (magasin Chrome Root
+seul, pas de magasin systeme ; `TestRootCerts` integre), `Process::CreationTime()`
+nul (non expose par ALOS), `chrome_root_store_only`, `use_kerberos=false`, et cote
+ALOS : `SYS_NET_IFACE_INFO` + `net/if.h`/`ifaddrs.h`/`resolv.h`/`gethostname`/
+`getpeereid` (ENOTSUP), constantes et structures socket, types BSD. Deux vrais
+defauts ALOS ont ete trouves par ce smoke : `fcntl(F_SETFL, O_NONBLOCK)` etait refuse
+sur les sockets TCP (-> `ERR_NOT_IMPLEMENTED`), et `connect()` echouait en
+`EHOSTUNREACH` sur un cache ARP froid (la pile TCP n'a pas de file d'attente ARP) ;
+le noyau resout maintenant l'ARP du prochain saut (bornee a ~1 s, polling) avant le
+SYN, donc le `connect()` non bloquant bloque brievement le temps de l'ARP.
+
+Limites : HTTP en clair, IP litterale (pas de DNS reel via //net : a tester), pas de
+TLS, pas de verification de certificats testee, options socket (TOS, multicast...)
+renvoyant ENOPROTOOPT, pas de retransmission SYN complete, pas de proxy systeme
+ni de detection de changement de reseau. Serveur de test : `python -m http.server`.
+
+**DNS reel + Internet (meme jour)** : `test-vm.ps1 -V8SmokePath .../net_http_smoke
+-V8Args "http://example.com/"` : `HostResolver` -> `getaddrinfo` ALOS -> DNS du noyau (DHCP
+10.0.2.3 -> resolveur de l'hote) a resolu `example.com` en 172.66.147.243, connexion
+TCP :80, `HTTP/1.1 200 OK` chunked, 577 octets (`<title>Example Domain</title>`),
+`net::OK`. Dependant d'Internet : a ne pas utiliser comme test deterministe.
+
+#### Blink / content_shell : inventaire des ecarts (2026-11-24)
+
+Etat reel : **Blink n'est pas compile.** Profil `build-chromium.ps1 -Blink`
+(`out/alos-blink`, volume ext4, `use_blink=true`, Ozone ALOS, extensions/plugins/
+impression/webrtc/media-ffmpeg/WebGPU/fontconfig coupes). Mesures :
+
+- `gn gen` reussit pour tout le graphe ALOS (~24 200 cibles), y compris
+  `//third_party/blink/renderer/{platform,core}:*` et `//content/shell:content_shell`,
+  apres : `testing/test.gni` (tests neutralises), sources DEPS manquantes recuperees
+  (`fetch_deps.py`, 79 depots git Linux, ~1 min), sonde Ozone limitee a l'option
+  `alos_ozone_probe_enabled`.
+- Premiere compilation de `blink/renderer/platform/wtf:wtf` (16 508 actions, ~14 150
+  compilees avant arret, `-k 0`) : 412 echecs, dont ~230 etaient des lacunes libc,
+  corrigees ensuite : `htobe16/32/64` et famille (`<endian.h>`), `<alloca.h>`,
+  `<utime.h>`, `pthread_setname_np` (ENOTSUP), `rand/srand`. Apres correction : 451
+  echecs sur 13 911 actions, qui ne sont plus de la libc mais de la **plateforme
+  graphique** :
+  - ANGLE (216) et SwiftShader (64) + vulkan-loader (14) : `Unsupported platform`,
+    `llvm/Config/llvm-config.h` absent, `ScanForward` ambigu ;
+  - code UI Chromium sans cas ALOS : `gfx::NativeWindow`, `ClipboardFormatType`,
+    `ui/gl` (types EGL), `ui/events`, `ui/display`, `ui/base`, `components/signin`,
+    `components/trusted_vault`, `ui/webui`, `gpu/config`.
+Les medias et webrtc ne bloquent plus.
+
+Lecture honnete : le plus gros reste a faire est l'integration graphique/UI
+(ANGLE/SwiftShader ou leur retrait, ports ALOS de `ui/gfx`, `ui/gl`, presse-papiers,
+`NativeWindow`), puis Mojo/IPC, services, `content` mono-processus. Aucun rendu
+Blink n'est demontre ; pas de `content_shell`. Le build est maintenant 3x plus rapide
+(ext4 + ccache), ce qui rend ces iterations raisonnables.
+
+## Passation a Codex (2026-11-24)
+
+Branche : `claude/project-thread-kuvnyf` (PR #7). Lire d'abord `AGENTS.md`, puis cette
+section ; les jalons ci-dessus detaillent chaque preuve. **Aucune compilation n'est en
+cours.** Dernier etat de build : Blink `wtf` (inventaire plus haut).
+
+### Etat courant : jalons REUSSIS avec preuve (QEMU `qemu64`)
+
+| Jalon | Preuve (marqueur / sortie) |
+| --- | --- |
+| V8 complet + JIT, politique `MAP_JIT` bornee | `v8_hello_world` : `Hello, World!` ; `mmap-test: wx-code PASS`, `jit-policy PASS` |
+| Shell V8, TurboFan sous charge (aussi `-Cpu max`) | `v8-jit-stress: PASS sum=1506031792` (identique a un V8 hote) |
+| V8 dans `base::RunLoop` | `v8-runloop-smoke: order=a,b,c,d` |
+| `base::ThreadPool` + `exit()` = `exit_group` | `threadpool-smoke: PASS` |
+| Skia raster CPU + texte FreeType, presente via virtio-gpu | `skia-raster-smoke: PASS 320x260` + capture QMP |
+| GPU : virtio-gpu 2D, couche multi-pilotes, `SYS_GPU_*`, desktop sur virtio-gpu | `ALOS GPU userland PASS`, `ALOS desktop via virtio-gpu PASS` |
+| `//net` : HTTP local ET Internet reel (DNS ALOS) | `net-http-smoke: PASS` ; `http://example.com/` -> `net::OK`, 200, 577 octets |
+| Libc reseau : `getifaddrs`, `if_nametoindex`, `resolv.h`, `gethostname` | `net-info-test: PASS` |
+| Builds sur ext4 | `base:base` 277 s (contre ~848 s) ; 6 s avec ccache chaud |
+
+**Non reussi / non commence** : Blink n'est pas compile (451 echecs de plateforme
+graphique : ANGLE, SwiftShader, vulkan-loader, `ui/gfx`, `ui/gl`, presse-papiers,
+`NativeWindow`), pas de `content_shell`, TLS non teste.
+
+### Chemins
+
+- Checkout Chromium **ext4 (recommande)** : volume Docker `alos-chromium`, vu depuis
+  Windows par
+  `\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\alos-chromium\_data`.
+  Volumes associes : `alos-libcxx` (copie de `alos-libcxx-21`), `alos-repo` (copie des
+  dossiers du depot lus par le build, synchronisee par `build-chromium.ps1`),
+  `alos-ccache`. Images : `alos-runtime`, `alos-runtime-ccache`, `alos-build`.
+- Ancien checkout NTFS (intact ; ne rien supprimer sans accord) :
+  `C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80` ; libc++ :
+  `...\work\alos-libcxx-21` ; gn : `...\work\gn-linux-amd64`.
+- Dependances DEPS manquantes : `ports/chromium/scripts/fetch_deps.py` (voir son en-tete ;
+  s'execute dans un conteneur `alos-runtime` avec le volume monte sur `/chromium`).
+
+### Commandes EXACTES
+
+Variables PowerShell (depuis `C:\Projets\alos`) :
+
+```powershell
+$W='C:\Users\dacru\Documents\Codex\2026-09-30\c\work'
+$U='\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\alos-chromium\_data'
+$B = ".\ports\chromium\scripts\build-chromium.ps1 -ChromiumDirectory '$U' -LibcxxDirectory '$W\alos-libcxx-21' -GnDirectory '$W\gn-linux-amd64' -Ccache"
+```
+
+Builds (`-KeepGoing` pour lister tous les echecs ; sorties dans `$U\out\alos-*`) :
+
+```powershell
+Invoke-Expression "$B -Skia"                       # out/alos-skia/skia_raster_smoke
+Invoke-Expression "$B -Net -KeepGoing"             # out/alos-net/net_http_smoke
+Invoke-Expression "$B -Blink -KeepGoing"           # Blink wtf (echoue : voir inventaire)
+Invoke-Expression "$B -V8Probe"                    # v8_libbase seulement
+```
+
+Les executables V8 (`v8_hello_world`, `v8_shell`) et les smokes `v8_runloop_smoke` /
+`threadpool_smoke` sont dans `out/alos-v8full` et `out/alos-runloop` (profils construits
+par `ninja` dans ces dossiers depuis le volume ou l'ancien checkout, voir les sections
+V8/RunLoop plus haut ; arguments dans leur `args.gn`).
+
+Tests QEMU (disque de test isole, jamais `disk.img` ; `-SkipBuild` seulement si les sorties
+correspondent aux sources) :
+
+```powershell
+.\ports\chromium\scripts\test-vm.ps1                              # suite par defaut (inclut net-info-test)
+.\ports\chromium\scripts\test-vm.ps1 -Runtime -Cpu qemu64         # runtime ; aussi -Cpu max
+.\ports\chromium\scripts\test-gpu.ps1                             # virtio-gpu 2D (capture QMP)
+.\ports\chromium\scripts\test-vm.ps1 -GpuTest                     # API userland GPU
+.\ports\chromium\scripts\test-vm.ps1 -DesktopGpuTest              # bureau complet sur virtio-gpu
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-v8full\v8_hello_world" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-v8full\v8_shell" -V8Script ports\chromium\tests\v8-jit-stress.js -V8Marker "v8-jit-stress: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-runloop\v8_runloop_smoke" -V8Marker "v8-runloop-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-runloop\threadpool_smoke" -V8Marker "threadpool-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-skia\skia_raster_smoke" -V8Marker "skia-raster-smoke: PASS" -V8Gpu -BaseSmokeOnly -ImageFile "src\userland\gui\fonts\system_font.ttf=/fonts/system_font.ttf"
+```
+
+Test `//net` : lancer un serveur HTTP sur l'hote dans un dossier contenant `hello.txt`
+(texte : `hello from the ALOS host`), puis le smoke (10.0.2.2 = l'hote vu de QEMU user-net) :
+
+```powershell
+python -I -m http.server 8123 --bind 127.0.0.1 --directory <dossier>
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-net\net_http_smoke" -V8Marker "net-http-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-net\net_http_smoke" -V8Args "http://example.com/" -V8Marker "net-http-smoke: url=" -BaseSmokeOnly
+```
+
+### Pieges connus
+
+- **Permissions de commit/push** : une commande combinee (doc + commit + push de la politique
+  `MAP_JIT`) a ete refusee par le controle de permissions ; elle est passee apres un accord
+  explicite de l'utilisateur. Pas de `git commit -a` : des binaires generes sont suivis
+  (`fs_root/bin/*`, `src/userland/<programme>`, `libc.a`, `artifacts-rust-vm/`) ; ajouter les
+  fichiers un a un. `git checkout -- artifacts-rust-vm` restaure ce dossier si un
+  `rm -rf artifacts-*` l'a efface.
+- **Rebuild complet** apres changement de `symbol_level` (defaut 0), `cc_wrapper` ou args ;
+  `-Ccache` amortit. Les profils `out/alos`, `alos-v8full`, `alos-runloop`, `alos-net`,
+  `alos-skia`, `alos-blink` recompilent chacun `base`/`abseil`/`boringssl`/`perfetto` (args
+  differents) : unifier les args serait un gain (`ports/chromium/BUILD-SPEED.md`).
+- **Bind-mounts NTFS** (`/libcxx`, `/alos`, sources) : une compilation en cache y coute 4,6 s
+  contre 0,01 s sur ext4. Utiliser le mode volume. `alos-repo` n'est synchronise que par
+  `build-chromium.ps1` : apres modification de la libc ou d'en-tetes, relancer ce script (ou
+  la copie `tar` qu'il fait) avant un `ninja` manuel ; reconstruire `libc.a` par `test-vm.ps1`
+  (etape de build) d'abord.
+- **Ecritures** : des litteraux `\n`/`\b` ecrits via certains outils ont ete corrompus
+  (nouvelles lignes reelles dans des chaines C, `\b` -> backspace). Relire apres ecriture.
+- **GN** charge les dependances de TOUTES les cibles d'un BUILD (tests compris) : d'ou le
+  patch `chromium-alos-skip-test-targets` (`test()` = `group` vide). Patchs idempotents
+  (`git apply --reverse --check`), listes dans `build-chromium.ps1`.
+- **Echecs `-Fleet` preexistants** (`base-math-test`, `native-compat-test` ldexp ERANGE,
+  `ipc-poll-test` errno 95) : non lies aux travaux recents (verifie par reconstruction).
+- Options socket (TOS, multicast...) : constantes presentes, `setsockopt` -> ENOPROTOOPT ;
+  `connect()` non bloquant bloque ~ le temps de l'ARP (borne ~1 s) ; `getpeereid` -> ENOTSUP.
+
+### Prochaines etapes, dans l'ordre
+
+1. **TLS et verification de certificats** dans `//net` : HTTPS (BoringSSL + Chrome Root Store
+   seul, patch `chromium-alos-net-trust-store`) vers un serveur de test local puis Internet ;
+   horloge reelle, `getentropy`, pas de magasin systeme. Smoke `net_http_smoke` avec `https://`.
+2. **Blink headless** : retirer ANGLE/SwiftShader/Vulkan du graphe (rendu logiciel Skia
+   seul) ; ajouter ALOS aux gates de `ui/gfx`, `ui/gl` (types EGL), presse-papiers,
+   `gfx::NativeWindow`, `ui/events`, `ui/display`, `components/signin`, `trusted_vault`,
+   `ui/webui`, `gpu/config` (plateforme Ozone `alos`, `ports/chromium/ozone`) ; puis compiler
+   `wtf` -> `platform` -> `core` -> `modules` avec `-Blink -KeepGoing`.
+3. **content_shell mono-processus** (`--single-process --no-sandbox`) dans une fenetre
+   `libgui` (surface via `SYS_GPU_MAP` ou SHM du desktop) : Mojo/IPC, services, `content`.
+4. **Skia GPU / virgl** (ensuite) : virtio-gpu 3D + Mesa, ou SwiftShader/ANGLE logiciels ;
+   pilotes reels via `src/drivers/gpu` (`docs/DRIVERS.md` section 13).

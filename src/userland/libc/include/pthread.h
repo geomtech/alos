@@ -7,6 +7,9 @@
 extern "C" {
 #endif
 typedef struct alos_pthread *pthread_t;
+/* Noms de threads non supportes par ALOS : retourne ENOTSUP (pas de succes simule). */
+int pthread_setname_np(struct alos_pthread *thread, const char *name);
+int pthread_getname_np(struct alos_pthread *thread, char *name, size_t size);
 typedef unsigned pthread_key_t;
 typedef uint32_t pthread_once_t;
 typedef struct { uint32_t state; int type; uint32_t owner, depth; } pthread_mutex_t;

@@ -55,8 +55,8 @@ KERNEL_SRC += src/kernel/native_io.c src/kernel/resource.c
 KERNEL_OBJ += src/kernel/native_io.o src/kernel/resource.o
 KERNEL_SRC += src/kernel/path_ops.c
 KERNEL_OBJ += src/kernel/path_ops.o
-KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/native_epoll.c src/kernel/entropy.c src/drivers/virtio_rng.c
-KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/native_epoll.o src/kernel/entropy.o src/drivers/virtio_rng.o
+KERNEL_SRC += src/fs/pipe.c src/kernel/posix_file.c src/kernel/native_socket.c src/kernel/native_poll.c src/kernel/native_epoll.c src/kernel/entropy.c src/drivers/virtio_rng.c src/drivers/gpu/gpu.c src/drivers/gpu/virtio_gpu.c
+KERNEL_OBJ += src/fs/pipe.o src/kernel/posix_file.o src/kernel/native_socket.o src/kernel/native_poll.o src/kernel/native_epoll.o src/kernel/entropy.o src/drivers/virtio_rng.o src/drivers/gpu/gpu.o src/drivers/gpu/virtio_gpu.o
 KERNEL_SRC += src/kernel/unix_socket.c
 KERNEL_OBJ += src/kernel/unix_socket.o
 
@@ -219,10 +219,14 @@ src/kernel/mmio/%.o: src/kernel/mmio/%.c
 src/drivers/virtio/%.o: src/drivers/virtio/%.c
 	$(CC) -c $< -o $@ $(CFLAGS)
 
+# GPU drivers
+src/drivers/gpu/%.o: src/drivers/gpu/%.c
+	$(CC) -c $< -o $@ $(CFLAGS)
+
 # Nettoyage (garde Limine)
 clean:
 	rm -f src/arch/x86_64/*.o src/kernel/*.o src/kernel/mmio/*.o src/mm/*.o
-	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o
+	rm -f src/drivers/*.o src/drivers/net/*.o src/drivers/virtio/*.o src/drivers/gpu/*.o
 	rm -f src/net/l2/*.o src/net/l3/*.o src/net/l4/*.o src/net/core/*.o
 	rm -f src/fs/*.o src/shell/*.o src/config/*.o
 	rm -f alos.elf alos.iso
@@ -368,6 +372,7 @@ fs_root: disk_structure userland
 	@cp -v src/userland/fork-test fs_root/bin/
 	@cp -v src/userland/exec-test fs_root/bin/
 	@cp -v src/userland/mmap-test fs_root/bin/
+	@cp -v src/userland/gpu-test src/userland/desktop-gpu-test src/userland/net-info-test fs_root/bin/
 	@cp -v src/userland/simd-context-test src/userland/tls-test src/userland/time-test src/userland/pthread-test src/userland/pthread-rwlock-test src/userland/semaphore-test src/userland/rusage-test src/userland/pthread-attr-test src/userland/thread-id-test src/userland/calendar-test src/userland/libc-common-test src/userland/libm-complete-test src/userland/fd-io-test src/userland/fs-metadata-test src/userland/strtod-test src/userland/printf-test src/userland/wide-format-test src/userland/crt-cxx-test src/userland/tls-cxx-test fs_root/bin/
 	@cp -v src/userland/env-test src/userland/uname-test fs_root/bin/
 	@cp -v src/userland/posix-file-test src/userland/pipe-test src/userland/socket-test src/userland/inet-test src/userland/entropy-test fs_root/bin/

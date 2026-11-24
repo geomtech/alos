@@ -22,6 +22,9 @@ typedef struct { int quot, rem; } div_t;
 typedef struct { long quot, rem; } ldiv_t;
 typedef struct { long long quot, rem; } lldiv_t;
 int abs(int);
+#define RAND_MAX 0x7fffffff
+int rand(void);
+void srand(unsigned int seed);
 long labs(long);
 long long llabs(long long);
 div_t div(int, int);

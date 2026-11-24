@@ -67,3 +67,9 @@ int poll(struct pollfd *fds, nfds_t n, int timeout) {
     if (r < 0) { errno = (int)-r; return -1; }
     return (int)r;
 }
+
+int getpeereid(int fd, uid_t *uid, gid_t *gid) {
+  (void)fd; (void)uid; (void)gid;
+  errno = ENOTSUP;
+  return -1;
+}

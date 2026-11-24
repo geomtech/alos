@@ -29,13 +29,6 @@ index 7b09b0d80f..cc21331155 100644
  }
  
  if (toolchain_has_rust) {
-@@ -419,6 +426,9 @@ assert(!toolchain_has_rust || rust_target_arch != "")
- # here. This is not the complete command-line: toolchains should add -o
- # and probably --emit arguments too.
- rustc_common_args = "--crate-name {{crate_name}} {{source}} --crate-type {{crate_type}} {{rustflags}}"
-+if (is_alos) {
-+  rustc_common_args += " -Ztls-model=local-exec"
-+}
  
  # Rust procedural macros are shared objects loaded into a prebuilt host rustc
  # binary. To build them, we obviously need to build for the host. Not only

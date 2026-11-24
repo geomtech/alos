@@ -1,0 +1,18 @@
+diff --git a/third_party/rust/cxx/chromium_integration/run_cxxbridge.py b/third_party/rust/cxx/chromium_integration/run_cxxbridge.py
+index 17ddcd71c4..e4cc29b414 100755
+--- a/third_party/rust/cxx/chromium_integration/run_cxxbridge.py
++++ b/third_party/rust/cxx/chromium_integration/run_cxxbridge.py
+@@ -19,6 +19,13 @@ sys.path.append(
+                  os.pardir, os.pardir, os.pardir, 'build'))
+ import action_helpers
+ 
++# ALOS : x86_64-unknown-alos est une specification de cible JSON personnalisee ;
++# rustc (appele par cxxbridge) la trouve via RUST_TARGET_PATH.
++os.environ.setdefault(
++    'RUST_TARGET_PATH',
++    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir,
++                 os.pardir, os.pardir, 'build', 'rust', 'targets'))
++
+ 
+ # TODO(https://crbug.com/435437947): Deduplicate the following pieces which
+ # also appear in `//build/rust/gni_impl/run_build_script.py`:

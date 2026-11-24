@@ -8,6 +8,16 @@ param(
     [switch]$DnsOnly,
     [string]$BaseSmokePath,
     [string]$RustSmokePath,
+    [switch]$GpuTest,
+    [switch]$DesktopGpuTest,
+    [switch]$V8Gpu,
+    [string[]]$ImageFile = @(), # "chemin_hote=/destination/dans/l/image" (dossier parent cree)
+    [int]$QmpPort = 4489,
+    [string]$V8SmokePath,
+    [string]$V8Script,
+    [string]$V8Marker = "Hello, World!",
+    [string]$V8Flags = "",
+    [string]$V8Args = "", # arguments passes au programme -V8SmokePath (ex. une URL)
     [string]$MojoSmokePath,
     [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
@@ -32,7 +42,7 @@ if ($StackProtectorOnly -and ($Runtime -or $ComplexCpp)) {
 if ($BaseSmokePath -and $BaseNativeDirectory) {
     throw "Choisir BaseSmokePath ou BaseNativeDirectory."
 }
-$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory -or $RustSmokePath)
+$hasBaseSmoke = [bool]($BaseSmokePath -or $BaseNativeDirectory -or $RustSmokePath -or $V8SmokePath)
 if ($MojoSmokePath -and ($hasBaseSmoke -or $Runtime -or $Fleet -or $ComplexCpp -or
     $StackProtectorOnly -or $UnixSocketOnly -or $EntropyUnavailable)) {
     throw "MojoSmokePath est une suite isolee avec source d'entropie reelle."
@@ -53,6 +63,12 @@ if ($BaseSmokeOnly -and (-not $hasBaseSmoke -or $Runtime -or $Fleet -or
 }
 if ($hasBaseSmoke -and $EntropyUnavailable) {
     throw "Le smoke Base protege exige une vraie source d'entropie."
+}
+if ($DesktopGpuTest) { $GpuTest = [switch]$true }
+if ($GpuTest -and ($Runtime -or $Fleet -or $ComplexCpp -or $StackProtectorOnly -or
+    $UnixSocketOnly -or $DnsOnly -or $V8SmokePath -or $BaseSmokePath -or
+    $RustSmokePath -or $MojoSmokePath -or $BaseNativeDirectory)) {
+    throw "GpuTest est une suite isolee."
 }
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -109,6 +125,7 @@ exec-test
 threads-test
 ls /bin
 ping 10.0.2.2 -c 1
+net-info-test
 echo vm-suite-complete
 "@
 if ($Runtime) {
@@ -146,6 +163,7 @@ exec-test
 threads-test
 ls /bin
 ping 10.0.2.2 -c 1
+net-info-test
 echo vm-suite-complete
 "@
 }
@@ -175,6 +193,10 @@ if ($UnixSocketOnly) {
 if ($DnsOnly) {
     $startup = "echo vm-suite-begin`ninet-test --dns`necho vm-suite-complete"
 }
+if ($GpuTest) {
+    $test = if ($DesktopGpuTest) { "desktop-gpu-test" } else { "gpu-test" }
+    $startup = "echo vm-suite-begin`n$test`necho vm-suite-complete"
+}
 $basePrograms = @()
 if ($hasNativeSmoke) {
     if ($MojoSmokePath) {
@@ -183,6 +205,17 @@ if ($hasNativeSmoke) {
         if ($MojoBindings) {
             $basePrograms[0].Name = "chromium-mojo-bindings-smoke"
             $basePrograms[0].Marker = "chromium-mojo-bindings-smoke: PASS"
+        }
+    } elseif ($V8SmokePath) {
+        # v8_hello_world (sample V8 officiel) : cree un isolate et evalue du JS.
+        $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $V8SmokePath).Path
+            Name = "v8-hello-world"; Marker = $V8Marker })
+        if ($V8Args -and -not $V8Script) { $basePrograms[0].Command = ("v8-hello-world $V8Args").Trim() }
+        if ($V8Script) {
+            # Shell V8 (samples/shell.cc) : evalue /test.js (copie du script).
+            $basePrograms[0].Name = "v8-shell"
+            $basePrograms[0].Command = ("v8-shell $V8Flags /test.js").Replace("  ", " ")
+            Copy-Item -LiteralPath (Resolve-Path -LiteralPath $V8Script).Path -Destination (Join-Path $output "test.js")
         }
     } elseif ($RustSmokePath) {
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $RustSmokePath).Path
@@ -214,13 +247,29 @@ if ($hasNativeSmoke) {
                 Name = $test.Name; Marker = $test.Marker }
         }
     }
+    if ($V8SmokePath -and (Test-Path (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin"))) {
+        # Le snapshot V8 externe est cherche a cote de l'executable / du cwd.
+        Copy-Item -LiteralPath (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin") -Destination (Join-Path $output "snapshot_blob.bin")
+    }
+    $imageFileCommands = @()
+    $imageIndex = 0
+    foreach ($entry in $ImageFile) {
+        $hostPath, $imagePath = $entry -split "=", 2
+        if (-not $imagePath -or -not $imagePath.StartsWith("/")) { throw "ImageFile attend chemin_hote=/chemin/image : $entry" }
+        $staged = "imagefile$imageIndex"
+        Copy-Item -LiteralPath (Resolve-Path -LiteralPath $hostPath).Path -Destination (Join-Path $output $staged)
+        $parent = $imagePath.Substring(0, $imagePath.LastIndexOf("/"))
+        if ($parent) { $imageFileCommands += "debugfs -w -R `"mkdir $parent`" /artifacts/test.disk" }
+        $imageFileCommands += "debugfs -w -R `"write /artifacts/$staged $imagePath`" /artifacts/test.disk"
+        $imageIndex++
+    }
     foreach ($program in $basePrograms) {
         Copy-Item -LiteralPath $program.Path -Destination (Join-Path $output $program.Name)
         docker run --rm -v "${output}:/artifacts" alos-runtime `
-            strip --strip-debug "/artifacts/$($program.Name)"
+            strip $(if ($V8SmokePath) { "--strip-all" } else { "--strip-debug" }) "/artifacts/$($program.Name)"
         if ($LASTEXITCODE) { throw "Strip copie smoke echoue : $($program.Name)" }
     }
-    $commands = ($basePrograms | ForEach-Object { $_.Name }) -join "`n"
+    $commands = ($basePrograms | ForEach-Object { if ($_.Command) { $_.Command } else { $_.Name } }) -join "`n"
     if ($BaseSmokeOnly -or $MojoSmokePath) {
         $startup = "echo vm-suite-begin`n$commands`necho vm-suite-complete"
     } else {
@@ -265,7 +314,7 @@ try {
     # de staging est donc ecrit dans le repertoire d'artefacts.
     [IO.File]::WriteAllText((Join-Path $output "stage-image.sh"), (@(
         'set -e',
-        'truncate -s 64M /artifacts/test.disk',
+        "truncate -s $(if ($V8SmokePath) { '160M' } else { '64M' }) /artifacts/test.disk",
         'mkfs.ext2 -q -F -d fs_root /artifacts/test.disk',
         'debugfs -w -R "rm /config/startup.sh" /artifacts/test.disk',
         'debugfs -w -R "write /artifacts/startup.sh /config/startup.sh" /artifacts/test.disk',
@@ -286,12 +335,14 @@ foreach ($program in $basePrograms) {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), (@(
+        [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), ((@(
             'set -e',
             "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
+            $(if ($V8SmokePath -and (Test-Path (Join-Path $output "snapshot_blob.bin"))) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
+            $(if ($V8Script) { "debugfs -w -R `"write /artifacts/test.js /test.js`" /artifacts/test.disk" } else { "true" }),
             "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
             "cmp /artifacts/$name /artifacts/verify-$name"
-        ) -join "`n") + "`n")
+        ) + $imageFileCommands) -join "`n") + "`n")
         docker run --rm -v "${output}:/artifacts" alos-build sh "/artifacts/stage-$name.sh" `
             *> (Join-Path $output "$name-image.log")
         $stageExitCode = $LASTEXITCODE
@@ -318,6 +369,10 @@ $qemuArguments = @(
     "-display", "none", "-serial", "file:$log", "-monitor", "none",
     "-no-reboot", "-no-shutdown"
 )
+if ($GpuTest -or $V8Gpu) {
+    $qemuArguments += @("-device", "virtio-gpu-pci,id=gpu0",
+        "-qmp", "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
+}
 if (($Fleet -or $StackProtectorOnly -or $hasNativeSmoke) -and -not $EntropyUnavailable) {
     $qemuArguments += @("-object", "rng-builtin,id=alos_rng", "-device",
         "virtio-rng-pci,rng=alos_rng,disable-modern=on")
@@ -350,11 +405,113 @@ try {
         }
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
+    if ($V8Gpu) {
+        # Programme natif qui presente sur virtio-gpu : verifier le scanout hote.
+        $ppm = Join-Path $output "gpu.ppm"
+        $client = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
+        try {
+            $ns = $client.GetStream(); $qr = [IO.StreamReader]::new($ns); $qw = [IO.StreamWriter]::new($ns)
+            function Invoke-Qmp2([string]$json) {
+                $qw.WriteLine($json); $qw.Flush()
+                while ($true) {
+                    $line = $qr.ReadLine()
+                    if ($null -eq $line) { throw "QMP ferme" }
+                    if ($line -match '"return"' -or $line -match '"error"') { return $line }
+                }
+            }
+            [void]$qr.ReadLine()
+            [void](Invoke-Qmp2 '{"execute":"qmp_capabilities"}')
+            $reply = Invoke-Qmp2 (@{ execute = "screendump"; arguments = @{ filename = $ppm; device = "gpu0"; head = 0 } } | ConvertTo-Json -Compress)
+            if ($reply -match '"error"') { throw "screendump refuse : $reply" }
+        } finally { $client.Dispose() }
+        $wait = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path $ppm) -and [DateTime]::UtcNow -lt $wait) { Start-Sleep -Milliseconds 200 }
+        Start-Sleep -Milliseconds 300
+        $bytes = [IO.File]::ReadAllBytes($ppm)
+        $head = [Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(32, $bytes.Length))
+        if ($head -notmatch '^P6\s+(\d+)\s+(\d+)\s+255\s') { throw "PPM invalide : $ppm" }
+        $w = [int]$Matches[1]; $off = $Matches[0].Length
+        function Get-Pixel2([int]$x, [int]$y) { $i = $off + ($y * $w + $x) * 3; return @($bytes[$i], $bytes[$i+1], $bytes[$i+2]) }
+        # Bitmap Skia copie en (20,20) sur fond gris 0x303030.
+        $gray = Get-Pixel2 5 5
+        $blue = Get-Pixel2 (20 + 50) (20 + 40)
+        $black = Get-Pixel2 (20 + 60) (20 + 140)
+        $green = Get-Pixel2 (20 + 275) (20 + 160)
+        "gpu: fond=$($gray -join ',') ; rect=$($blue -join ',') ; cercle=$($black -join ',') ; triangle=$($green -join ',')"
+        if ($gray[0] -ne 0x30 -or $gray[1] -ne 0x30 -or $gray[2] -ne 0x30) { throw "Fond gris absent : $ppm" }
+        if ($blue[0] -ne 0x20 -or $blue[1] -ne 0x40 -or $blue[2] -ne 0xE0) { throw "Rectangle Skia absent : $ppm" }
+        if ($black[0] -ne 0 -or $black[1] -ne 0 -or $black[2] -ne 0) { throw "Cercle Skia absent : $ppm" }
+        if ($green[0] -ne 0x10 -or $green[1] -ne 0xA0 -or $green[2] -ne 0x30) { throw "Triangle Skia absent : $ppm" }
+    }
+    if ($GpuTest) {
+        $marker = if ($DesktopGpuTest) { "desktop-gpu-test: PASS" } else { "gpu-test: PASS" }
+        if (-not $text.Contains($marker) -or $text.Contains("gpu-test: FAIL")) {
+            throw "test GPU userland echoue : $log"
+        }
+        if ($DesktopGpuTest -and -not $text.Contains("gui: using virtio-gpu")) {
+            throw "Le desktop n'utilise pas virtio-gpu : $log"
+        }
+        $ppm = Join-Path $output "gpu.ppm"
+        $client = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
+        try {
+            $ns = $client.GetStream(); $qr = [IO.StreamReader]::new($ns); $qw = [IO.StreamWriter]::new($ns)
+            function Invoke-Qmp([string]$json) {
+                $qw.WriteLine($json); $qw.Flush()
+                while ($true) {
+                    $line = $qr.ReadLine()
+                    if ($null -eq $line) { throw "QMP ferme" }
+                    if ($line -match '"return"' -or $line -match '"error"') { return $line }
+                }
+            }
+            [void]$qr.ReadLine()
+            [void](Invoke-Qmp '{"execute":"qmp_capabilities"}')
+            $reply = Invoke-Qmp (@{ execute = "screendump"; arguments = @{ filename = $ppm; device = "gpu0"; head = 0 } } | ConvertTo-Json -Compress)
+            if ($reply -match '"error"') { throw "screendump refuse : $reply" }
+        } finally { $client.Dispose() }
+        $wait = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path $ppm) -and [DateTime]::UtcNow -lt $wait) { Start-Sleep -Milliseconds 200 }
+        Start-Sleep -Milliseconds 300
+        $bytes = [IO.File]::ReadAllBytes($ppm)
+        $head = [Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(32, $bytes.Length))
+        if ($head -notmatch '^P6\s+(\d+)\s+(\d+)\s+255\s') { throw "PPM invalide : $ppm" }
+        $w = [int]$Matches[1]; $h = [int]$Matches[2]; $off = $Matches[0].Length
+        function Get-Pixel([int]$x, [int]$y) { $i = $off + ($y * $w + $x) * 3; return @($bytes[$i], $bytes[$i+1], $bytes[$i+2]) }
+        if ($DesktopGpuTest) {
+            # Bureau complet : degrade de fond, barre des taches, bouton de la
+            # fenetre gui-demo (actif) et corps de fenetre.
+            $work = $h - 42
+            $mix = [int][Math]::Floor(100 * 255 / ($work - 1))
+            $er = [int][Math]::Floor((0x16 * (255 - $mix) + 0x31 * $mix) / 255)
+            $eg = [int][Math]::Floor((0x3B * (255 - $mix) + 0x5F * $mix) / 255)
+            $eb = [int][Math]::Floor((0x5C * (255 - $mix) + 0x82 * $mix) / 255)
+            $bg = Get-Pixel ($w - 40) 100
+            $bar = Get-Pixel 700 ($h - 4)
+            $button = Get-Pixel 150 ($h - 20)
+            $body = Get-Pixel 80 300
+            "scanout ${w}x${h} ; fond=$($bg -join ',') (attendu $er,$eg,$eb) ; barre=$($bar -join ',') ; bouton=$($button -join ',') ; corps=$($body -join ',')"
+            if ([Math]::Abs($bg[0]-$er) -gt 1 -or [Math]::Abs($bg[1]-$eg) -gt 1 -or [Math]::Abs($bg[2]-$eb) -gt 1) { throw "Fond du bureau incorrect : $ppm" }
+            if ($bar[0] -ne 0x18 -or $bar[1] -ne 0x23 -or $bar[2] -ne 0x2D) { throw "Barre des taches absente : $ppm" }
+            if ($button[0] -ne 0x32 -or $button[1] -ne 0x7F -or $button[2] -ne 0xC0) { throw "Bouton de fenetre absent (client non affiche) : $ppm" }
+            if ($body[0] -ne 0xF4 -or $body[1] -ne 0xF7 -or $body[2] -ne 0xFA) { throw "Corps de fenetre gui-demo absent : $ppm" }
+            "ALOS desktop via virtio-gpu PASS : $ppm"
+            return
+        }
+        $green = Get-Pixel 150 150
+        $yellow = Get-Pixel 520 320
+        $gx = [int][Math]::Floor(1000 * 255 / $w); $by = [int][Math]::Floor(700 * 255 / $h)
+        $grad = Get-Pixel 1000 700
+        "scanout ${w}x${h} ; vert=$($green -join ',') ; jaune=$($yellow -join ',') ; degrade=$($grad -join ',') (attendu 0,$gx,$by)"
+        if ($green[0] -ne 0 -or $green[1] -ne 255 -or $green[2] -ne 0) { throw "Rectangle vert absent : $ppm" }
+        if ($yellow[0] -ne 255 -or $yellow[1] -ne 255 -or $yellow[2] -ne 0) { throw "Carre jaune absent : $ppm" }
+        if ($grad[0] -ne 0 -or [Math]::Abs($grad[1] - $gx) -gt 1 -or [Math]::Abs($grad[2] - $by) -gt 1) { throw "Degrade incorrect : $ppm" }
+        "ALOS GPU userland PASS : $ppm"
+        return
+    }
     if (-not $StackProtectorOnly -and -not $BaseSmokeOnly -and -not $UnixSocketOnly -and
         -not $DnsOnly -and -not $MojoSmokePath) {
       foreach ($marker in @(
         "mmap-test: ALL PASS", "fork-test: PASS",
-        "exec-test: PASS after 40", "Compteur final", "Reply received, seq:"
+        "exec-test: PASS after 40", "Compteur final", "Reply received, seq:", "net-info-test: PASS"
     )) {
         if (-not $text.Contains($marker)) { throw "Resultat manquant '$marker' : $log" }
     }

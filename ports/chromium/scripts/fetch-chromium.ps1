@@ -63,11 +63,17 @@ $deps = @(
        Rev = "32ded457c0b1fe78ceb8397632c416568d6714a0"; Sparse = $null },
     @{ Path = "third_party/harfbuzz-ng/src"; Url = "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz.git";
        Rev = "9f83bbbe64654b45ba5bb06927ff36c2e7588495"; Sparse = $null },
+    # Sources FreeType (Skia raster : rendu de texte).
+    @{ Path = "third_party/freetype/src"; Url = "https://chromium.googlesource.com/chromium/src/third_party/freetype2.git";
+       Rev = "27c1cb10a52420515ce66729dfca897be21691b8"; Sparse = $null },
+    # Appels systeme Linux (base/rand_util_posix.cc dans les outils hote).
+    @{ Path = "third_party/lss"; Url = "https://chromium.googlesource.com/linux-syscall-support.git";
+       Rev = "ed31caa60f20a4f6569883b2d752ef7522de51e0"; Sparse = $null },
     @{ Path = "third_party/openxr/src"; Url = "https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenXR-SDK.git";
        Rev = "57572a0e91890fe7183de25a62153aec955d64ba"; Sparse = @("include", "src") },
     @{ Path = "third_party/skia"; Url = "https://skia.googlesource.com/skia.git";
        Rev = "1fdbea293a53b270e3f5e74c92cc6670d68412ff";
-       Sparse = @("gn", "include", "modules", "src", "tools", "third_party") },
+       Sparse = @("experimental", "gn", "include", "modules", "src", "tools", "third_party") },
     @{ Path = "third_party/angle"; Url = "https://chromium.googlesource.com/angle/angle.git";
        Rev = "cbc4153da8d5796b0fbb3cf288e97bee19436191";
        Sparse = @("gni", "include", "src", "util", "third_party") },
@@ -104,6 +110,9 @@ $deps = @(
     # Conversion double -> chaine de V8 (v8/src/numbers/conversions.cc).
     @{ Path = "third_party/dragonbox/src"; Url = "https://chromium.googlesource.com/external/github.com/jk-jeon/dragonbox.git";
        Rev = "6c7c925b571d54486b9ffae8d9d18a822801cbda"; Sparse = $null },
+    # Parsing chaine -> double de V8 (v8/src/numbers/conversions.cc).
+    @{ Path = "third_party/fast_float/src"; Url = "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float.git";
+       Rev = "cb1d42aaa1e14b09e1452cfdef373d051b8c02a4"; Sparse = $null },
     @{ Path = "third_party/cast_core/public/src"; Url = "https://chromium.googlesource.com/cast_core/public";
        Rev = "f5ee589bdaea60418f670fa176be15ccb9a34942"; Sparse = $null },
     @{ Path = "third_party/catapult"; Url = "https://chromium.googlesource.com/catapult.git";
@@ -212,7 +221,8 @@ if ($WithV8) {
 }
 
 # Fichiers normalement produits par gclient runhooks.
-$gclientArgs = "# Generated for the isolated ALOS bootstrap checkout.`nbuild_with_chromium = true`ncheckout_src_internal = false`ncheckout_openxr = true`n"
+$gclientArgs = "# Generated for the isolated ALOS bootstrap checkout.`nbuild_with_chromium = true`ncheckout_src_internal = false`ncheckout_openxr = true`n" +
+    "# Variables de DEPS (gclient_gn_args) lues par des BUILD.gn hors profil de base : `ncheckout_android = false`ncheckout_android_prebuilts_build_tools = false`ncheckout_clang_coverage_tools = false`ncheckout_copybara = false`ncheckout_glic_e2e_tests = false`ncheckout_ios_webkit = false`ncheckout_mutter = false`ncheckout_clusterfuzz_data = false`ncheckout_src_internal_infra = false`n"
 [IO.File]::WriteAllText((Join-Path $src "build\config\gclient_args.gni"), $gclientArgs)
 $commitTime = git -C $src log -1 --format=%ct
 [IO.File]::WriteAllText((Join-Path $src "build\util\LASTCHANGE.committime"), "$commitTime")

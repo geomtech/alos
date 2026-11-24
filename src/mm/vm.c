@@ -24,11 +24,25 @@ typedef struct vm_area {
   struct vm_area *next;
 } vm_area_t;
 
-static int protection_valid(int prot) {
+/* Base du premier segment PT_LOAD des ELF statiques ALOS. */
+#define USER_IMAGE_BASE 0x400000ULL
+
+static bool prot_is_wx(int prot) {
+  return (prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC);
+}
+
+/* RWX n'est accepte que pour un mapping MAP_JIT (allow_wx). */
+static int protection_valid(int prot, bool allow_wx) {
   if (prot & ~(PROT_READ | PROT_WRITE | PROT_EXEC)) return -EINVAL;
-  if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC))
-    return -EACCES;
+  if (prot_is_wx(prot) && !allow_wx) return -EACCES;
   return 0;
+}
+
+static uint64_t jit_bytes(const process_t *process) {
+  uint64_t total = 0;
+  for (const vm_area_t *area = process->vm_areas; area; area = area->next)
+    if (area->flags & MAP_JIT) total += area->end - area->start;
+  return total;
 }
 
 static bool range_valid(uint64_t address, uint64_t length, uint64_t *end) {
@@ -275,18 +289,26 @@ static bool has_external_mapping(process_t *process, uint64_t start,
 int64_t vm_mmap(process_t *process, uint64_t address, uint64_t length,
                  int prot, int flags, int fd, int64_t offset) {
   if (!process || !process->pml4) return -EINVAL;
-  int error = protection_valid(prot);
-  if (error) return error;
   int supported = MAP_PRIVATE | MAP_SHARED | MAP_ANONYMOUS | MAP_FIXED |
-                  MAP_FIXED_NOREPLACE | MAP_NORESERVE;
+                  MAP_FIXED_NOREPLACE | MAP_NORESERVE | MAP_JIT;
   if (flags & ~supported) return -ENOTSUP;
+  bool jit = flags & MAP_JIT;
+  int error = protection_valid(prot, jit);
+  if (error) return error;
   int kind = flags & (MAP_PRIVATE | MAP_SHARED);
   if (kind != MAP_PRIVATE && kind != MAP_SHARED) return -EINVAL;
+  /* MAP_JIT : anonyme prive uniquement, jamais SHM ni fichier. */
+  if (jit && (kind != MAP_PRIVATE || !(flags & MAP_ANONYMOUS))) return -EINVAL;
   if (!length || length > USER_MMAP_END - USER_MMAP_BASE ||
       offset < 0 || ((uint64_t)offset & (PAGE_SIZE - 1))) return -EINVAL;
   uint64_t size = PAGE_ALIGN_UP(length);
   uint64_t end;
   bool fixed = flags & (MAP_FIXED | MAP_FIXED_NOREPLACE);
+  if (jit && (size > ALOS_JIT_MAX_BYTES ||
+              jit_bytes(process) > ALOS_JIT_MAX_BYTES - size)) {
+    KLOG_WARN_HEX64("VM", "MAP_JIT refused: over cap, size", size);
+    return -ENOMEM;
+  }
   if (fixed) {
     if (!range_valid(address, length, &end)) return -EINVAL;
     if ((flags & MAP_FIXED_NOREPLACE) &&
@@ -311,7 +333,7 @@ int64_t vm_mmap(process_t *process, uint64_t address, uint64_t length,
   area->offset = (uint64_t)offset;
   area->prot = prot;
   area->max_prot = PROT_READ | PROT_WRITE | PROT_EXEC;
-  area->flags = flags & (MAP_PRIVATE | MAP_SHARED | MAP_ANONYMOUS);
+  area->flags = flags & (MAP_PRIVATE | MAP_SHARED | MAP_ANONYMOUS | MAP_JIT);
 
   if (flags & MAP_ANONYMOUS) {
     area->offset = 0;
@@ -363,6 +385,10 @@ int64_t vm_mmap(process_t *process, uint64_t address, uint64_t length,
   area->next = *link;
   *link = area;
   merge_areas(process);
+  if (jit) {
+    KLOG_INFO_HEX64("VM", "MAP_JIT region (RWX allowed) base", address);
+    KLOG_INFO_HEX64("VM", "MAP_JIT region size", size);
+  }
   return (int64_t)address;
 }
 
@@ -379,13 +405,31 @@ int vm_munmap(process_t *process, uint64_t address, uint64_t length) {
 int vm_mprotect(process_t *process, uint64_t address, uint64_t length,
                  int prot) {
   uint64_t end;
-  int error = protection_valid(prot);
+  int error = protection_valid(prot, true);
   if (error) return error;
+  if (process && address >= USER_IMAGE_BASE && address < process->heap_start) {
+    /* Image ELF statique (segments charges eagerment, hors vm_areas) :
+     * mprotect ne peut que changer R/W/NONE de pages presentes ; PROT_EXEC
+     * n'est pas accorde ici, l'image n'etant pas un mapping suivi. */
+    if (prot & PROT_EXEC) return -EACCES;
+    if (length == 0 || (address & (PAGE_SIZE - 1)) ||
+        length > process->heap_start - address) return -EINVAL;
+    end = address + PAGE_ALIGN_UP(length);
+    if (end > process->heap_start) return -ENOMEM;
+    page_directory_t *dir = (page_directory_t *)process->pml4;
+    if (vmm_resident_pages(dir, address, end) != (end - address) / PAGE_SIZE)
+      return -ENOMEM;
+    vmm_update_range(dir, address, end, page_flags(prot), false);
+    return 0;
+  }
   if (!process || !range_valid(address, length, &end)) return -EINVAL;
   if (!range_covered(process, address, end)) return -ENOMEM;
   for (vm_area_t *area = process->vm_areas; area; area = area->next) {
     if (area->start >= end) break;
     if (area->end > address && (prot & ~area->max_prot)) return -EACCES;
+    /* RWX seulement sur un mapping MAP_JIT. */
+    if (area->end > address && prot_is_wx(prot) && !(area->flags & MAP_JIT))
+      return -EACCES;
   }
   error = split_range(process, address, end);
   if (error) return error;

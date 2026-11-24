@@ -52,3 +52,17 @@ int msync(void *address, size_t length, int flags) {
 int vminfo(vm_info_t *info) {
   return (int)memory_result(syscall1(SYS_VMINFO, (long)info));
 }
+
+#include <sys/gpu.h>
+
+int gpu_map(alos_gpu_info_t *info) {
+  return (int)memory_result(syscall1(SYS_GPU_MAP, (long)info));
+}
+
+int gpu_query(alos_gpu_caps_t *caps) {
+  return (int)memory_result(syscall1(SYS_GPU_QUERY, (long)caps));
+}
+
+int gpu_flush(unsigned x, unsigned y, unsigned width, unsigned height) {
+  return (int)memory_result(syscall4(SYS_GPU_FLUSH, x, y, width, height));
+}

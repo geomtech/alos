@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/framebuffer.h>
+#include <sys/gpu.h>
 #include <sys/syscall.h>
 
 #define DESKTOP_MAX_CLIENTS 12
@@ -59,6 +60,7 @@ struct desktop_window {
 
 typedef struct {
   framebuffer_info_t framebuffer;
+  bool use_gpu; /* surface virtio-gpu (flush explicite) au lieu du framebuffer Limine */
   uint32_t *backbuffer;
   int listener_fd;
 

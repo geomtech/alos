@@ -22,6 +22,7 @@
 #include "../net/l3/route.h"
 #include "../net/l4/dhcp.h"
 #include "../drivers/virtio_rng.h"
+#include "../drivers/gpu/gpu.h"
 #include "../include/errno.h"
 #include "../net/l4/dns.h"
 #include "../net/l4/tcp.h"
@@ -425,6 +426,15 @@ void kmain(void) {
   else {
     KLOG_ERROR("RNG", "VirtIO RNG initialization failed");
     KLOG_ERROR_HEX("RNG", "Initialization errno: ", (uint32_t)-rng_status);
+  }
+
+  /* GPU : registre de pilotes ; sans pilote, repli sur le framebuffer Limine. */
+  int gpu_status = gpu_init();
+  if (!gpu_status) gpu_selftest();
+  else if (gpu_status != -ENOSYS && gpu_status != -ENOTSUP) {
+    KLOG_ERROR_HEX("GPU", "Initialization errno: ", (uint32_t)-gpu_status);
+  } else {
+    KLOG_INFO("GPU", "No GPU driver matched, using the boot framebuffer");
   }
 
   if (mouse_init() == 0) {

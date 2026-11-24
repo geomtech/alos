@@ -74,6 +74,7 @@
 
 /* Regions reservees aux mappings externes userland. */
 #define USER_FRAMEBUFFER_BASE   0x0000000060000000ULL
+#define USER_GPU_BASE           0x0000000068000000ULL
 #define USER_SHM_BASE           0x0000000070000000ULL
 #define USER_SHM_END            0x0000000078000000ULL
 

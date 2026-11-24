@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/display.h>
+#include <sys/gpu.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/wait.h>
@@ -288,8 +289,28 @@ int main(int argc, char **argv) {
   }
 
   framebuffer_info_t framebuffer;
-  if (syscall1(SYS_GET_FRAMEBUFFER, (long)&framebuffer) != 0 ||
-      desktop_render_init(&framebuffer) != 0) {
+  alos_gpu_info_t gpu;
+  if (gpu_map(&gpu) == 0 && gpu.format == ALOS_GPU_FORMAT_B8G8R8X8) {
+    /* virtio-gpu 2D present : le desktop dessine dans sa surface puis flushe. */
+    memset(&framebuffer, 0, sizeof(framebuffer));
+    framebuffer.addr = gpu.addr;
+    framebuffer.width = gpu.width;
+    framebuffer.height = gpu.height;
+    framebuffer.pitch = gpu.pitch;
+    framebuffer.bpp = 32;
+    framebuffer.red_mask_size = 8;
+    framebuffer.red_mask_shift = 16;
+    framebuffer.green_mask_size = 8;
+    framebuffer.green_mask_shift = 8;
+    framebuffer.blue_mask_size = 8;
+    framebuffer.blue_mask_shift = 0;
+    g_desktop.use_gpu = true;
+    printf("gui: using virtio-gpu %ux%u\n", gpu.width, gpu.height);
+  } else if (syscall1(SYS_GET_FRAMEBUFFER, (long)&framebuffer) != 0) {
+    display_release();
+    return 1;
+  }
+  if (desktop_render_init(&framebuffer) != 0) {
     display_release();
     return 1;
   }

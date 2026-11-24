@@ -45,6 +45,10 @@ ProcessId Process::Pid() const {
   DCHECK(IsValid());
   return process_;
 }
+// ALOS n'expose pas l'heure de creation d'un processus (alos_process_info_t ne la
+// contient pas) : on retourne une heure nulle, comme process_stubs.cc.
+Time Process::CreationTime() const { return Time(); }
+
 bool Process::is_current() const {
   return process_ == GetCurrentProcessHandle();
 }

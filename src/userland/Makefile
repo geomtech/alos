@@ -58,7 +58,7 @@ LIBGUI = libgui/libgui.a
 BROWSER_OBJ = browser/main.o browser/url.o browser/http.o browser/html.o browser/render.o gui/fonts/roboto.o
 DESKTOP_OBJ = desktop/main.o desktop/render.o desktop/wm.o desktop/launcher.o gui/fonts/roboto.o
 
-all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo browser sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
+all: libc_build $(LIBM) libm_build threads-test crash-test fork-test exec-test mmap-test gpu-test desktop-gpu-test net-info-test simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test gui_app gui-test desktop_app gui-demo browser sh ls cat mkdir touch rm rmdir meminfo $(CMD_BINS)
 
 # Force libc build
 all: env-test uname-test
@@ -136,6 +136,15 @@ exec-test: libc_build $(LIBM) exec-test.o
 
 mmap-test: libc_build $(LIBM) mmap-test.o
 	$(LD) -T linker.ld -o mmap-test $(CRT0) mmap-test.o $(RUNTIME_LIBS)
+
+gpu-test: libc_build $(LIBM) gpu-test.o
+	$(LD) -T linker.ld -o gpu-test $(CRT0) gpu-test.o $(RUNTIME_LIBS)
+
+desktop-gpu-test: libc_build $(LIBM) desktop-gpu-test.o
+	$(LD) -T linker.ld -o desktop-gpu-test $(CRT0) desktop-gpu-test.o $(RUNTIME_LIBS)
+
+net-info-test: libc_build $(LIBM) net-info-test.o
+	$(LD) -T linker.ld -o net-info-test $(CRT0) net-info-test.o $(RUNTIME_LIBS)
 
 simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test rusage-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test: %: %.o $(CRT0) $(LIBC) $(LIBM)
 	$(LD) -T linker.ld -o $@ $(CRT0) $< $(RUNTIME_LIBS)
@@ -224,7 +233,7 @@ clean:
 	rm -f epoll-test ipc-poll-test
 	rm -f int128-runtime-test
 	rm -f simd-context-test tls-test time-test pthread-test pthread-rwlock-test semaphore-test pthread-attr-test thread-id-test calendar-test libc-common-test libm-complete-test fd-io-test fs-metadata-test strtod-test printf-test wide-format-test crt-cxx-test tls-cxx-test
-	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
+	rm -rf bin cmd/*.o *.o threads-test crash-test fork-test exec-test mmap-test gpu-test desktop-gpu-test net-info-test gui_app gui/*.o gui/fonts/*.o gui/components/*.o
 	rm -f browser/browser browser/*.o browser/web-test sh ls cat mkdir touch rm rmdir meminfo gui-test desktop_app gui-demo desktop/*.o libgui/*.o libgui/libgui.a
 	find gui/freetype/src -name "*.o" -delete
 	$(MAKE) -C $(LIBC_DIR) clean

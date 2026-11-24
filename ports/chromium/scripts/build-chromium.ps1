@@ -11,7 +11,16 @@ param(
     [switch]$KeepGoing,
     [switch]$Rust,
     [switch]$V8Probe,
-    [int]$Jobs = 8
+    [switch]$Skia,
+    [switch]$Net,
+    [switch]$Blink,
+    # 16 CPU / 16 Go cote Docker : -j 14 laisse de la marge a la RAM des liens.
+    [int]$Jobs = 14,
+    # 0 = pas d'infos de debug (compilation/liens beaucoup plus rapides, out/ ~5x
+    # plus petit). Mettre 1 ou 2 pour deboguer avec gdb.
+    [int]$SymbolLevel = 0,
+    # Cache de compilation (ccache) sur le volume Docker alos-ccache.
+    [switch]$Ccache
 )
 # gn gen out/alos puis ninja dans l'image alos-runtime. Les outils du build
 # (gn, python, protoc...) sont Linux host ; les objets du toolchain par defaut
@@ -22,13 +31,32 @@ if ($MojoBindings) { $MojoTests = $true }
 # Sonde de compilation V8 ciblee (//v8:v8_libbase) dans out/alos-v8 : elle ne
 # remplace pas le profil out/alos et ne construit ni ne lie le moteur complet.
 if ($V8Probe -and $MojoBindings) { throw "-V8Probe et -MojoBindings utilisent des root targets distincts." }
+if ($Blink -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia -or $Net)) { throw "-Blink utilise un root target dedie." }
+if ($Net -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia)) { throw "-Net utilise un root target dedie." }
+if ($Skia -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe)) { throw "-Skia utilise un root target dedie." }
 if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
 if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
+if ($Blink -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("third_party/blink/renderer/platform/wtf:wtf") }
+if ($Net -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/net:net_http_smoke") }
+if ($Skia -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/skia:skia_raster_smoke") }
 if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
-$outDirectory = if ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
-$rustEnabled = $Rust -or $OzoneProbe
+$outDirectory = if ($Blink) { "out/alos-blink" } elseif ($Net) { "out/alos-net" } elseif ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
+$rustEnabled = $Rust -or $OzoneProbe -or $Net -or $Blink
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
-$src = (Resolve-Path $ChromiumDirectory).Path
+$src = (Resolve-Path $ChromiumDirectory).ProviderPath
+# Mode ext4 : ChromiumDirectory est un volume Docker vu depuis Windows
+# (\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\<nom>\_data).
+# Les operations hote (git, copies de gabarits) passent par ce chemin UNC (peu de
+# fichiers) ; les builds montent le volume natif, ainsi que les volumes
+# alos-libcxx et alos-repo : les en-tetes lus sur un bind-mount NTFS coutent
+# ~4,6 s par compilation (mesure), contre ~0,01 s sur ext4. Voir BUILD-SPEED.md.
+$ext4Volume = $null
+if ($src.Replace([string][char]92, '/') -match '^//wsl(\.localhost|\$)/docker-desktop/mnt/docker-desktop-disk/data/docker/volumes/([^/]+)/_data') {
+    $ext4Volume = $Matches[2]
+    $env:GIT_CONFIG_COUNT = "1"
+    $env:GIT_CONFIG_KEY_0 = "safe.directory"
+    $env:GIT_CONFIG_VALUE_0 = "*"
+}
 $revision = & git -C $src rev-parse HEAD
 if ($LASTEXITCODE -ne 0 -or
     $revision.Trim() -ne "670b6f192f4668d2ac2c06bd77ec3e4eeda7d648") {
@@ -84,7 +112,12 @@ foreach ($patchName in @(
     "chromium-alos-skia-no-rust-bridge.patch",
     "chromium-alos-blink-rust-crash-gate.patch",
     "chromium-alos-platform-gates.patch",
-    "chromium-alos-rust-target.patch"
+    "chromium-alos-skip-test-targets.patch",
+    "chromium-alos-field-trial-key.patch",
+    "chromium-alos-rust-target.patch",
+    "chromium-alos-rust-host-tls.patch",
+    "chromium-alos-cxxbridge-target-path.patch",
+    "chromium-alos-net-trust-store.patch"
 )) {
     $patch = Join-Path $repo ("ports\chromium\patches\" + $patchName)
     & git -C $src apply --reverse --check $patch 2>$null
@@ -170,7 +203,9 @@ $args_gn = @(
     '# utilise la libc++ LLVM 21 bd809ffb ALOS du toolchain //build/toolchain/alos.',
     'use_custom_libcxx = false', 'use_custom_libcxx_for_host = false',
     '# Pas de Crashpad sous ALOS : configuration amont sans rapport de crash.',
-    'use_crash_key_stubs = true'
+    'use_crash_key_stubs = true',
+    "symbol_level = $SymbolLevel", "blink_symbol_level = $SymbolLevel",
+    "v8_symbol_level = $SymbolLevel"
 ) -join "`n"
 if ($NativeTests) {
     $testDirectory = Join-Path $src "alos_native"
@@ -201,7 +236,7 @@ if ($NativeTests) {
 }
 if ($OzoneProbe) {
     $args_gn += "`nuse_ozone = true"
-    $args_gn += "`nalos_build_ozone_probe = true"
+    $args_gn += "`nalos_build_ozone_probe = true`nalos_ozone_probe_enabled = true"
     $args_gn += "`nozone_auto_platforms = false"
     $args_gn += "`nozone_extra_path = `"//alos_native/ozone/ozone_extra.gni`""
     $args_gn += "`nozone_platform = `"alos`""
@@ -295,12 +330,36 @@ if ($MojoTests) {
             $args_gn += "`nalos_build_mojo_bindings = true"
         }
     }
+if ($Skia) {
+    # Skia amont autonome (//third_party/skia:skia) en raster CPU : voir
+    # docs/chromium-port.md. Wuffs/libpng/jpeg/webp/freetype/harfbuzz/GPU sont
+    # desactives (visibilite Chromium, sources absentes, hors perimetre).
+    $skiaSource = Join-Path $repo "ports\chromium\skia"
+    $skiaDestination = Join-Path $src "alos_native\skia"
+    New-Item -ItemType Directory -Force $skiaDestination | Out-Null
+    Copy-Item -Path (Join-Path $skiaSource "*") -Destination $skiaDestination -Force
+    # Skia amont reference //third_party/freetype2 ; dans l'arbre Chromium le
+    # FreeType vendored est //third_party/freetype : alias minimal.
+    $freetypeShim = Join-Path $src "third_party\freetype2"
+    New-Item -ItemType Directory -Force $freetypeShim | Out-Null
+    Copy-Item -LiteralPath (Join-Path $skiaSource "freetype2-shim.gn") -Destination (Join-Path $freetypeShim "BUILD.gn") -Force
+    $args_gn += "`nuse_crash_key_stubs = true`ntreat_warnings_as_errors = false`nskia_use_freetype = true"
+    foreach ($skiaArg in @("skia_use_wuffs", "skia_use_libpng_decode", "skia_use_libpng_encode",
+        "skia_use_libjpeg_turbo_decode", "skia_use_libjpeg_turbo_encode", "skia_use_libwebp_decode",
+        "skia_use_libwebp_encode", "skia_use_libavif", "skia_use_libjxl_decode", "skia_use_dng_sdk",
+        "skia_use_piex", "skia_use_harfbuzz", "skia_use_expat", "skia_use_icu",
+        "skia_use_xps", "skia_enable_pdf", "skia_enable_skshaper", "skia_enable_skunicode",
+        "skia_enable_gpu", "skia_use_gl", "skia_use_vulkan", "skia_use_dawn", "skia_use_metal",
+        "skia_enable_tools")) {
+        $args_gn += "`n$skiaArg = false"
+    }
+}
 if ($V8Probe) {
     $v8 = Join-Path $src "v8"
     if ((git -C $v8 rev-parse HEAD 2>$null) -ne "fdb12b460f148895f6af2ff0e0d870ff8889f154") {
         throw "V8 14.0.365.4 absent : relancer fetch-chromium.ps1 -WithV8."
     }
-    foreach ($v8Patch in @("v8-alos-os-detection.patch", "v8-alos-no-signals.patch", "v8-alos-platform.patch")) {
+    foreach ($v8Patch in @("v8-alos-os-detection.patch", "v8-alos-no-signals.patch", "v8-alos-platform.patch", "v8-alos-map-jit.patch", "v8-alos-shell.patch")) {
         $patch = Join-Path $repo "ports\chromium\patches\$v8Patch"
         & git -C $v8 apply --reverse --check $patch 2>$null
         if ($LASTEXITCODE) {
@@ -313,16 +372,88 @@ if ($V8Probe) {
     # Temporal depend de crates Rust ; Rust est absent du profil ALOS.
     $args_gn += "`nv8_enable_temporal_support = false"
 }
+if ($Net) {
+    $netSource = Join-Path $repo "ports\chromium\net"
+    $netDestination = Join-Path $src "alos_native\net"
+    New-Item -ItemType Directory -Force $netDestination | Out-Null
+    Copy-Item -Path (Join-Path $netSource "*") -Destination $netDestination -Force
+}
+if ($Net) {
+    # //net:net : graphe GN resserre (docs/chromium-port.md) : pas de Blink/UI/
+    # Ozone-defauts/nss/cups ; tests neutralises par chromium-alos-skip-test-targets.patch.
+    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false`nenable_rust_cxx = true`nenable_chromium_prelude = true`nchrome_root_store_only = true"
+    $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
+    $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
+    $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"
+    $args_gn += "`nozone_auto_platforms = false`nozone_platform_x11 = false`nozone_platform_wayland = false`nozone_platform_drm = false"
+    $args_gn += "`ntreat_warnings_as_errors = false`nv8_enable_temporal_support = false"
+}
+if ($Blink) {
+    # Blink/content : meme base que -Net avec use_blink=true ; extensions, plugins,
+    # impression, webrtc, media/ffmpeg/vpx/dav1d, WebGPU et fontconfig coupes ;
+    # Ozone ALOS (voir ports/chromium/ozone). Etat : docs/chromium-port.md.
+    $args_gn += "`nuse_blink = true`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false"
+    $args_gn += "`nenable_rust_cxx = true`nenable_chromium_prelude = true`nchrome_root_store_only = true"
+    $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
+    $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
+    $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"
+    $args_gn += "`nozone_auto_platforms = false`nozone_platform_x11 = false`nozone_platform_wayland = false`nozone_platform_drm = false"
+    $args_gn += "`nuse_ozone = true`nozone_platform = `"alos`""
+    $args_gn += "`nenable_extensions = false`nenable_extensions_core = false`nenable_plugins = false`nenable_pdf = false"
+    $args_gn += "`nenable_printing = false`nenable_print_preview = false`nenable_webrtc = false`nenable_nacl = false"
+    $args_gn += "`nenable_remoting = false`nenable_reporting = false`nuse_pangocairo = false`nuse_fontconfig = false"
+    $args_gn += "`nmedia_use_ffmpeg = false`nmedia_use_libvpx = false`nenable_libaom_decoder = false`nenable_dav1d_decoder = false"
+    $args_gn += "`nproprietary_codecs = false`nenable_ffmpeg_video_decoders = false`nenable_openh264 = false`nenable_webgpu = false"
+    $args_gn += "`ntreat_warnings_as_errors = false`nv8_enable_temporal_support = false"
+}
+if ($Ccache) { $args_gn += "`ncc_wrapper = `"ccache`"" }
 New-Item -ItemType Directory -Force (Join-Path $src $outDirectory) | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "$outDirectory/args.gn"), "$args_gn`n")
-$mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",
-            "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro",
-            "-w", "/chromium", "alos-runtime")
+$dockerImage = "alos-runtime"
+$ccacheMounts = @()
+if ($Ccache) {
+    # Image derivee avec ccache (construite une fois) + volume persistant.
+    $dockerImage = "alos-runtime-ccache"
+    & docker image inspect $dockerImage *> $null
+    if ($LASTEXITCODE) {
+        & docker build -t $dockerImage -f (Join-Path $repo "ports\chromium\build\Dockerfile.ccache") $repo
+        if ($LASTEXITCODE) { throw "Construction de l'image $dockerImage echouee." }
+    }
+    $ccacheMounts = @("-v", "alos-ccache:/ccache", "-e", "CCACHE_DIR=/ccache",
+        "-e", "CCACHE_BASEDIR=/chromium", "-e", "CCACHE_MAXSIZE=30G",
+        "-e", "CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime,pch_defines")
+}
+$srcMount = "${src}:/chromium"
+$libcxxMount = "${libcxx}:/libcxx:ro"
+$repoMount = "${repo}:/alos:ro"
+if ($ext4Volume) {
+    $srcMount = "${ext4Volume}:/chromium"
+    $libcxxMount = "alos-libcxx:/libcxx:ro"
+    $repoMount = "alos-repo:/alos:ro"
+    foreach ($volume in @("alos-libcxx", "alos-repo")) { & docker volume create $volume | Out-Null }
+    # libc++ ALOS : copie unique (contenu statique) du dossier hote vers le volume.
+    & docker run --rm -v "alos-libcxx:/d" alos-runtime sh -c "test -e /d/lib/libc++.a"
+    if ($LASTEXITCODE) {
+        & docker run --rm -v "${libcxx}:/s:ro" -v "alos-libcxx:/d" alos-runtime sh -c "cp -a /s/. /d/"
+        if ($LASTEXITCODE) { throw "Copie de libc++ vers le volume alos-libcxx echouee." }
+    }
+    # Depot ALOS : seuls les dossiers lus par le build sont synchronises (libc,
+    # libm, libgui, en-tetes noyau/ABI, ports/chromium) vers alos-repo.
+    & docker run --rm -v "${repo}:/s:ro" -v "alos-repo:/d" alos-runtime sh -c `
+        "cd /s && tar cf - src/include src/userland/libc src/userland/libm src/userland/libgui ports/chromium | (cd /d && tar xf -)"
+    if ($LASTEXITCODE) { throw "Synchronisation du depot ALOS vers alos-repo echouee." }
+}
+$mounts = @("run", "--rm", "-v", $srcMount, "-v", "${gn}:/gn:ro",
+            "-v", $libcxxMount, "-v", $repoMount) + $ccacheMounts + @(
+            "-w", "/chromium", $dockerImage)
 $generate = @("/gn/gn", "gen", $outDirectory)
 if ($MojoBindings) {
     $generate += "--root-target=//alos_mojo:mojo_bindings_smoke"
 }
 if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
+if ($Skia) { $generate += "--root-target=//alos_native/skia:skia_raster_smoke" }
+if ($Net) { $generate += "--root-target=//alos_native/net:net_http_smoke" }
+if ($Blink) { $generate += "--root-target=//third_party/blink/renderer/platform/wtf:wtf" }
 if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
 if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate

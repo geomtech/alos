@@ -1,0 +1,32 @@
+assert(is_alos, "This executable targets native ALOS only.")
+
+# Skia ajoute -ldl (SkOSFile_posix) ; ALOS n'a pas de libdl. Archive vide, sans
+# symbole : un appel reel a dlopen/dlsym ferait echouer l'edition de liens.
+action("empty_libdl") {
+  script = "/alos/ports/chromium/build/make-empty-archive.py"
+  outputs = [ "$root_out_dir/alos-stub-libs/libdl.a" ]
+  args = [ rebase_path(outputs[0], root_build_dir) ]
+}
+
+set_defaults("executable") {
+  inputs = [
+    "/alos/src/userland/libc/crt0.o",
+    "/alos/src/userland/libc/libc.a",
+    "/alos/src/userland/libm/libm.a",
+    "/libcxx/lib/libc++.a",
+    "/libcxx/lib/libc++abi.a",
+    "/alos/ports/chromium/build/link-native.py",
+  ]
+}
+
+executable("skia_raster_smoke") {
+  sources = [
+    "skia-embedder-alos.cc",
+    "skia-raster-smoke.cc",
+  ]
+  deps = [
+    ":empty_libdl",
+    "//third_party/skia:skia",
+  ]
+  lib_dirs = [ "$root_out_dir/alos-stub-libs" ]
+}
