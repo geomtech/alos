@@ -1559,3 +1559,29 @@ et `-Ccache` sont les nouveaux defauts/options. Detail, chiffres et limites :
 `ports/chromium/BUILD-SPEED.md`. Valide : Skia (`-Skia -Ccache`) construit depuis
 le volume puis execute sous QEMU (PASS identique). L'ancien checkout NTFS est
 conserve.
+
+#### //net:net sur ALOS : premiere compilation reelle (2026-11-24)
+
+Cible : `build-chromium.ps1 -Net` (profil `out/alos-net`, root `//net:net`, depuis le
+volume ext4). Le graphe GN se genere (2871 cibles) grace a : `testing/test.gni`
+(`test()` neutralise, patch `chromium-alos-skip-test-targets`), `use_blink=false`,
+`gclient_args.gni` complete, convertisseurs de fuzzers Skia exclus, args
+UI/Ozone/nss/cups/glib a faux. Patchs ajoutes pour la compilation :
+`chromium-alos-field-trial-key` (cle `std::pair` possedee : le `std::less<void>`
+heterogene echoue avec libstdc++ 13 pour les outils hote), `chromium-alos-rust-host-tls`
+(`-Ztls-model=local-exec` reserve a la toolchain ALOS ; il cassait le link des macros
+procedurales hote), `chromium-alos-cxxbridge-target-path` (`RUST_TARGET_PATH` pour
+cxxbridge) ; `third_party/lss` ajoute a `fetch-chromium.ps1`, `<memory.h>` a la libc.
+
+Etat : les outils hote (base hote, macros Rust, cxxbridge) compilent. Reste
+**21 echecs, tous de vraies lacunes de plateforme ALOS** (premiere passe,
+`-k 0`) :
+- en-tetes absents de la libc : `<net/if.h>` (`if_nametoindex`, `ifreq`),
+  `<resolv.h>` (`res_ninit`, lu par `dns_config_service_posix`, `scoped_res_state`,
+  `resolv_reader`), `<ifaddrs.h>`/`getifaddrs` (`network_interfaces_getifaddrs`) ;
+- `getpeereid` (`unix_domain_server_socket_posix`) ;
+- GSSAPI (`gssapi.h`) : a couper par `use_kerberos = false` ;
+- crates Rust (`libbase_crust_ulogger`, `serde`) : `log_severity`/`chromium` non
+  resolus dans le profil `-Net` (dependances `enable_rust_cxx`).
+Il faudra donc une couche reseau ALOS (liste des interfaces, configuration DNS issue
+du noyau/DHCP, notification de changement reseau) plutot que des stubs ; non faite.

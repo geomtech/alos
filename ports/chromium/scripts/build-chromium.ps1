@@ -12,6 +12,7 @@ param(
     [switch]$Rust,
     [switch]$V8Probe,
     [switch]$Skia,
+    [switch]$Net,
     # 16 CPU / 16 Go cote Docker : -j 14 laisse de la marge a la RAM des liens.
     [int]$Jobs = 14,
     # 0 = pas d'infos de debug (compilation/liens beaucoup plus rapides, out/ ~5x
@@ -29,13 +30,15 @@ if ($MojoBindings) { $MojoTests = $true }
 # Sonde de compilation V8 ciblee (//v8:v8_libbase) dans out/alos-v8 : elle ne
 # remplace pas le profil out/alos et ne construit ni ne lie le moteur complet.
 if ($V8Probe -and $MojoBindings) { throw "-V8Probe et -MojoBindings utilisent des root targets distincts." }
+if ($Net -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia)) { throw "-Net utilise un root target dedie." }
 if ($Skia -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe)) { throw "-Skia utilise un root target dedie." }
 if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
 if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
+if ($Net -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("net:net") }
 if ($Skia -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/skia:skia_raster_smoke") }
 if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
-$outDirectory = if ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
-$rustEnabled = $Rust -or $OzoneProbe
+$outDirectory = if ($Net) { "out/alos-net" } elseif ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
+$rustEnabled = $Rust -or $OzoneProbe -or $Net
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $src = (Resolve-Path $ChromiumDirectory).ProviderPath
 # Mode ext4 : ChromiumDirectory est un volume Docker vu depuis Windows
@@ -107,7 +110,10 @@ foreach ($patchName in @(
     "chromium-alos-blink-rust-crash-gate.patch",
     "chromium-alos-platform-gates.patch",
     "chromium-alos-skip-test-targets.patch",
-    "chromium-alos-rust-target.patch"
+    "chromium-alos-field-trial-key.patch",
+    "chromium-alos-rust-target.patch",
+    "chromium-alos-rust-host-tls.patch",
+    "chromium-alos-cxxbridge-target-path.patch"
 )) {
     $patch = Join-Path $repo ("ports\chromium\patches\" + $patchName)
     & git -C $src apply --reverse --check $patch 2>$null
@@ -362,6 +368,16 @@ if ($V8Probe) {
     # Temporal depend de crates Rust ; Rust est absent du profil ALOS.
     $args_gn += "`nv8_enable_temporal_support = false"
 }
+if ($Net) {
+    # //net:net : graphe GN resserre (docs/chromium-port.md) : pas de Blink/UI/
+    # Ozone-defauts/nss/cups ; tests neutralises par chromium-alos-skip-test-targets.patch.
+    $args_gn += "`nuse_blink = false`nuse_nss_certs = false`nuse_cups = false`nenable_rust_cxx = true"
+    $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
+    $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
+    $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"
+    $args_gn += "`nozone_auto_platforms = false`nozone_platform_x11 = false`nozone_platform_wayland = false`nozone_platform_drm = false"
+    $args_gn += "`ntreat_warnings_as_errors = false`nv8_enable_temporal_support = false"
+}
 if ($Ccache) { $args_gn += "`ncc_wrapper = `"ccache`"" }
 New-Item -ItemType Directory -Force (Join-Path $src $outDirectory) | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "$outDirectory/args.gn"), "$args_gn`n")
@@ -408,6 +424,7 @@ if ($MojoBindings) {
 }
 if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
 if ($Skia) { $generate += "--root-target=//alos_native/skia:skia_raster_smoke" }
+if ($Net) { $generate += "--root-target=//net:net" }
 if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
 if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate

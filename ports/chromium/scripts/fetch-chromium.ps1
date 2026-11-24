@@ -66,6 +66,9 @@ $deps = @(
     # Sources FreeType (Skia raster : rendu de texte).
     @{ Path = "third_party/freetype/src"; Url = "https://chromium.googlesource.com/chromium/src/third_party/freetype2.git";
        Rev = "27c1cb10a52420515ce66729dfca897be21691b8"; Sparse = $null },
+    # Appels systeme Linux (base/rand_util_posix.cc dans les outils hote).
+    @{ Path = "third_party/lss"; Url = "https://chromium.googlesource.com/linux-syscall-support.git";
+       Rev = "ed31caa60f20a4f6569883b2d752ef7522de51e0"; Sparse = $null },
     @{ Path = "third_party/openxr/src"; Url = "https://chromium.googlesource.com/external/github.com/KhronosGroup/OpenXR-SDK.git";
        Rev = "57572a0e91890fe7183de25a62153aec955d64ba"; Sparse = @("include", "src") },
     @{ Path = "third_party/skia"; Url = "https://skia.googlesource.com/skia.git";

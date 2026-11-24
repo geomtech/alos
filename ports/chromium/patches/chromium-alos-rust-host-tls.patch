@@ -1,0 +1,63 @@
+diff --git a/build/toolchain/gcc_toolchain.gni b/build/toolchain/gcc_toolchain.gni
+index 7d670b1..58a40b4 100644
+--- a/build/toolchain/gcc_toolchain.gni
++++ b/build/toolchain/gcc_toolchain.gni
+@@ -682,6 +682,13 @@ template("single_gcc_toolchain") {
+       rustc_wrapper =
+           rebase_path("//build/rust/gni_impl/rustc_wrapper.py", root_build_dir)
+ 
++      # Modele TLS local-exec uniquement pour la toolchain ALOS : les macros
++      # procedurales hote (.so) ne le supportent pas (R_X86_64_TPOFF32).
++      alos_rustc_tls = ""
++      if (invoker_toolchain_args.current_os == "alos") {
++        alos_rustc_tls = " -Ztls-model=local-exec"
++      }
++
+       # RSP manipulation due to https://bugs.chromium.org/p/gn/issues/detail?id=249
+       tool("rust_staticlib") {
+         libname = "{{output_dir}}/{{target_output_name}}{{output_extension}}"
+@@ -699,7 +706,7 @@ template("single_gcc_toolchain") {
+         outputs = [ libname ]
+ 
+         rspfile_content = "{{rustdeps}} {{externs}} SOURCES {{sources}}"
+-        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args --emit=dep-info=$depfile,link -o $libname LDFLAGS RUSTENV {{rustenv}}"
++        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args${alos_rustc_tls} --emit=dep-info=$depfile,link -o $libname LDFLAGS RUSTENV {{rustenv}}"
+         rust_sysroot = rust_sysroot_relative
+       }
+ 
+@@ -724,7 +731,7 @@ template("single_gcc_toolchain") {
+         outputs = [ rlibname ]
+ 
+         rspfile_content = "{{rustdeps}} {{externs}} SOURCES {{sources}}"
+-        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args --emit=dep-info=$depfile,link -o $rlibname LDFLAGS RUSTENV {{rustenv}}"
++        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args${alos_rustc_tls} --emit=dep-info=$depfile,link -o $rlibname LDFLAGS RUSTENV {{rustenv}}"
+         rust_sysroot = rust_sysroot_relative
+       }
+ 
+@@ -740,7 +747,7 @@ template("single_gcc_toolchain") {
+         outputs = [ exename ]
+ 
+         rspfile_content = "{{rustdeps}} {{externs}} SOURCES {{sources}}"
+-        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args --emit=dep-info=$depfile,link -o $exename LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
++        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args${alos_rustc_tls} --emit=dep-info=$depfile,link -o $exename LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
+         rust_sysroot = rust_sysroot_relative
+       }
+ 
+@@ -757,7 +764,7 @@ template("single_gcc_toolchain") {
+         outputs = [ dllname ]
+ 
+         rspfile_content = "{{rustdeps}} {{externs}} SOURCES {{sources}}"
+-        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args --emit=dep-info=$depfile,link -o $dllname LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
++        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args${alos_rustc_tls} --emit=dep-info=$depfile,link -o $dllname LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
+         rust_sysroot = rust_sysroot_relative
+       }
+ 
+@@ -774,7 +781,7 @@ template("single_gcc_toolchain") {
+         outputs = [ dllname ]
+ 
+         rspfile_content = "{{rustdeps}} {{externs}} SOURCES {{sources}}"
+-        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args --emit=dep-info=$depfile,link -o $dllname LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
++        command = "\"$python_path\" \"$rustc_wrapper\" --rustc=$rustc --depfile=$depfile --rsp=$rspfile -- -Clinker=\"${invoker.cxx}\" $rustc_common_args${alos_rustc_tls} --emit=dep-info=$depfile,link -o $dllname LDFLAGS {{ldflags}} ${extra_ldflags} RUSTENV {{rustenv}}"
+         rust_sysroot = rust_sysroot_relative
+       }
+     }
