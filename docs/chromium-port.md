@@ -1617,3 +1617,33 @@ ni de detection de changement de reseau. Serveur de test : `python -m http.serve
 10.0.2.3 -> resolveur de l'hote) a resolu `example.com` en 172.66.147.243, connexion
 TCP :80, `HTTP/1.1 200 OK` chunked, 577 octets (`<title>Example Domain</title>`),
 `net::OK`. Dependant d'Internet : a ne pas utiliser comme test deterministe.
+
+#### Blink / content_shell : inventaire des ecarts (2026-11-24)
+
+Etat reel : **Blink n'est pas compile.** Profil `build-chromium.ps1 -Blink`
+(`out/alos-blink`, volume ext4, `use_blink=true`, Ozone ALOS, extensions/plugins/
+impression/webrtc/media-ffmpeg/WebGPU/fontconfig coupes). Mesures :
+
+- `gn gen` reussit pour tout le graphe ALOS (~24 200 cibles), y compris
+  `//third_party/blink/renderer/{platform,core}:*` et `//content/shell:content_shell`,
+  apres : `testing/test.gni` (tests neutralises), sources DEPS manquantes recuperees
+  (`fetch_deps.py`, 79 depots git Linux, ~1 min), sonde Ozone limitee a l'option
+  `alos_ozone_probe_enabled`.
+- Premiere compilation de `blink/renderer/platform/wtf:wtf` (16 508 actions, ~14 150
+  compilees avant arret, `-k 0`) : 412 echecs, dont ~230 etaient des lacunes libc,
+  corrigees ensuite : `htobe16/32/64` et famille (`<endian.h>`), `<alloca.h>`,
+  `<utime.h>`, `pthread_setname_np` (ENOTSUP), `rand/srand`. Apres correction : 451
+  echecs sur 13 911 actions, qui ne sont plus de la libc mais de la **plateforme
+  graphique** :
+  - ANGLE (216) et SwiftShader (64) + vulkan-loader (14) : `Unsupported platform`,
+    `llvm/Config/llvm-config.h` absent, `ScanForward` ambigu ;
+  - code UI Chromium sans cas ALOS : `gfx::NativeWindow`, `ClipboardFormatType`,
+    `ui/gl` (types EGL), `ui/events`, `ui/display`, `ui/base`, `components/signin`,
+    `components/trusted_vault`, `ui/webui`, `gpu/config`.
+Les medias et webrtc ne bloquent plus.
+
+Lecture honnete : le plus gros reste a faire est l'integration graphique/UI
+(ANGLE/SwiftShader ou leur retrait, ports ALOS de `ui/gfx`, `ui/gl`, presse-papiers,
+`NativeWindow`), puis Mojo/IPC, services, `content` mono-processus. Aucun rendu
+Blink n'est demontre ; pas de `content_shell`. Le build est maintenant 3x plus rapide
+(ext4 + ccache), ce qui rend ces iterations raisonnables.

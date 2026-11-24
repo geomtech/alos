@@ -31,7 +31,12 @@ source_set("alos") {
 
 # La sonde n'existe que pour la toolchain ALOS : dans la toolchain hote (GN evalue
 # ce fichier pour chaque toolchain), elle violerait la visibilite de //ui/ozone.
-if (current_os == "alos") {
+declare_args() {
+  # Active la sonde d'interface Ozone (profil -OzoneProbe uniquement).
+  alos_ozone_probe_enabled = false
+}
+
+if (current_os == "alos" && alos_ozone_probe_enabled) {
   set_defaults("executable") {
     inputs = [
       "/alos/src/userland/libc/crt0.o",

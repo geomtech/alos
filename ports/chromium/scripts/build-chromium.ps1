@@ -13,6 +13,7 @@ param(
     [switch]$V8Probe,
     [switch]$Skia,
     [switch]$Net,
+    [switch]$Blink,
     # 16 CPU / 16 Go cote Docker : -j 14 laisse de la marge a la RAM des liens.
     [int]$Jobs = 14,
     # 0 = pas d'infos de debug (compilation/liens beaucoup plus rapides, out/ ~5x
@@ -30,15 +31,17 @@ if ($MojoBindings) { $MojoTests = $true }
 # Sonde de compilation V8 ciblee (//v8:v8_libbase) dans out/alos-v8 : elle ne
 # remplace pas le profil out/alos et ne construit ni ne lie le moteur complet.
 if ($V8Probe -and $MojoBindings) { throw "-V8Probe et -MojoBindings utilisent des root targets distincts." }
+if ($Blink -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia -or $Net)) { throw "-Blink utilise un root target dedie." }
 if ($Net -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe -or $Skia)) { throw "-Net utilise un root target dedie." }
 if ($Skia -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe)) { throw "-Skia utilise un root target dedie." }
 if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
 if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
+if ($Blink -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("third_party/blink/renderer/platform/wtf:wtf") }
 if ($Net -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/net:net_http_smoke") }
 if ($Skia -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/skia:skia_raster_smoke") }
 if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
-$outDirectory = if ($Net) { "out/alos-net" } elseif ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
-$rustEnabled = $Rust -or $OzoneProbe -or $Net
+$outDirectory = if ($Blink) { "out/alos-blink" } elseif ($Net) { "out/alos-net" } elseif ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
+$rustEnabled = $Rust -or $OzoneProbe -or $Net -or $Blink
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $src = (Resolve-Path $ChromiumDirectory).ProviderPath
 # Mode ext4 : ChromiumDirectory est un volume Docker vu depuis Windows
@@ -233,7 +236,7 @@ if ($NativeTests) {
 }
 if ($OzoneProbe) {
     $args_gn += "`nuse_ozone = true"
-    $args_gn += "`nalos_build_ozone_probe = true"
+    $args_gn += "`nalos_build_ozone_probe = true`nalos_ozone_probe_enabled = true"
     $args_gn += "`nozone_auto_platforms = false"
     $args_gn += "`nozone_extra_path = `"//alos_native/ozone/ozone_extra.gni`""
     $args_gn += "`nozone_platform = `"alos`""
@@ -385,6 +388,24 @@ if ($Net) {
     $args_gn += "`nozone_auto_platforms = false`nozone_platform_x11 = false`nozone_platform_wayland = false`nozone_platform_drm = false"
     $args_gn += "`ntreat_warnings_as_errors = false`nv8_enable_temporal_support = false"
 }
+if ($Blink) {
+    # Blink/content : meme base que -Net avec use_blink=true ; extensions, plugins,
+    # impression, webrtc, media/ffmpeg/vpx/dav1d, WebGPU et fontconfig coupes ;
+    # Ozone ALOS (voir ports/chromium/ozone). Etat : docs/chromium-port.md.
+    $args_gn += "`nuse_blink = true`nuse_nss_certs = false`nuse_cups = false`nuse_kerberos = false"
+    $args_gn += "`nenable_rust_cxx = true`nenable_chromium_prelude = true`nchrome_root_store_only = true"
+    $args_gn += "`nenable_supervised_users = true`nuse_xkbcommon = false`nuse_glib = false`nuse_gbm = false"
+    $args_gn += "`nuse_dbus = false`nuse_udev = false`nuse_libinput = false`nuse_pulseaudio = false`nuse_alsa = false"
+    $args_gn += "`nuse_cras = false`nuse_vaapi = false`nuse_v4l2_codec = false`nuse_atk = false`nuse_gtk = false"
+    $args_gn += "`nozone_auto_platforms = false`nozone_platform_x11 = false`nozone_platform_wayland = false`nozone_platform_drm = false"
+    $args_gn += "`nuse_ozone = true`nozone_platform = `"alos`""
+    $args_gn += "`nenable_extensions = false`nenable_extensions_core = false`nenable_plugins = false`nenable_pdf = false"
+    $args_gn += "`nenable_printing = false`nenable_print_preview = false`nenable_webrtc = false`nenable_nacl = false"
+    $args_gn += "`nenable_remoting = false`nenable_reporting = false`nuse_pangocairo = false`nuse_fontconfig = false"
+    $args_gn += "`nmedia_use_ffmpeg = false`nmedia_use_libvpx = false`nenable_libaom_decoder = false`nenable_dav1d_decoder = false"
+    $args_gn += "`nproprietary_codecs = false`nenable_ffmpeg_video_decoders = false`nenable_openh264 = false`nenable_webgpu = false"
+    $args_gn += "`ntreat_warnings_as_errors = false`nv8_enable_temporal_support = false"
+}
 if ($Ccache) { $args_gn += "`ncc_wrapper = `"ccache`"" }
 New-Item -ItemType Directory -Force (Join-Path $src $outDirectory) | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "$outDirectory/args.gn"), "$args_gn`n")
@@ -432,6 +453,7 @@ if ($MojoBindings) {
 if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
 if ($Skia) { $generate += "--root-target=//alos_native/skia:skia_raster_smoke" }
 if ($Net) { $generate += "--root-target=//alos_native/net:net_http_smoke" }
+if ($Blink) { $generate += "--root-target=//third_party/blink/renderer/platform/wtf:wtf" }
 if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
 if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate

@@ -425,3 +425,14 @@ void *pthread_getspecific(pthread_key_t key) {
   pthread_mutex_unlock(&key_lock);
   return value;
 }
+
+int pthread_setname_np(struct alos_pthread *thread, const char *name) {
+  (void)thread; (void)name;
+  return ENOTSUP;
+}
+
+int pthread_getname_np(struct alos_pthread *thread, char *name, size_t size) {
+  (void)thread;
+  if (size) name[0] = 0;
+  return ENOTSUP;
+}
