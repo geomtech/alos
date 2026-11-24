@@ -1340,7 +1340,5 @@ d'un moteur V8 hote, sous `qemu64` **et** `-Cpu max`. Avec `--trace-opt`, V8
 journalise 4 optimisations TurboFan (`mix`, `hot` OSR, `typed` OSR, ...) :
 TurboFan et le tier-up OSR s'executent sur ALOS dans les deux profils CPU.
 `--always-sparkplug` est accepte sans erreur, mais ce trace n'enregistre pas
-Sparkplug : son execution n'est pas demontree. Non couverts : WebAssembly
-(desactive : lite mode non utilise, mais `v8_enable_webassembly` suit le
-profil du build), charge longue/GC sous pression, threads de compilation
-concurrents en charge, tests V8 officiels.
+Sparkplug : son execution n'est pas demontree. Non couverts : WebAssembly (non execute ; le gestionnaire de traps
+repose sur des signaux), charge longue/GC sous pression, tests V8 officiels.
