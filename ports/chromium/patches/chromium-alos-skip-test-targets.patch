@@ -1,0 +1,53 @@
+diff --git a/testing/libfuzzer/proto/BUILD.gn b/testing/libfuzzer/proto/BUILD.gn
+index 6198aef1ad..cec8b6c432 100644
+--- a/testing/libfuzzer/proto/BUILD.gn
++++ b/testing/libfuzzer/proto/BUILD.gn
+@@ -26,7 +26,8 @@ source_set("url_proto_converter") {
+   ]
+ }
+ 
+-if (!is_cronet_build) {
++# ALOS : convertisseurs de fuzzers Skia exclus (tirent //skia, ui/base, webui...).
++if (!is_cronet_build && false) {
+   source_set("json_proto_converter") {
+     sources = [
+       "json_proto_converter.cc",
+diff --git a/testing/test.gni b/testing/test.gni
+index 1ebfbd5b3f..a3ba2aac63 100644
+--- a/testing/test.gni
++++ b/testing/test.gni
+@@ -420,7 +420,7 @@ template("mixed_test") {
+ #      This should be a list of the test names, for example
+ #      fuzztests = [ "MyTestClass.MyTestName" ]
+ #   fuzztest_additional_args: additional arguments to be forwarded to fuzztest.
+-template("test") {
++template("_alos_real_test") {
+   # Ensures a test filter file exists and if not, creates a dummy file.
+   # The Regression Test Selection (rts) flag is passed in mb.py and used
+   # to filter out test cases. Flag ensures that a file exists.
+@@ -1161,6 +1161,25 @@ template("test") {
+   }
+ }
+ 
++declare_args() {
++  # ALOS : ne pas definir les executables de test (leurs dependances tirent
++  # chrome/, content/, ui/... hors de portee). Voir docs/chromium-port.md.
++  alos_skip_tests = true
++}
++
++template("test") {
++  if (alos_skip_tests) {
++    not_needed(invoker, "*")
++    group(target_name) {
++      testonly = true
++    }
++  } else {
++    _alos_real_test(target_name) {
++      forward_variables_from(invoker, "*")
++    }
++  }
++}
++
+ # Defines a type of test that invokes a script to run, rather than
+ # invoking an executable.
+ #

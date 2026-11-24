@@ -218,7 +218,8 @@ if ($WithV8) {
 }
 
 # Fichiers normalement produits par gclient runhooks.
-$gclientArgs = "# Generated for the isolated ALOS bootstrap checkout.`nbuild_with_chromium = true`ncheckout_src_internal = false`ncheckout_openxr = true`n"
+$gclientArgs = "# Generated for the isolated ALOS bootstrap checkout.`nbuild_with_chromium = true`ncheckout_src_internal = false`ncheckout_openxr = true`n" +
+    "# Variables de DEPS (gclient_gn_args) lues par des BUILD.gn hors profil de base : `ncheckout_android = false`ncheckout_android_prebuilts_build_tools = false`ncheckout_clang_coverage_tools = false`ncheckout_copybara = false`ncheckout_glic_e2e_tests = false`ncheckout_ios_webkit = false`ncheckout_mutter = false`ncheckout_clusterfuzz_data = false`ncheckout_src_internal_infra = false`n"
 [IO.File]::WriteAllText((Join-Path $src "build\config\gclient_args.gni"), $gclientArgs)
 $commitTime = git -C $src log -1 --format=%ct
 [IO.File]::WriteAllText((Join-Path $src "build\util\LASTCHANGE.committime"), "$commitTime")
