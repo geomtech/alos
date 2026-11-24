@@ -16,7 +16,12 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet("all", "build", "run", "disk", "clean", "debug")]
-    [string]$Action = "all"
+    [string]$Action = "all",
+
+    # Ajoute un virtio-gpu-pci (pilote GPU ALOS) en plus de bochs-display :
+    # le desktop s'y affiche ; l'afficher via le menu View de la fenetre QEMU
+    # (console virtio-gpu). Sans ce switch, l'affichage reste le framebuffer Limine.
+    [switch]$VirtioGpu
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,6 +123,10 @@ function Invoke-Run {
         "-no-reboot",
         "-no-shutdown"
     )
+
+    if ($VirtioGpu) {
+        $qemuArgs += @("-device", "virtio-gpu-pci")
+    }
 
     if ($Debug) {
         $qemuArgs += @("-s", "-S")

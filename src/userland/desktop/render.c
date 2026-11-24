@@ -238,6 +238,9 @@ void desktop_render(void) {
            g_desktop.backbuffer + y * g_desktop.framebuffer.width,
            g_desktop.framebuffer.width * sizeof(uint32_t));
   }
+  if (g_desktop.use_gpu) {
+    (void)gpu_flush(0, 0, g_desktop.framebuffer.width, g_desktop.framebuffer.height);
+  }
   g_desktop.dirty = false;
 }
 

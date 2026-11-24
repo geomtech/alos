@@ -9,6 +9,7 @@ param(
     [string]$BaseSmokePath,
     [string]$RustSmokePath,
     [switch]$GpuTest,
+    [switch]$DesktopGpuTest,
     [int]$QmpPort = 4489,
     [string]$V8SmokePath,
     [string]$V8Script,
@@ -60,6 +61,7 @@ if ($BaseSmokeOnly -and (-not $hasBaseSmoke -or $Runtime -or $Fleet -or
 if ($hasBaseSmoke -and $EntropyUnavailable) {
     throw "Le smoke Base protege exige une vraie source d'entropie."
 }
+if ($DesktopGpuTest) { $GpuTest = [switch]$true }
 if ($GpuTest -and ($Runtime -or $Fleet -or $ComplexCpp -or $StackProtectorOnly -or
     $UnixSocketOnly -or $DnsOnly -or $V8SmokePath -or $BaseSmokePath -or
     $RustSmokePath -or $MojoSmokePath -or $BaseNativeDirectory)) {
@@ -187,7 +189,8 @@ if ($DnsOnly) {
     $startup = "echo vm-suite-begin`ninet-test --dns`necho vm-suite-complete"
 }
 if ($GpuTest) {
-    $startup = "echo vm-suite-begin`ngpu-test`necho vm-suite-complete"
+    $test = if ($DesktopGpuTest) { "desktop-gpu-test" } else { "gpu-test" }
+    $startup = "echo vm-suite-begin`n$test`necho vm-suite-complete"
 }
 $basePrograms = @()
 if ($hasNativeSmoke) {
@@ -385,8 +388,12 @@ try {
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
     if ($GpuTest) {
-        if (-not $text.Contains("gpu-test: PASS") -or $text.Contains("gpu-test: FAIL")) {
-            throw "gpu-test userland echoue : $log"
+        $marker = if ($DesktopGpuTest) { "desktop-gpu-test: PASS" } else { "gpu-test: PASS" }
+        if (-not $text.Contains($marker) -or $text.Contains("gpu-test: FAIL")) {
+            throw "test GPU userland echoue : $log"
+        }
+        if ($DesktopGpuTest -and -not $text.Contains("gui: using virtio-gpu")) {
+            throw "Le desktop n'utilise pas virtio-gpu : $log"
         }
         $ppm = Join-Path $output "gpu.ppm"
         $client = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
@@ -413,6 +420,26 @@ try {
         if ($head -notmatch '^P6\s+(\d+)\s+(\d+)\s+255\s') { throw "PPM invalide : $ppm" }
         $w = [int]$Matches[1]; $h = [int]$Matches[2]; $off = $Matches[0].Length
         function Get-Pixel([int]$x, [int]$y) { $i = $off + ($y * $w + $x) * 3; return @($bytes[$i], $bytes[$i+1], $bytes[$i+2]) }
+        if ($DesktopGpuTest) {
+            # Bureau complet : degrade de fond, barre des taches, bouton de la
+            # fenetre gui-demo (actif) et corps de fenetre.
+            $work = $h - 42
+            $mix = [int][Math]::Floor(100 * 255 / ($work - 1))
+            $er = [int][Math]::Floor((0x16 * (255 - $mix) + 0x31 * $mix) / 255)
+            $eg = [int][Math]::Floor((0x3B * (255 - $mix) + 0x5F * $mix) / 255)
+            $eb = [int][Math]::Floor((0x5C * (255 - $mix) + 0x82 * $mix) / 255)
+            $bg = Get-Pixel ($w - 40) 100
+            $bar = Get-Pixel 700 ($h - 4)
+            $button = Get-Pixel 150 ($h - 20)
+            $body = Get-Pixel 80 300
+            "scanout ${w}x${h} ; fond=$($bg -join ',') (attendu $er,$eg,$eb) ; barre=$($bar -join ',') ; bouton=$($button -join ',') ; corps=$($body -join ',')"
+            if ([Math]::Abs($bg[0]-$er) -gt 1 -or [Math]::Abs($bg[1]-$eg) -gt 1 -or [Math]::Abs($bg[2]-$eb) -gt 1) { throw "Fond du bureau incorrect : $ppm" }
+            if ($bar[0] -ne 0x18 -or $bar[1] -ne 0x23 -or $bar[2] -ne 0x2D) { throw "Barre des taches absente : $ppm" }
+            if ($button[0] -ne 0x32 -or $button[1] -ne 0x7F -or $button[2] -ne 0xC0) { throw "Bouton de fenetre absent (client non affiche) : $ppm" }
+            if ($body[0] -ne 0xF4 -or $body[1] -ne 0xF7 -or $body[2] -ne 0xFA) { throw "Corps de fenetre gui-demo absent : $ppm" }
+            "ALOS desktop via virtio-gpu PASS : $ppm"
+            return
+        }
         $green = Get-Pixel 150 150
         $yellow = Get-Pixel 520 320
         $gx = [int][Math]::Floor(1000 * 255 / $w); $by = [int][Math]::Floor(700 * 255 / $h)

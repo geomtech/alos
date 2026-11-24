@@ -1421,3 +1421,26 @@ mener a part. Chemin recommande : partir de `//skia:skia` avec le profil Rust,
 `use_crash_key_stubs`, desactivation de nss/crypto liee aux certificats, GPU
 (`skia_use_gl/vulkan/dawn = false`) et `skia_enable_gpu = false`, puis copier le
 bitmap raster vers la surface `SYS_GPU_MAP`.
+
+#### Couche GPU multi-pilotes et bureau complet sur virtio-gpu (2026-11-24)
+
+Le pilote virtio-gpu est range sous `src/drivers/gpu/` derriere une couche
+`gpu.h` : `gpu_driver_t` (probe, init, flush, set_mode, shutdown), registre
+avec priorites, selection par vendor/device ou classe PCI, repli sur le
+framebuffer Limine si aucun pilote n'est actif ; `SYS_GPU_QUERY` (322) expose
+nom du pilote, IDs PCI, capacites (`ALOS_GPU_CAP_*`) et mode, independamment du
+pilote. Mode d'emploi pour ajouter un pilote : `docs/DRIVERS.md` section 13 et
+`gpu_driver_template.c.example`.
+
+Le desktop officiel (`/bin/gui`) utilise `SYS_GPU_MAP` + `SYS_GPU_FLUSH`
+quand un GPU est present (`gui: using virtio-gpu WxH`), sinon le framebuffer
+Limine ; il flushe l'ecran entier a chaque rendu (pas de damage partiel).
+Test : `test-vm.ps1 -DesktopGpuTest` lance `/bin/gui` puis `/bin/gui-demo`,
+capture le scanout par QMP et verifie fond (degrade), barre des taches, bouton
+de fenetre et corps de fenetre (capture : `docs/desktop-virtio-gpu.png`).
+Observe (`qemu64`) : tout conforme ; `test-gpu.ps1`, `-GpuTest` (avec
+`gpu_query`) et la suite VM par defaut restent verts. `run.ps1 run -VirtioGpu`
+ajoute `-device virtio-gpu-pci` ; le desktop est alors visible dans la console
+virtio-gpu de la fenetre QEMU (menu View). Non fait : clic/clavier valides sur
+cette sortie (entrees PS/2 inchangees mais non testees ici), damage partiel,
+redimensionnement, VirtualBox/materiel reel.
