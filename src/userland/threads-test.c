@@ -29,7 +29,7 @@ void worker(void *arg) {
   }
 
   printf("Thread %d termine.\n", id);
-  exit(0);
+  _exit(0); /* fin du thread (exit() terminerait tout le processus) */
 }
 
 int main() {

@@ -7,7 +7,11 @@
 extern void __libc_fini(void);
 void exit(int status) {
   __libc_fini();
-  _exit(status);
+  /* exit() termine tout le processus (POSIX), threads compris ; _exit() reste
+   * un exit de thread. Sans cela, un processus multithread dont main() retourne
+   * ne devient jamais zombie et waitpid() bloque. */
+  syscall1(SYS_EXIT_GROUP, status);
+  __builtin_unreachable();
 }
 
 void abort(void) {

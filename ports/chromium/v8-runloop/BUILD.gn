@@ -20,3 +20,8 @@ executable("v8_runloop_smoke") {
     "//v8:v8_libplatform",
   ]
 }
+
+executable("threadpool_smoke") {
+  sources = [ "threadpool-smoke.cc" ]
+  deps = [ "//base" ]
+}

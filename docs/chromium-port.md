@@ -1523,3 +1523,25 @@ volontairement minimal (V8 + `v8::platform::NewDefaultPlatform` + base). Limites
 pas de `base::ThreadPool`/TaskScheduler exerce par ce smoke, pas d'integration
 des taches V8 au RunLoop (la plateforme par defaut a ses threads), pas de
 microtasks/promesses testees.
+
+#### base::ThreadPool et correction de exit() (2026-11-24)
+
+`ports/chromium/v8-runloop/threadpool-smoke.cc` (`alos_native/v8_runloop:threadpool_smoke`)
+exerce `base::ThreadPoolInstance` : 16 `PostTaskAndReplyWithResult` calcules
+sur le pool et rendus au thread principal, puis un `SequencedTaskRunner` (20
+taches, ordre FIFO). Observe (`qemu64`) : `replies=16 sum=1496 expected=1496
+fifo=1`, `threadpool-smoke: PASS`.
+
+Ce smoke a revele un bug libc : `exit()` appelait `_exit()` (exit de thread) ;
+un processus multithread dont `main()` retourne ne devenait donc jamais zombie
+(les threads du pool restaient vivants) et `waitpid()` du shell bloquait.
+`exit()` fait desormais `SYS_EXIT_GROUP` (POSIX : tout le processus) ; `_exit()`
+reste un exit de thread (utilise par `pthread_exit`). Effet de bord corrige :
+`threads-test` terminait ses threads par `exit(0)` et utilise `_exit(0)`.
+Verifie : suites par defaut et `-Runtime` vertes (`qemu64`).
+
+Echecs **preexistants** de `-Fleet` (identiques sans ce changement, verifie en
+reconstruisant l'etat precedent) : `base-math-test` (`ldexpl(1, 16384)` sans
+`errno == ERANGE`), `native-compat-test` (`ldexpf` ERANGE, tests 40 et 42),
+`ipc-poll-test` (`poll_one(...)` errno 95). Non traites ici ; ils concernent
+libm/poll, pas le modele de threads.
