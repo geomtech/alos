@@ -67,7 +67,7 @@ $deps = @(
        Rev = "57572a0e91890fe7183de25a62153aec955d64ba"; Sparse = @("include", "src") },
     @{ Path = "third_party/skia"; Url = "https://skia.googlesource.com/skia.git";
        Rev = "1fdbea293a53b270e3f5e74c92cc6670d68412ff";
-       Sparse = @("gn", "include", "modules", "src", "tools", "third_party") },
+       Sparse = @("experimental", "gn", "include", "modules", "src", "tools", "third_party") },
     @{ Path = "third_party/angle"; Url = "https://chromium.googlesource.com/angle/angle.git";
        Rev = "cbc4153da8d5796b0fbb3cf288e97bee19436191";
        Sparse = @("gni", "include", "src", "util", "third_party") },

@@ -1395,3 +1395,29 @@ et controle les pixels cote hote. Observe (`qemu64`) : vert 0,255,0 ; jaune
 255,255,0 ; degrade 0,199,223 conforme ; `ALOS GPU userland PASS` ; la suite
 VM par defaut reste verte. Non fait : redimensionnement dynamique, plusieurs
 processus/surfaces, double buffering, integration du desktop et d'Ozone.
+
+#### Skia raster CPU : premier sondage GN (2026-11-24)
+
+Etat : **rien de Skia n'est compile ni execute sur ALOS.** `gn gen` sur un
+`out/alos-skia` (args du profil ALOS) montre ce qui bloque, dans l'ordre :
+
+- `//skia:skia` (wrapper Chromium) : exige `use_crash_key_stubs = true`
+  (assertion `components/crash`), puis tire `//gpu/config` et, par une chaine
+  que GN n'affiche pas en entier, `//third_party/blink/renderer/platform/image-decoders`
+  (crabbyavif -> Rust requis, d'ou `enable_rust = true`, profil `out/alos-rust`),
+  puis `//crypto` qui exige `nss` via pkg-config (`use_nss_certs`/
+  `//build/config/linux/nss`) : chaque saut est un probleme d'integration
+  Chromium a traiter par une configuration ou un patch ALOS.
+- `//third_party/skia:skia` (Skia amont autonome) : sources manquantes du
+  checkout partiel (`libjpeg-turbo`, `freetype2`, `harfbuzz`, ...) pour les
+  options non desactivees ; `experimental/` ajoute au sparse-checkout
+  (`fetch-chromium.ps1`) ; puis `//third_party/wuffs` n'est visible que de
+  `//skia:skia` (liste de visibilite Chromium) : la cible amont seule n'est pas
+  constructible dans cet arbre sans patch de visibilite.
+
+Conclusion honnete : le rendu logiciel Skia demande un travail de GN
+incremental (dizaines de dependances, chaque tour = gen puis correction), a
+mener a part. Chemin recommande : partir de `//skia:skia` avec le profil Rust,
+`use_crash_key_stubs`, desactivation de nss/crypto liee aux certificats, GPU
+(`skia_use_gl/vulkan/dawn = false`) et `skia_enable_gpu = false`, puis copier le
+bitmap raster vers la surface `SYS_GPU_MAP`.
