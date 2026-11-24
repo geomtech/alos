@@ -12,7 +12,13 @@ param(
     [switch]$Rust,
     [switch]$V8Probe,
     [switch]$Skia,
-    [int]$Jobs = 8
+    # 16 CPU / 16 Go cote Docker : -j 14 laisse de la marge a la RAM des liens.
+    [int]$Jobs = 14,
+    # 0 = pas d'infos de debug (compilation/liens beaucoup plus rapides, out/ ~5x
+    # plus petit). Mettre 1 ou 2 pour deboguer avec gdb.
+    [int]$SymbolLevel = 0,
+    # Cache de compilation (ccache) sur le volume Docker alos-ccache.
+    [switch]$Ccache
 )
 # gn gen out/alos puis ninja dans l'image alos-runtime. Les outils du build
 # (gn, python, protoc...) sont Linux host ; les objets du toolchain par defaut
@@ -87,6 +93,7 @@ foreach ($patchName in @(
     "chromium-alos-skia-no-rust-bridge.patch",
     "chromium-alos-blink-rust-crash-gate.patch",
     "chromium-alos-platform-gates.patch",
+    "chromium-alos-skip-test-targets.patch",
     "chromium-alos-rust-target.patch"
 )) {
     $patch = Join-Path $repo ("ports\chromium\patches\" + $patchName)
@@ -173,7 +180,9 @@ $args_gn = @(
     '# utilise la libc++ LLVM 21 bd809ffb ALOS du toolchain //build/toolchain/alos.',
     'use_custom_libcxx = false', 'use_custom_libcxx_for_host = false',
     '# Pas de Crashpad sous ALOS : configuration amont sans rapport de crash.',
-    'use_crash_key_stubs = true'
+    'use_crash_key_stubs = true',
+    "symbol_level = $SymbolLevel", "blink_symbol_level = $SymbolLevel",
+    "v8_symbol_level = $SymbolLevel"
 ) -join "`n"
 if ($NativeTests) {
     $testDirectory = Join-Path $src "alos_native"
@@ -340,11 +349,26 @@ if ($V8Probe) {
     # Temporal depend de crates Rust ; Rust est absent du profil ALOS.
     $args_gn += "`nv8_enable_temporal_support = false"
 }
+if ($Ccache) { $args_gn += "`ncc_wrapper = `"ccache`"" }
 New-Item -ItemType Directory -Force (Join-Path $src $outDirectory) | Out-Null
 [IO.File]::WriteAllText((Join-Path $src "$outDirectory/args.gn"), "$args_gn`n")
+$dockerImage = "alos-runtime"
+$ccacheMounts = @()
+if ($Ccache) {
+    # Image derivee avec ccache (construite une fois) + volume persistant.
+    $dockerImage = "alos-runtime-ccache"
+    & docker image inspect $dockerImage *> $null
+    if ($LASTEXITCODE) {
+        & docker build -t $dockerImage -f (Join-Path $repo "ports\chromium\build\Dockerfile.ccache") $repo
+        if ($LASTEXITCODE) { throw "Construction de l'image $dockerImage echouee." }
+    }
+    $ccacheMounts = @("-v", "alos-ccache:/ccache", "-e", "CCACHE_DIR=/ccache",
+        "-e", "CCACHE_BASEDIR=/chromium", "-e", "CCACHE_MAXSIZE=30G",
+        "-e", "CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime,pch_defines")
+}
 $mounts = @("run", "--rm", "-v", "${src}:/chromium", "-v", "${gn}:/gn:ro",
-            "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro",
-            "-w", "/chromium", "alos-runtime")
+            "-v", "${libcxx}:/libcxx:ro", "-v", "${repo}:/alos:ro") + $ccacheMounts + @(
+            "-w", "/chromium", $dockerImage)
 $generate = @("/gn/gn", "gen", $outDirectory)
 if ($MojoBindings) {
     $generate += "--root-target=//alos_mojo:mojo_bindings_smoke"

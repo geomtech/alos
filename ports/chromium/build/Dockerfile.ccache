@@ -1,0 +1,5 @@
+# Image de build avec ccache : alos-runtime + ccache. Construite par
+# build-chromium.ps1 -Ccache (docker build -t alos-runtime-ccache).
+FROM alos-runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ccache \
+    && rm -rf /var/lib/apt/lists/*
