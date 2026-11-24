@@ -17,6 +17,7 @@ param(
     [string]$V8Script,
     [string]$V8Marker = "Hello, World!",
     [string]$V8Flags = "",
+    [string]$V8Args = "", # arguments passes au programme -V8SmokePath (ex. une URL)
     [string]$MojoSmokePath,
     [switch]$MojoBindings,
     [string]$BaseNativeDirectory,
@@ -209,6 +210,7 @@ if ($hasNativeSmoke) {
         # v8_hello_world (sample V8 officiel) : cree un isolate et evalue du JS.
         $basePrograms = @(@{ Path = (Resolve-Path -LiteralPath $V8SmokePath).Path
             Name = "v8-hello-world"; Marker = $V8Marker })
+        if ($V8Args -and -not $V8Script) { $basePrograms[0].Command = ("v8-hello-world $V8Args").Trim() }
         if ($V8Script) {
             # Shell V8 (samples/shell.cc) : evalue /test.js (copie du script).
             $basePrograms[0].Name = "v8-shell"

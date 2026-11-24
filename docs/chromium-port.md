@@ -1611,3 +1611,9 @@ Limites : HTTP en clair, IP litterale (pas de DNS reel via //net : a tester), pa
 TLS, pas de verification de certificats testee, options socket (TOS, multicast...)
 renvoyant ENOPROTOOPT, pas de retransmission SYN complete, pas de proxy systeme
 ni de detection de changement de reseau. Serveur de test : `python -m http.server`.
+
+**DNS reel + Internet (meme jour)** : `test-vm.ps1 -V8SmokePath .../net_http_smoke
+-V8Args "http://example.com/"` : `HostResolver` -> `getaddrinfo` ALOS -> DNS du noyau (DHCP
+10.0.2.3 -> resolveur de l'hote) a resolu `example.com` en 172.66.147.243, connexion
+TCP :80, `HTTP/1.1 200 OK` chunked, 577 octets (`<title>Example Domain</title>`),
+`net::OK`. Dependant d'Internet : a ne pas utiliser comme test deterministe.
