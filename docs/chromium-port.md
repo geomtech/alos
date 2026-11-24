@@ -1647,3 +1647,132 @@ Lecture honnete : le plus gros reste a faire est l'integration graphique/UI
 `NativeWindow`), puis Mojo/IPC, services, `content` mono-processus. Aucun rendu
 Blink n'est demontre ; pas de `content_shell`. Le build est maintenant 3x plus rapide
 (ext4 + ccache), ce qui rend ces iterations raisonnables.
+
+## Passation a Codex (2026-11-24)
+
+Branche : `claude/project-thread-kuvnyf` (PR #7). Lire d'abord `AGENTS.md`, puis cette
+section ; les jalons ci-dessus detaillent chaque preuve. **Aucune compilation n'est en
+cours.** Dernier etat de build : Blink `wtf` (inventaire plus haut).
+
+### Etat courant : jalons REUSSIS avec preuve (QEMU `qemu64`)
+
+| Jalon | Preuve (marqueur / sortie) |
+| --- | --- |
+| V8 complet + JIT, politique `MAP_JIT` bornee | `v8_hello_world` : `Hello, World!` ; `mmap-test: wx-code PASS`, `jit-policy PASS` |
+| Shell V8, TurboFan sous charge (aussi `-Cpu max`) | `v8-jit-stress: PASS sum=1506031792` (identique a un V8 hote) |
+| V8 dans `base::RunLoop` | `v8-runloop-smoke: order=a,b,c,d` |
+| `base::ThreadPool` + `exit()` = `exit_group` | `threadpool-smoke: PASS` |
+| Skia raster CPU + texte FreeType, presente via virtio-gpu | `skia-raster-smoke: PASS 320x260` + capture QMP |
+| GPU : virtio-gpu 2D, couche multi-pilotes, `SYS_GPU_*`, desktop sur virtio-gpu | `ALOS GPU userland PASS`, `ALOS desktop via virtio-gpu PASS` |
+| `//net` : HTTP local ET Internet reel (DNS ALOS) | `net-http-smoke: PASS` ; `http://example.com/` -> `net::OK`, 200, 577 octets |
+| Libc reseau : `getifaddrs`, `if_nametoindex`, `resolv.h`, `gethostname` | `net-info-test: PASS` |
+| Builds sur ext4 | `base:base` 277 s (contre ~848 s) ; 6 s avec ccache chaud |
+
+**Non reussi / non commence** : Blink n'est pas compile (451 echecs de plateforme
+graphique : ANGLE, SwiftShader, vulkan-loader, `ui/gfx`, `ui/gl`, presse-papiers,
+`NativeWindow`), pas de `content_shell`, TLS non teste.
+
+### Chemins
+
+- Checkout Chromium **ext4 (recommande)** : volume Docker `alos-chromium`, vu depuis
+  Windows par
+  `\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\alos-chromium\_data`.
+  Volumes associes : `alos-libcxx` (copie de `alos-libcxx-21`), `alos-repo` (copie des
+  dossiers du depot lus par le build, synchronisee par `build-chromium.ps1`),
+  `alos-ccache`. Images : `alos-runtime`, `alos-runtime-ccache`, `alos-build`.
+- Ancien checkout NTFS (intact ; ne rien supprimer sans accord) :
+  `C:\Users\dacru\Documents\Codex\2026-09-30\c\work\chromium-140.0.7339.80` ; libc++ :
+  `...\work\alos-libcxx-21` ; gn : `...\work\gn-linux-amd64`.
+- Dependances DEPS manquantes : `ports/chromium/scripts/fetch_deps.py` (voir son en-tete ;
+  s'execute dans un conteneur `alos-runtime` avec le volume monte sur `/chromium`).
+
+### Commandes EXACTES
+
+Variables PowerShell (depuis `C:\Projets\alos`) :
+
+```powershell
+$W='C:\Users\dacru\Documents\Codex\2026-09-30\c\work'
+$U='\\wsl$\docker-desktop\mnt\docker-desktop-disk\data\docker\volumes\alos-chromium\_data'
+$B = ".\ports\chromium\scripts\build-chromium.ps1 -ChromiumDirectory '$U' -LibcxxDirectory '$W\alos-libcxx-21' -GnDirectory '$W\gn-linux-amd64' -Ccache"
+```
+
+Builds (`-KeepGoing` pour lister tous les echecs ; sorties dans `$U\out\alos-*`) :
+
+```powershell
+Invoke-Expression "$B -Skia"                       # out/alos-skia/skia_raster_smoke
+Invoke-Expression "$B -Net -KeepGoing"             # out/alos-net/net_http_smoke
+Invoke-Expression "$B -Blink -KeepGoing"           # Blink wtf (echoue : voir inventaire)
+Invoke-Expression "$B -V8Probe"                    # v8_libbase seulement
+```
+
+Les executables V8 (`v8_hello_world`, `v8_shell`) et les smokes `v8_runloop_smoke` /
+`threadpool_smoke` sont dans `out/alos-v8full` et `out/alos-runloop` (profils construits
+par `ninja` dans ces dossiers depuis le volume ou l'ancien checkout, voir les sections
+V8/RunLoop plus haut ; arguments dans leur `args.gn`).
+
+Tests QEMU (disque de test isole, jamais `disk.img` ; `-SkipBuild` seulement si les sorties
+correspondent aux sources) :
+
+```powershell
+.\ports\chromium\scripts\test-vm.ps1                              # suite par defaut (inclut net-info-test)
+.\ports\chromium\scripts\test-vm.ps1 -Runtime -Cpu qemu64         # runtime ; aussi -Cpu max
+.\ports\chromium\scripts\test-gpu.ps1                             # virtio-gpu 2D (capture QMP)
+.\ports\chromium\scripts\test-vm.ps1 -GpuTest                     # API userland GPU
+.\ports\chromium\scripts\test-vm.ps1 -DesktopGpuTest              # bureau complet sur virtio-gpu
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-v8full\v8_hello_world" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-v8full\v8_shell" -V8Script ports\chromium\tests\v8-jit-stress.js -V8Marker "v8-jit-stress: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-runloop\v8_runloop_smoke" -V8Marker "v8-runloop-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-runloop\threadpool_smoke" -V8Marker "threadpool-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-skia\skia_raster_smoke" -V8Marker "skia-raster-smoke: PASS" -V8Gpu -BaseSmokeOnly -ImageFile "src\userland\gui\fonts\system_font.ttf=/fonts/system_font.ttf"
+```
+
+Test `//net` : lancer un serveur HTTP sur l'hote dans un dossier contenant `hello.txt`
+(texte : `hello from the ALOS host`), puis le smoke (10.0.2.2 = l'hote vu de QEMU user-net) :
+
+```powershell
+python -I -m http.server 8123 --bind 127.0.0.1 --directory <dossier>
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-net\net_http_smoke" -V8Marker "net-http-smoke: PASS" -BaseSmokeOnly
+.\ports\chromium\scripts\test-vm.ps1 -SkipBuild -V8SmokePath "$U\out\alos-net\net_http_smoke" -V8Args "http://example.com/" -V8Marker "net-http-smoke: url=" -BaseSmokeOnly
+```
+
+### Pieges connus
+
+- **Permissions de commit/push** : une commande combinee (doc + commit + push de la politique
+  `MAP_JIT`) a ete refusee par le controle de permissions ; elle est passee apres un accord
+  explicite de l'utilisateur. Pas de `git commit -a` : des binaires generes sont suivis
+  (`fs_root/bin/*`, `src/userland/<programme>`, `libc.a`, `artifacts-rust-vm/`) ; ajouter les
+  fichiers un a un. `git checkout -- artifacts-rust-vm` restaure ce dossier si un
+  `rm -rf artifacts-*` l'a efface.
+- **Rebuild complet** apres changement de `symbol_level` (defaut 0), `cc_wrapper` ou args ;
+  `-Ccache` amortit. Les profils `out/alos`, `alos-v8full`, `alos-runloop`, `alos-net`,
+  `alos-skia`, `alos-blink` recompilent chacun `base`/`abseil`/`boringssl`/`perfetto` (args
+  differents) : unifier les args serait un gain (`ports/chromium/BUILD-SPEED.md`).
+- **Bind-mounts NTFS** (`/libcxx`, `/alos`, sources) : une compilation en cache y coute 4,6 s
+  contre 0,01 s sur ext4. Utiliser le mode volume. `alos-repo` n'est synchronise que par
+  `build-chromium.ps1` : apres modification de la libc ou d'en-tetes, relancer ce script (ou
+  la copie `tar` qu'il fait) avant un `ninja` manuel ; reconstruire `libc.a` par `test-vm.ps1`
+  (etape de build) d'abord.
+- **Ecritures** : des litteraux `\n`/`\b` ecrits via certains outils ont ete corrompus
+  (nouvelles lignes reelles dans des chaines C, `\b` -> backspace). Relire apres ecriture.
+- **GN** charge les dependances de TOUTES les cibles d'un BUILD (tests compris) : d'ou le
+  patch `chromium-alos-skip-test-targets` (`test()` = `group` vide). Patchs idempotents
+  (`git apply --reverse --check`), listes dans `build-chromium.ps1`.
+- **Echecs `-Fleet` preexistants** (`base-math-test`, `native-compat-test` ldexp ERANGE,
+  `ipc-poll-test` errno 95) : non lies aux travaux recents (verifie par reconstruction).
+- Options socket (TOS, multicast...) : constantes presentes, `setsockopt` -> ENOPROTOOPT ;
+  `connect()` non bloquant bloque ~ le temps de l'ARP (borne ~1 s) ; `getpeereid` -> ENOTSUP.
+
+### Prochaines etapes, dans l'ordre
+
+1. **TLS et verification de certificats** dans `//net` : HTTPS (BoringSSL + Chrome Root Store
+   seul, patch `chromium-alos-net-trust-store`) vers un serveur de test local puis Internet ;
+   horloge reelle, `getentropy`, pas de magasin systeme. Smoke `net_http_smoke` avec `https://`.
+2. **Blink headless** : retirer ANGLE/SwiftShader/Vulkan du graphe (rendu logiciel Skia
+   seul) ; ajouter ALOS aux gates de `ui/gfx`, `ui/gl` (types EGL), presse-papiers,
+   `gfx::NativeWindow`, `ui/events`, `ui/display`, `components/signin`, `trusted_vault`,
+   `ui/webui`, `gpu/config` (plateforme Ozone `alos`, `ports/chromium/ozone`) ; puis compiler
+   `wtf` -> `platform` -> `core` -> `modules` avec `-Blink -KeepGoing`.
+3. **content_shell mono-processus** (`--single-process --no-sandbox`) dans une fenetre
+   `libgui` (surface via `SYS_GPU_MAP` ou SHM du desktop) : Mojo/IPC, services, `content`.
+4. **Skia GPU / virgl** (ensuite) : virtio-gpu 3D + Mesa, ou SwiftShader/ANGLE logiciels ;
+   pilotes reels via `src/drivers/gpu` (`docs/DRIVERS.md` section 13).
