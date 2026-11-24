@@ -1444,3 +1444,41 @@ ajoute `-device virtio-gpu-pci` ; le desktop est alors visible dans la console
 virtio-gpu de la fenetre QEMU (menu View). Non fait : clic/clavier valides sur
 cette sortie (entrees PS/2 inchangees mais non testees ici), damage partiel,
 redimensionnement, VirtualBox/materiel reel.
+
+#### Skia raster CPU sur ALOS, presente via virtio-gpu (2026-11-24)
+
+Correction du sondage precedent : `//third_party/skia:skia` (Skia amont, pas le
+wrapper `//skia` de Chromium) se genere et **se compile pour ALOS** (729
+actions, 0 echec, `libskia.a`) avec : `use_crash_key_stubs`,
+`treat_warnings_as_errors = false` (les 104 echecs initiaux etaient tous des
+`-Werror` de la config Chromium, ex. `-Wc++98-compat-extra-semi`), et les
+options `skia_use_wuffs`, `libpng`, `libjpeg_turbo`, `libwebp`, `libavif`,
+`libjxl`, `dng_sdk`, `piex`, `freetype`, `harfbuzz`, `expat`, `icu`, `xps`,
+`skia_enable_pdf/skshaper/skunicode/gpu`, `skia_use_gl/vulkan/dawn/metal`
+desactivees (visibilite Chromium sur wuffs/libpng, sources absentes du
+checkout partiel). `experimental/` ajoute au sparse-checkout.
+
+Build : `build-chromium.ps1 -Skia` (profil `out/alos-skia`, cible
+`alos_native/skia:skia_raster_smoke`, sources dans `ports/chromium/skia/`). Deux
+points d'integration documentes : Skia ajoute `-ldl` (`SkOSFile_posix`) ; ALOS
+n'a pas de libdl, donc `make-empty-archive.py` fournit une archive vide, sans
+symbole (un vrai appel a `dlopen` echouerait au link) ; et Skia exige de
+l'embarqueur `SkDebugf` (redirige vers stdout) et `SkPngEncoder::Encode`
+(reference sans condition par `SkWriteBuffer`) : `skia-embedder-alos.cc` fait
+**echouer** l'encodage PNG (retourne false, non supporte) plutot que de
+simuler un succes.
+
+Test : `test-vm.ps1 -V8SmokePath .../skia_raster_smoke -V8Marker
+"skia-raster-smoke: PASS" -V8Gpu -BaseSmokeOnly` (le switch `-V8Gpu` ajoute un
+`virtio-gpu-pci` et verifie le scanout par QMP). `skia_raster_smoke` (18 Mo)
+dessine dans un `SkBitmap` BGRA : rectangle, degrade lineaire, cercle
+anti-aliase, triangle, verifie les pixels, puis copie le bitmap vers la surface
+`SYS_GPU_MAP` et flushe. Observe (`qemu64`) : `skia-raster-smoke: PASS 320x200`
+puis `presented via virtio-gpu` ; capture hote : fond gris 48,48,48, rectangle
+32,64,224, cercle noir, triangle 16,160,48 (`docs/skia-raster-virtio-gpu.png`).
+
+Limites : pas de texte (FreeType/HarfBuzz desactives, polices non portees), pas
+de codecs d'image, pas de GPU (Ganesh/Graphite), SIMD Skia non valide sous `max`,
+pas de `//skia` Chromium (qui entraine Blink, crypto, nss, extensions via GN),
+pas de rendu Blink. Prochaine marche : FreeType + polices (texte), puis le
+wrapper `//skia` quand Blink sera dans le graphe.

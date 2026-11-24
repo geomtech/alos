@@ -10,6 +10,7 @@ param(
     [string]$RustSmokePath,
     [switch]$GpuTest,
     [switch]$DesktopGpuTest,
+    [switch]$V8Gpu,
     [int]$QmpPort = 4489,
     [string]$V8SmokePath,
     [string]$V8Script,
@@ -241,7 +242,7 @@ if ($hasNativeSmoke) {
                 Name = $test.Name; Marker = $test.Marker }
         }
     }
-    if ($V8SmokePath) {
+    if ($V8SmokePath -and (Test-Path (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin"))) {
         # Le snapshot V8 externe est cherche a cote de l'executable / du cwd.
         Copy-Item -LiteralPath (Join-Path (Split-Path -Parent (Resolve-Path -LiteralPath $V8SmokePath).Path) "snapshot_blob.bin") -Destination (Join-Path $output "snapshot_blob.bin")
     }
@@ -320,7 +321,7 @@ foreach ($program in $basePrograms) {
         [IO.File]::WriteAllText((Join-Path $output "stage-$name.sh"), (@(
             'set -e',
             "debugfs -w -R `"write /artifacts/$name /bin/$name`" /artifacts/test.disk",
-            $(if ($V8SmokePath) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
+            $(if ($V8SmokePath -and (Test-Path (Join-Path $output "snapshot_blob.bin"))) { "debugfs -w -R `"write /artifacts/snapshot_blob.bin /snapshot_blob.bin`" /artifacts/test.disk" } else { "true" }),
             $(if ($V8Script) { "debugfs -w -R `"write /artifacts/test.js /test.js`" /artifacts/test.disk" } else { "true" }),
             "debugfs -R `"dump /bin/$name /artifacts/verify-$name`" /artifacts/test.disk",
             "cmp /artifacts/$name /artifacts/verify-$name"
@@ -351,7 +352,7 @@ $qemuArguments = @(
     "-display", "none", "-serial", "file:$log", "-monitor", "none",
     "-no-reboot", "-no-shutdown"
 )
-if ($GpuTest) {
+if ($GpuTest -or $V8Gpu) {
     $qemuArguments += @("-device", "virtio-gpu-pci,id=gpu0",
         "-qmp", "tcp:127.0.0.1:$QmpPort,server=on,wait=off")
 }
@@ -387,6 +388,44 @@ try {
         }
     }
     if (-not $complete) { throw "Suite incomplete : $log" }
+    if ($V8Gpu) {
+        # Programme natif qui presente sur virtio-gpu : verifier le scanout hote.
+        $ppm = Join-Path $output "gpu.ppm"
+        $client = [Net.Sockets.TcpClient]::new("127.0.0.1", $QmpPort)
+        try {
+            $ns = $client.GetStream(); $qr = [IO.StreamReader]::new($ns); $qw = [IO.StreamWriter]::new($ns)
+            function Invoke-Qmp2([string]$json) {
+                $qw.WriteLine($json); $qw.Flush()
+                while ($true) {
+                    $line = $qr.ReadLine()
+                    if ($null -eq $line) { throw "QMP ferme" }
+                    if ($line -match '"return"' -or $line -match '"error"') { return $line }
+                }
+            }
+            [void]$qr.ReadLine()
+            [void](Invoke-Qmp2 '{"execute":"qmp_capabilities"}')
+            $reply = Invoke-Qmp2 (@{ execute = "screendump"; arguments = @{ filename = $ppm; device = "gpu0"; head = 0 } } | ConvertTo-Json -Compress)
+            if ($reply -match '"error"') { throw "screendump refuse : $reply" }
+        } finally { $client.Dispose() }
+        $wait = [DateTime]::UtcNow.AddSeconds(10)
+        while (-not (Test-Path $ppm) -and [DateTime]::UtcNow -lt $wait) { Start-Sleep -Milliseconds 200 }
+        Start-Sleep -Milliseconds 300
+        $bytes = [IO.File]::ReadAllBytes($ppm)
+        $head = [Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(32, $bytes.Length))
+        if ($head -notmatch '^P6\s+(\d+)\s+(\d+)\s+255\s') { throw "PPM invalide : $ppm" }
+        $w = [int]$Matches[1]; $off = $Matches[0].Length
+        function Get-Pixel2([int]$x, [int]$y) { $i = $off + ($y * $w + $x) * 3; return @($bytes[$i], $bytes[$i+1], $bytes[$i+2]) }
+        # Bitmap Skia copie en (20,20) sur fond gris 0x303030.
+        $gray = Get-Pixel2 5 5
+        $blue = Get-Pixel2 (20 + 50) (20 + 40)
+        $black = Get-Pixel2 (20 + 60) (20 + 140)
+        $green = Get-Pixel2 (20 + 275) (20 + 160)
+        "gpu: fond=$($gray -join ',') ; rect=$($blue -join ',') ; cercle=$($black -join ',') ; triangle=$($green -join ',')"
+        if ($gray[0] -ne 0x30 -or $gray[1] -ne 0x30 -or $gray[2] -ne 0x30) { throw "Fond gris absent : $ppm" }
+        if ($blue[0] -ne 0x20 -or $blue[1] -ne 0x40 -or $blue[2] -ne 0xE0) { throw "Rectangle Skia absent : $ppm" }
+        if ($black[0] -ne 0 -or $black[1] -ne 0 -or $black[2] -ne 0) { throw "Cercle Skia absent : $ppm" }
+        if ($green[0] -ne 0x10 -or $green[1] -ne 0xA0 -or $green[2] -ne 0x30) { throw "Triangle Skia absent : $ppm" }
+    }
     if ($GpuTest) {
         $marker = if ($DesktopGpuTest) { "desktop-gpu-test: PASS" } else { "gpu-test: PASS" }
         if (-not $text.Contains($marker) -or $text.Contains("gpu-test: FAIL")) {

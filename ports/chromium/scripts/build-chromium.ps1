@@ -11,6 +11,7 @@ param(
     [switch]$KeepGoing,
     [switch]$Rust,
     [switch]$V8Probe,
+    [switch]$Skia,
     [int]$Jobs = 8
 )
 # gn gen out/alos puis ninja dans l'image alos-runtime. Les outils du build
@@ -22,10 +23,12 @@ if ($MojoBindings) { $MojoTests = $true }
 # Sonde de compilation V8 ciblee (//v8:v8_libbase) dans out/alos-v8 : elle ne
 # remplace pas le profil out/alos et ne construit ni ne lie le moteur complet.
 if ($V8Probe -and $MojoBindings) { throw "-V8Probe et -MojoBindings utilisent des root targets distincts." }
+if ($Skia -and ($V8Probe -or $MojoBindings -or $Rust -or $OzoneProbe)) { throw "-Skia utilise un root target dedie." }
 if ($Rust -and ($V8Probe -or $MojoBindings)) { throw "-Rust utilise un root target dedie." }
 if ($V8Probe -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("v8:v8_libbase") }
+if ($Skia -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_native/skia:skia_raster_smoke") }
 if ($Rust -and -not $PSBoundParameters.ContainsKey("Targets")) { $Targets = @("alos_rust:rust_smoke") }
-$outDirectory = if ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
+$outDirectory = if ($Skia) { "out/alos-skia" } elseif ($V8Probe) { "out/alos-v8" } elseif ($Rust) { "out/alos-rust" } else { "out/alos" }
 $rustEnabled = $Rust -or $OzoneProbe
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
 $src = (Resolve-Path $ChromiumDirectory).Path
@@ -295,6 +298,25 @@ if ($MojoTests) {
             $args_gn += "`nalos_build_mojo_bindings = true"
         }
     }
+if ($Skia) {
+    # Skia amont autonome (//third_party/skia:skia) en raster CPU : voir
+    # docs/chromium-port.md. Wuffs/libpng/jpeg/webp/freetype/harfbuzz/GPU sont
+    # desactives (visibilite Chromium, sources absentes, hors perimetre).
+    $skiaSource = Join-Path $repo "ports\chromium\skia"
+    $skiaDestination = Join-Path $src "alos_native\skia"
+    New-Item -ItemType Directory -Force $skiaDestination | Out-Null
+    Copy-Item -Path (Join-Path $skiaSource "*") -Destination $skiaDestination -Force
+    $args_gn += "`nuse_crash_key_stubs = true`ntreat_warnings_as_errors = false"
+    foreach ($skiaArg in @("skia_use_wuffs", "skia_use_libpng_decode", "skia_use_libpng_encode",
+        "skia_use_libjpeg_turbo_decode", "skia_use_libjpeg_turbo_encode", "skia_use_libwebp_decode",
+        "skia_use_libwebp_encode", "skia_use_libavif", "skia_use_libjxl_decode", "skia_use_dng_sdk",
+        "skia_use_piex", "skia_use_freetype", "skia_use_harfbuzz", "skia_use_expat", "skia_use_icu",
+        "skia_use_xps", "skia_enable_pdf", "skia_enable_skshaper", "skia_enable_skunicode",
+        "skia_enable_gpu", "skia_use_gl", "skia_use_vulkan", "skia_use_dawn", "skia_use_metal",
+        "skia_enable_tools")) {
+        $args_gn += "`n$skiaArg = false"
+    }
+}
 if ($V8Probe) {
     $v8 = Join-Path $src "v8"
     if ((git -C $v8 rev-parse HEAD 2>$null) -ne "fdb12b460f148895f6af2ff0e0d870ff8889f154") {
@@ -323,6 +345,7 @@ if ($MojoBindings) {
     $generate += "--root-target=//alos_mojo:mojo_bindings_smoke"
 }
 if ($V8Probe) { $generate += "--root-target=//v8:v8_libbase" }
+if ($Skia) { $generate += "--root-target=//alos_native/skia:skia_raster_smoke" }
 if ($OzoneProbe) { $generate += "--root-target=//alos_native/ozone:ozone_interface_probe" }
 if ($Rust) { $generate += "--root-target=//alos_rust:rust_smoke" }
 & docker @mounts @generate
